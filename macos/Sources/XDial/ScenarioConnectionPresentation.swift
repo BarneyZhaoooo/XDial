@@ -37,7 +37,7 @@ enum ScenarioConnectionPresentation: Equatable {
         case .direct: return tr("XDial 沿用原网络，不通过 XDial VPN，也不进行 VPN 账号认证。", "XDial uses your existing network without an XDial VPN or VPN sign-in.")
         case .vpn: return tr("仅按运行场景的规则使用 VPN；不代表所有流量都走 VPN。", "VPN use follows the running scenario's rules, not necessarily all traffic.")
         case .routed: return tr("流量按运行场景处理；场景启用不等于 VPN 已连接。", "Traffic follows the running scenario. An active scenario does not imply a VPN connection.")
-        case .unconfirmed: return tr("尚无完整的已提交线路状态，请查看下方连接详情。", "Complete committed line status is unavailable. See connection details below.")
+        case .unconfirmed: return tr("尚无完整的已提交线路状态，暂时无法确认线路是否就绪。", "Complete committed line status is unavailable. Line readiness cannot be confirmed yet.")
         }
     }
 }

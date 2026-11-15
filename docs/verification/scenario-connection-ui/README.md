@@ -5,11 +5,11 @@ PR #58 仅在现有圆球布局上增加运行状态说明；原纵向列表及�
 
 ## 已验证（2026-11-15）
 
-Xcode 27.1 / macOS arm64，以下 9 项定向测试通过：
+Xcode 27.1 / macOS arm64，以下 10 项定向测试通过：
 
-- ScenarioConnectionPresentationTests（7 项）：纯直连、已提交 VPN、未提交或失败事务、
+- ScenarioConnectionPresentationTests（8 项）：纯直连、已提交 VPN、未提交或失败事务、
   未启用的过期报告、切换期间旧场景、未知类型、订阅加直连与仅订阅、
-  订阅未就绪、VPN 加订阅。订阅策略字符串不能冒充线路类型。
+  订阅未就绪、VPN 加订阅、报告缺失时的中英文状态文案（不引导查看不存在的详情）。订阅策略字符串不能冒充线路类型。
 - ScenarioConnectionViewsTests（1 项）：状态说明组件中英文、浅深色及长名称渲染。
 - ScenarioGridLayoutTests（1 项）：保留圆球均衡布局。
 

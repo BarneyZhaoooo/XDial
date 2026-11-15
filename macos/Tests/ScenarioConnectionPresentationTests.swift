@@ -49,6 +49,18 @@ final class ScenarioConnectionPresentationTests: XCTestCase {
         }
     }
 
+    func testMissingReportExplainsUncertaintyWithoutLinkingToDetails() {
+        // Wake reconnect can hide the report while the connection still appears active.
+        for busy in [false, true] {
+            let value = ScenarioConnectionPresentation.resolve(connected: true, busy: busy, report: nil)
+            XCTAssertEqual(value, .unconfirmed)
+            XCTAssertEqual(value.title { zh, _ in zh }, "正在确认线路状态")
+            XCTAssertEqual(value.title { _, en in en }, "Checking line status")
+            XCTAssertEqual(value.detail { zh, _ in zh }, "尚无完整的已提交线路状态，暂时无法确认线路是否就绪。")
+            XCTAssertEqual(value.detail { _, en in en }, "Complete committed line status is unavailable. Line readiness cannot be confirmed yet.")
+        }
+    }
+
     func testSubscriptionsAreRoutedWithOrWithoutDirectLines() {
         for types in [[], ["direct"]] {
             for strategy in ["selector", "urltest", "direct", "vpn", ""] {
