@@ -18,7 +18,7 @@ final class ScenarioConnectionPresentationTests: XCTestCase {
     func testOfficeNameDoesNotImplyVPNAuthentication() {
         let value = ScenarioConnectionPresentation.resolve(status: "connected", report: report(["direct"]))
         XCTAssertEqual(value, .direct)
-        XCTAssertTrue(value.title { zh, _ in zh }.contains("未建立 VPN"))
+        XCTAssertTrue(value.title({ zh, _ in zh }, statusText: "未连接").contains("未建立 VPN"))
     }
 
     func testOnlyCommittedReadyVPNIsConnected() {
@@ -53,27 +53,27 @@ final class ScenarioConnectionPresentationTests: XCTestCase {
         // A connected engine alone cannot establish readiness when its report is missing.
         let value = ScenarioConnectionPresentation.resolve(status: "connected", report: nil)
         XCTAssertEqual(value, .unconfirmed)
-        XCTAssertEqual(value.title { zh, _ in zh }, "正在确认线路状态")
-        XCTAssertEqual(value.title { _, en in en }, "Checking line status")
+        XCTAssertEqual(value.title({ zh, _ in zh }, statusText: "未连接"), "正在确认线路状态")
+        XCTAssertEqual(value.title({ _, en in en }, statusText: "Not Connected"), "Checking line status")
         XCTAssertEqual(value.detail { zh, _ in zh }, "尚无完整的已提交线路状态，暂时无法确认线路是否就绪。")
         XCTAssertEqual(value.detail { _, en in en }, "Complete committed line status is unavailable. Line readiness cannot be confirmed yet.")
     }
 
     func testEngineLifecycleOverridesMissingOrStaleReports() {
         let phases: [(String, ScenarioConnectionPresentation, String, String)] = [
-            ("connecting", .preparing, "正在准备线路…", "Preparing routes…"),
+            ("connecting", .preparing, "正在连接…", "Connecting…"),
             ("disconnecting", .disconnecting, "正在断开…", "Disconnecting…"),
             ("reconnecting", .reconnecting, "正在重连…", "Reconnecting…"),
-            ("disconnected", .inactive, "XDial 未启用", "XDial is inactive"),
+            ("disconnected", .inactive, "未连接", "Not Connected"),
             ("unknown", .unconfirmed, "正在确认线路状态", "Checking line status"),
         ]
         let reports: [ConnectionReport?] = [nil, report(["direct"]), report(["vpn"]), report(["vpn"], state: .failed)]
         for (status, expected, zhTitle, enTitle) in phases {
             for report in reports {
                 let value = ScenarioConnectionPresentation.resolve(status: status, report: report)
-                XCTAssertEqual(value, expected, status)
-                XCTAssertEqual(value.title { zh, _ in zh }, zhTitle)
-                XCTAssertEqual(value.title { _, en in en }, enTitle)
+                XCTAssertEqual(value, status == "disconnected" && report?.state == .failed ? .failed : expected, status)
+                XCTAssertEqual(value.title({ zh, _ in zh }, statusText: zhTitle), zhTitle)
+                XCTAssertEqual(value.title({ _, en in en }, statusText: enTitle), enTitle)
                 if status == "disconnecting" || status == "reconnecting" {
                     XCTAssertFalse(value.detail { zh, _ in zh }.contains("尚未完成启用"))
                     XCTAssertFalse(value.detail { _, en in en }.contains("Activation is not complete"))
@@ -90,10 +90,42 @@ final class ScenarioConnectionPresentationTests: XCTestCase {
                     let value = ScenarioConnectionPresentation.resolve(
                         status: status, wakeReconnectPhase: phase, report: report)
                     XCTAssertEqual(value, .wakeReconnecting(phase))
-                    XCTAssertEqual(value.title { zh, _ in zh }, phase.zhStatusText)
-                    XCTAssertEqual(value.title { _, en in en }, phase.enStatusText)
+                    XCTAssertEqual(value.title({ zh, _ in zh }, statusText: phase.zhStatusText), phase.zhStatusText)
+                    XCTAssertEqual(value.title({ _, en in en }, statusText: phase.enStatusText), phase.enStatusText)
                     XCTAssertFalse(value.detail { zh, _ in zh }.contains("尚未完成启用"))
                 }
+            }
+        }
+    }
+
+    func testDisconnectedFailuresDoNotClaimNetworkRecovery() {
+        let failure = ConnectionReportError(code: "test", message: "连接失败", taskID: "line:0")
+        var failed = report(["vpn"], state: .failed)
+        failed.error = failure
+        var rollbackFailed = report(["vpn"], state: .rolledBack)
+        rollbackFailed.rollbackError = failure
+        let cases: [(ConnectionReport?, String?)] = [
+            (failed, nil), (rollbackFailed, nil),
+            (report(["vpn"], state: .failed), nil), (nil, "Engine failure"),
+        ]
+        for (report, lastError) in cases {
+            let value = ScenarioConnectionPresentation.resolve(status: "disconnected", lastError: lastError, report: report)
+            XCTAssertEqual(value, .failed)
+            XCTAssertEqual(value.title({ zh, _ in zh }, statusText: "连接失败"), "连接失败")
+            XCTAssertEqual(value.title({ _, en in en }, statusText: "Connection failed"), "Connection failed")
+            XCTAssertFalse(value.detail { zh, _ in zh }.contains("沿用原网络"))
+            XCTAssertFalse(value.detail { _, en in en }.contains("Using your existing network"))
+        }
+    }
+
+    func testLifecycleTitleUsesStatusBandTextIncludingTaskAndError() {
+        let states: [ScenarioConnectionPresentation] = [
+            .inactive, .preparing, .disconnecting, .reconnecting, .failed,
+        ] + WakeReconnectPhase.allCases.map { .wakeReconnecting($0) }
+        for state in states {
+            for text in ["未连接", "正在连接…", "准备公司 VPN", "认证失败", "Not Connected", "Connecting…", "Preparing VPN", "Authentication failed"] {
+                XCTAssertEqual(state.title({ zh, _ in zh }, statusText: text), text)
+                XCTAssertEqual(state.title({ _, en in en }, statusText: text), text)
             }
         }
     }

@@ -7,12 +7,12 @@ final class ScenarioConnectionViewsTests: XCTestCase {
     func testRuntimeSummaryRendersInBothLanguagesAndAppearances() throws {
         for english in [false, true] {
             for dark in [false, true] {
-                for status in [ScenarioConnectionPresentation.inactive, .preparing, .disconnecting,
+                for status in [ScenarioConnectionPresentation.inactive, .failed, .preparing, .disconnecting,
                                .reconnecting, .direct, .vpn, .routed, .unconfirmed]
                     + WakeReconnectPhase.allCases.map({ .wakeReconnecting($0) }) {
                     let tr: (String, String) -> String = { english ? $1 : $0 }
                     let content = ScenarioRuntimeSummaryView(
-                        title: status.title(tr),
+                        title: status.title(tr, statusText: tr("连接状态或当前任务", "Connection status or current task")),
                         detail: status.detail(tr),
                         runningScenario: tr("运行场景：公司 · 很长的自定义场景名称", "Running scenario: Office — a long custom scenario name"))
                         .padding(16)

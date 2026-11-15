@@ -3,12 +3,13 @@ import Foundation
 /// Reads the committed transaction, never the editable Profile or the selected
 /// scenario. A selected scenario and a prepared candidate are not a VPN login.
 enum ScenarioConnectionPresentation: Equatable {
-    case inactive, preparing, disconnecting, reconnecting, direct, vpn, routed, unconfirmed
+    case inactive, failed, preparing, disconnecting, reconnecting, direct, vpn, routed, unconfirmed
     case wakeReconnecting(WakeReconnectPhase)
 
     static func resolve(
         status: String,
         wakeReconnectPhase: WakeReconnectPhase? = nil,
+        lastError: String? = nil,
         report: ConnectionReport?
     ) -> Self {
         // Match AppState.statusText's wake-phase priority; isBusy loses the
@@ -18,7 +19,9 @@ enum ScenarioConnectionPresentation: Equatable {
         case "connecting": return .preparing
         case "disconnecting": return .disconnecting
         case "reconnecting": return .reconnecting
-        case "disconnected": return .inactive
+        case "disconnected":
+            return report?.error != nil || report?.rollbackError != nil
+                || report?.state == .failed || lastError != nil ? .failed : .inactive
         case "connected": break
         default: return .unconfirmed
         }
@@ -34,13 +37,12 @@ enum ScenarioConnectionPresentation: Equatable {
         return .routed
     }
 
-    func title(_ tr: (String, String) -> String) -> String {
+    /// AppState.statusText owns all lifecycle, task and failure wording.
+    /// Only committed routing facts add a distinct title here.
+    func title(_ tr: (String, String) -> String, statusText: String) -> String {
         switch self {
-        case .inactive: return tr("XDial 未启用", "XDial is inactive")
-        case .preparing: return tr("正在准备线路…", "Preparing routes…")
-        case .disconnecting: return tr("正在断开…", "Disconnecting…")
-        case .reconnecting: return tr("正在重连…", "Reconnecting…")
-        case .wakeReconnecting(let phase): return tr(phase.zhStatusText, phase.enStatusText)
+        case .inactive, .failed, .preparing, .disconnecting, .reconnecting, .wakeReconnecting:
+            return statusText
         case .direct: return tr("直连运行中 · 未建立 VPN", "Direct routing · No XDial VPN")
         case .vpn: return tr("VPN 线路已连接", "VPN line connected")
         case .routed: return tr("分流运行中", "Routing is active")
@@ -50,7 +52,8 @@ enum ScenarioConnectionPresentation: Equatable {
 
     func detail(_ tr: (String, String) -> String) -> String {
         switch self {
-        case .inactive: return tr("沿用原网络。选择场景并启用后，XDial 才会处理流量。", "Using your existing network. Activate a scenario to let XDial handle traffic.")
+        case .inactive: return tr("XDial 当前未连接。选择场景并连接后，XDial 才会处理流量。", "XDial is not connected. Connect a scenario to let XDial handle traffic.")
+        case .failed: return tr("连接发生错误。线路、回滚和原网络恢复情况需分别确认。", "A connection error occurred. Line readiness, rollback and network recovery must be checked separately.")
         case .preparing: return tr("尚未完成启用；请等待线路准备和网络接管完成。", "Activation is not complete. Waiting for routes and network setup.")
         case .disconnecting: return tr("正在停用 XDial 连接，请等待断开完成。", "Stopping the XDial connection. Waiting for disconnection to complete.")
         case .reconnecting, .wakeReconnecting:

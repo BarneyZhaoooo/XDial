@@ -377,10 +377,11 @@ struct MainPopover: View {
         let presentation = ScenarioConnectionPresentation.resolve(
             status: state.engine.status,
             wakeReconnectPhase: state.wakeReconnectPhase,
+            lastError: state.engine.lastError,
             report: state.presentedConnectionReport
         )
         return ScenarioRuntimeSummaryView(
-            title: presentation.title(state.tr),
+            title: presentation.title(state.tr, statusText: state.statusText),
             detail: presentation.detail(state.tr),
             runningScenario: state.isConnected ? state.presentedConnectionReport.map {
                 state.tr("运行场景：\($0.scenario.name)", "Running scenario: \($0.scenario.name)")
