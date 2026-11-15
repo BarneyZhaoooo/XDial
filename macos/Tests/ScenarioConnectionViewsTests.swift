@@ -7,7 +7,9 @@ final class ScenarioConnectionViewsTests: XCTestCase {
     func testRuntimeSummaryRendersInBothLanguagesAndAppearances() throws {
         for english in [false, true] {
             for dark in [false, true] {
-                for status in [ScenarioConnectionPresentation.direct, .vpn, .routed, .unconfirmed] {
+                for status in [ScenarioConnectionPresentation.inactive, .preparing, .disconnecting,
+                               .reconnecting, .direct, .vpn, .routed, .unconfirmed]
+                    + WakeReconnectPhase.allCases.map({ .wakeReconnecting($0) }) {
                     let tr: (String, String) -> String = { english ? $1 : $0 }
                     let content = ScenarioRuntimeSummaryView(
                         title: status.title(tr),

@@ -375,8 +375,8 @@ struct MainPopover: View {
     /// Runtime facts and editable scenario choices are deliberately separate.
     private var runtimeSummary: some View {
         let presentation = ScenarioConnectionPresentation.resolve(
-            connected: state.isConnected,
-            busy: state.isBusy,
+            status: state.engine.status,
+            wakeReconnectPhase: state.wakeReconnectPhase,
             report: state.presentedConnectionReport
         )
         return ScenarioRuntimeSummaryView(
