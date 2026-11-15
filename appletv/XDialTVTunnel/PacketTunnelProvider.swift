@@ -66,7 +66,7 @@ private final class StopCompletionGate: @unchecked Sendable {
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     #if os(iOS)
-    private static let appGroupID = "group.com.kafeifei.xdial.ios"
+    private static let appGroupID = XDialIdentity.appGroup
     private static let subsystem = "com.kafeifei.xdial.ios.tunnel"
     #else
     private static let appGroupID = "group.com.kafeifei.xdialtv"
@@ -197,6 +197,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             os_log("startTunnel: LibboxNew returned nil", log: log, type: .error)
             return
         }
+        // 连上后的「路由命中」自检要靠引擎记下两个测试地址各走了哪条线路。这个记录默认是关的，
+        // 不打开的话自检永远查不到记录，每次连接都会被判成「自检未通过」。
+        // 开销只是每条新连接多比较一次目标地址。
+        lb.setDebugRoutingProbeEnabled(true)
         guard installEngine(lb, generation: generation) else {
             // 当前就在全局会话串行队列上；必须先清掉这个尚未登记的实例，
             // 不能把 Stop 排到已经入队的新 prepare 后面。
@@ -332,6 +336,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         }
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
+                        self.startActivityUpdates()
                         os_log("startTunnel: engine and tunnel DNS ready",
                                log: self.log, type: .info)
                     }) else { return }
@@ -395,6 +400,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         try engine.startStandalone(bundle.configJSON)
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
+                        self.startActivityUpdates()
                         os_log("startTunnel: standalone engine ready",
                                log: self.log, type: .info)
                     } catch {
@@ -419,6 +425,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         cancelActiveAttempt(
             startError: providerError(7, "连接启动已取消"),
             afterCleanupQueued: { [weak self] in
+                self?.stopActivityUpdates()
                 self?.recordDiagnostic("stopping")
                 os_log("stopTunnel: reason=%d", log: self?.log ?? .default,
                        type: .info, reason.rawValue)
@@ -658,6 +665,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             settingsBarrier.wait()
             completion?.value()
         }
+    }
+
+    #if os(iOS)
+    private let activityUpdater = TunnelActivityUpdater()
+    #endif
+
+    /// 连上以后开始往实时活动（锁屏、灵动岛）里写网速。只有 iOS 有实时活动。
+    private func startActivityUpdates() {
+        #if os(iOS)
+        activityUpdater.start { [weak self] in
+            guard let engine = self?.currentEngine(), engine.isRunning() else { return nil }
+            return engine.trafficTotals()
+        }
+        #endif
+    }
+
+    private func stopActivityUpdates() {
+        #if os(iOS)
+        activityUpdater.stopAndEndActivities()
+        #endif
     }
 
     private func currentEngine() -> LibboxLibbox? {

@@ -10,141 +10,165 @@ struct MobileSettingsView: View {
     @State private var isConfirmingReset = false
     @State private var isConfirmingProfileRemoval = false
     @State private var notice: SettingsNotice?
+    @State private var signInTarget: SettingsAccountTarget?
+    @State private var showsLiveActivity = ConnectionActivityController.isEnabledByUser
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
-                Section(app.tr("外观", "Appearance")) {
-                    Picker(app.tr("语言", "Language"), selection: $app.language) {
-                        Text("简体中文").tag(Lang.zh)
-                        Text("English").tag(Lang.en)
+                if let line = app.accountLine {
+                    Section(app.tr("账号", "Account")) {
+                        Button {
+                            signInTarget = SettingsAccountTarget(id: line.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .font(.title)
+                                    .foregroundStyle(XDialTheme.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(line.name.isEmpty ? app.tr("公司 VPN", "Company VPN") : line.name)
+                                        .foregroundStyle(XDialTheme.ink)
+                                    Text(app.accountIsIncomplete
+                                         ? app.tr("未登录", "Not signed in")
+                                         : line.vpnUsername)
+                                        .font(.subheadline)
+                                        .foregroundStyle(XDialTheme.inkSecondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(XDialTheme.inkTertiary)
+                            }
+                        }
+                        .accessibilityIdentifier("settings-account")
                     }
                 }
 
                 Section {
-                    LabeledContent(
-                        app.tr("系统描述文件", "System profile"),
-                        value: app.helperInstalled
-                            ? app.tr("已安装", "Installed")
-                            : app.tr("首次连接时安装", "Installed on first connect")
-                    )
-                    LabeledContent(app.tr("连接状态", "Connection"), value: app.statusText)
-                    Button(app.tr("刷新系统状态", "Refresh system status")) {
-                        app.refreshTunnelProfileStatus()
-                        app.engine.syncStatus()
-                    }
-
                     Toggle(
-                        app.tr("意外断线自动重试", "Retry unexpected disconnects"),
+                        app.tr("掉线后自动重连", "Reconnect after a drop"),
                         isOn: $app.autoReconnectEnabled
                     )
-
                     Toggle(
-                        app.tr("系统级按需重连", "System on-demand reconnect"),
+                        app.tr("换网络后自动连回", "Reconnect when the network changes"),
                         isOn: $app.systemOnDemandEnabled
                     )
                     .accessibilityIdentifier("system-on-demand-reconnect")
-                    LabeledContent(app.tr("按需重连状态", "On-demand status")) {
-                        Text(systemOnDemandStatusText)
-                            .accessibilityIdentifier("system-on-demand-status")
+                    Toggle(
+                        app.tr("在灵动岛和锁屏显示", "Show in Dynamic Island and Lock Screen"),
+                        isOn: $showsLiveActivity
+                    )
+                    .onChange(of: showsLiveActivity) { _, isOn in
+                        ConnectionActivityController.isEnabledByUser = isOn
+                        MobileAppRuntime.connectionActivity?.preferenceChanged()
                     }
-
-                    if app.helperInstalled {
-                        Button(role: .destructive) {
-                            isConfirmingProfileRemoval = true
-                        } label: {
-                            Label(app.tr("移除系统描述文件", "Remove System Profile"), systemImage: "trash")
+                    .accessibilityIdentifier("settings-live-activity")
+                    if app.systemOnDemandEnabled {
+                        LabeledContent(app.tr("当前状态", "Status")) {
+                            Text(systemOnDemandStatusText)
+                                .accessibilityIdentifier("system-on-demand-status")
                         }
-                        .disabled(app.hasActiveTunnel || app.isBusy)
                     }
                 } header: {
-                    Text(app.tr("连接服务", "Connection service"))
+                    Text(app.tr("连接", "Connection"))
                 } footer: {
                     Text(app.tr(
-                        "App 内重试最多 3 次。系统级按需重连仅在一次完整连接验收通过后启用；手动断开或验收失败会立即停用，下一次手动连接成功后再恢复。移除描述文件不会删除 XDial 内的线路、规则或账号。",
-                        "In-app retry runs up to 3 times. System on-demand reconnect is armed only after a full connection check succeeds; a manual disconnect or failed check suspends it until the next successful manual connection. Removing the profile does not delete XDial lines, rules, or accounts."
+                        "掉线后最多自动重试 3 次。「换网络后自动连回」由系统接管，手动断开后会暂停，下次连上再恢复。",
+                        "Drops are retried up to 3 times. Network-change reconnect is handled by iOS; it pauses after a manual disconnect and resumes on the next connection."
                     ))
                 }
 
-                Section(app.tr("配置摘要", "Configuration")) {
-                    LabeledContent(app.tr("线路", "Lines"), value: "\(app.profile.lines.count)")
-                    LabeledContent(app.tr("规则", "Rules"), value: "\(app.profile.ruleSets.count)")
-                    LabeledContent(app.tr("场景", "Scenarios"), value: "\(app.profile.scenarios.count)")
-                    LabeledContent(app.tr("订阅", "Subscriptions"), value: "\(app.profile.subscriptions.count)")
-                }
-
                 Section {
+                    NavigationLink {
+                        ConfigurationView()
+                    } label: {
+                        Label(app.tr("线路与规则", "Lines & Rules"), systemImage: "slider.horizontal.3")
+                    }
+                    .accessibilityIdentifier("settings-advanced")
+
                     Button {
                         prepareExport()
                     } label: {
-                        Label(app.tr("导出配置", "Export configuration"), systemImage: "square.and.arrow.up")
+                        Label(app.tr("导出配置", "Export Configuration"), systemImage: "square.and.arrow.up")
                     }
 
                     Button {
                         isImporting = true
                     } label: {
-                        Label(app.tr("导入配置", "Import configuration"), systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(app.hasActiveTunnel || app.isBusy)
-
-                    Button(role: .destructive) {
-                        isConfirmingReset = true
-                    } label: {
-                        Label(app.tr("重置配置", "Reset configuration"), systemImage: "arrow.counterclockwise")
+                        Label(app.tr("导入配置", "Import Configuration"), systemImage: "square.and.arrow.down")
                     }
                     .disabled(app.hasActiveTunnel || app.isBusy)
                 } header: {
-                    Text(app.tr("配置文件", "Configuration file"))
+                    Text(app.tr("高级", "Advanced"))
                 } footer: {
                     Text(app.tr(
-                        "导出文件包含服务器地址和路由结构，但不包含账号、密码、节点密钥、订阅地址或远程规则地址。导入后需重新填写这些凭据。连接期间不可导入或重置。",
-                        "Exports include server addresses and routing structure, but not accounts, passwords, node keys, subscription URLs, or remote-rule URLs. Re-enter those credentials after import. Import and reset are unavailable while connected."
+                        "一般不用改。导出的文件不含账号和密码。",
+                        "You rarely need these. Exports never include accounts or passwords."
                     ))
                 }
 
-                Section(app.tr("诊断", "Diagnostics")) {
-                    if let summary = app.engine.dataPathSummary {
-                        LabeledContent(app.tr("出口探针", "Egress probe"), value: summary)
-                    }
+                Section(app.tr("帮助", "Help")) {
                     NavigationLink {
                         MobileDiagnosticsDetailView(
-                            title: app.tr("诊断详情", "Diagnostic details"),
+                            title: app.tr("诊断信息", "Diagnostics"),
                             shareTitle: app.tr("分享诊断", "Share diagnostics"),
                             report: diagnosticReport
                         )
                     } label: {
-                        Label(app.tr("查看诊断详情", "View diagnostic details"), systemImage: "stethoscope")
+                        Label(app.tr("诊断信息", "Diagnostics"), systemImage: "stethoscope")
                     }
-                    Text(app.tr(
-                        "诊断只包含版本、状态、系统描述文件状态、对象计数、出口探针地址和脱敏后的最近错误。",
-                        "Diagnostics contain only version, status, system-profile state, object counts, egress probe addresses, and a redacted last error."
-                    ))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("settings-diagnostics")
+
+                    Picker(selection: $app.language) {
+                        Text("简体中文").tag(Lang.zh)
+                        Text("English").tag(Lang.en)
+                    } label: {
+                        Label(app.tr("语言", "Language"), systemImage: "globe")
+                    }
+
+                    LabeledContent {
+                        Text(version)
+                    } label: {
+                        Label(app.tr("版本", "Version"), systemImage: "info.circle")
+                    }
                 }
 
-                Section(app.tr("能力", "Capabilities")) {
-                    Label(app.tr(
-                        "AnyConnect 与规则分流：连接时自动分层验收",
-                        "AnyConnect and rule routing: verified in layers on every connection"
-                    ), systemImage: "checkmark.shield")
-                    Label(app.tr(
-                        "Tailscale 可独立启动；在线路上勾选 MagicDNS 后可访问 Tailnet 节点",
-                        "Tailscale can start independently; enable MagicDNS on the line to reach Tailnet peers"
-                    ), systemImage: "checkmark.shield")
-                }
-
-                Section(app.tr("关于", "About")) {
-                    LabeledContent(app.tr("版本", "Version"), value: version)
+                Section {
+                    if app.helperInstalled {
+                        Button(role: .destructive) {
+                            isConfirmingProfileRemoval = true
+                        } label: {
+                            Label(app.tr("移除系统 VPN 配置", "Remove System VPN Profile"), systemImage: "trash")
+                        }
+                        .disabled(app.hasActiveTunnel || app.isBusy)
+                    }
+                    Button(role: .destructive) {
+                        isConfirmingReset = true
+                    } label: {
+                        Label(app.tr("恢复默认配置", "Restore Default Configuration"), systemImage: "arrow.counterclockwise")
+                    }
+                    .disabled(app.hasActiveTunnel || app.isBusy)
+                } footer: {
                     Text(app.tr(
-                        "普通连接通过一次性启动参数交付；启用系统级按需重连后，仅把最近一次验收通过的启动包保存在 App 与扩展共享的系统钥匙串中。敏感启动配置不会写入 App Group。",
-                        "Normal connections use one-time start options. With system on-demand reconnect enabled, only the most recently verified start package is kept in the system Keychain shared by the app and extension. Sensitive startup data is never written to the App Group."
+                        "恢复默认会回到公司预置的线路和场景，账号需要重新登录。连接期间不可用。",
+                        "Restoring returns to the company's lines and scenarios; you will sign in again. Unavailable while connected."
                     ))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
                 }
             }
+            .xdialGroupedBackground()
             .navigationTitle(app.tr("设置", "Settings"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(app.tr("完成", "Done")) { dismiss() }
+                        .accessibilityIdentifier("settings-done")
+                }
+            }
+            .sheet(item: $signInTarget) { target in
+                SignInSheet(lineID: target.id)
+                    .environmentObject(app)
+            }
             .fileExporter(
                 isPresented: $isExporting,
                 document: exportDocument,
@@ -160,22 +184,22 @@ struct MobileSettingsView: View {
                 handleImport(result)
             }
             .confirmationDialog(
-                app.tr("重置所有配置？", "Reset all configuration?"),
+                app.tr("恢复默认配置？", "Restore the default configuration?"),
                 isPresented: $isConfirmingReset,
                 titleVisibility: .visible
             ) {
-                Button(app.tr("重置", "Reset"), role: .destructive) {
+                Button(app.tr("恢复默认", "Restore Defaults"), role: .destructive) {
                     resetConfiguration()
                 }
                 Button(app.tr("取消", "Cancel"), role: .cancel) {}
             } message: {
                 Text(app.tr(
-                    "线路、规则、场景和订阅将恢复为初始配置。此操作不会保留当前配置。",
-                    "Lines, rules, scenarios, and subscriptions will return to their initial configuration. The current configuration will not be kept."
+                    "线路、规则和场景会回到公司默认配置，当前配置不会保留。",
+                    "Lines, rules and scenarios return to the company defaults. The current configuration is not kept."
                 ))
             }
             .confirmationDialog(
-                app.tr("移除系统描述文件？", "Remove the system profile?"),
+                app.tr("移除系统 VPN 配置？", "Remove the system VPN profile?"),
                 isPresented: $isConfirmingProfileRemoval,
                 titleVisibility: .visible
             ) {
@@ -185,8 +209,8 @@ struct MobileSettingsView: View {
                 Button(app.tr("取消", "Cancel"), role: .cancel) {}
             } message: {
                 Text(app.tr(
-                    "下次连接时系统会重新请求添加描述文件。XDial 配置和安全保存的账号不会被删除。",
-                    "The system will request the profile again on the next connection. XDial configuration and securely saved accounts are kept."
+                    "下次连接时系统会再问一次是否允许添加。XDial 里的配置和账号不受影响。",
+                    "iOS will ask for permission again on the next connection. Your XDial configuration and account are kept."
                 ))
             }
             .alert(item: $notice) { notice in
@@ -197,6 +221,7 @@ struct MobileSettingsView: View {
                 )
             }
         }
+        .tint(XDialTheme.accent)
     }
 
     private var version: String {
@@ -303,7 +328,7 @@ struct MobileSettingsView: View {
         guard !app.hasActiveTunnel, !app.isBusy else { return }
         let previousProfile = app.profile
         app.engine.lastError = nil
-        guard app.replaceProfileAndSave(Profile.bootstrap()) else {
+        guard app.replaceProfileAndSave(app.defaultProfile) else {
             app.profile = previousProfile
             notice = SettingsNotice(
                 title: app.tr("重置失败", "Reset failed"),
@@ -396,4 +421,8 @@ private struct SettingsNotice: Identifiable {
     let id = UUID()
     let title: String
     let message: String
+}
+
+private struct SettingsAccountTarget: Identifiable {
+    let id: String
 }

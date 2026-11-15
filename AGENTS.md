@@ -4,6 +4,14 @@ macOS 菜单栏网络分流工具；iOS / tvOS 共用 Go 核心。
 
 修改完成后合入最新 main，验证后直接覆盖安装并重启 Debug；`make restart` 会拒绝回退已装 Debug 里尚未进 main 的提交。
 
+## 仓库关系
+
+- 本仓库（`xindong/XDial`，remote `origin`）独立维护：工作分支推到这里，PR 只开向这里的 `main`。
+- 上游 `kafeifei/XDial`（remote `upstream`）只作参考：需要时把它的改动合进来，不向它推送、不向它提 PR。
+  fork 里 `gh pr create` 默认指向上游，必须显式带 `--repo xindong/XDial`。
+- 企业专属的内容（预置 Profile、随包规则、签名身份）保存在企业私有仓库，打包时注入，不进本仓库。
+  提交前跑 `make public-content-gate`。
+
 ## 分支
 
 | 分支 | 用途 | 规则 |

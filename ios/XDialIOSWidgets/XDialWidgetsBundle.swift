@@ -5,5 +5,6 @@ import WidgetKit
 struct XDialWidgetsBundle: WidgetBundle {
     var body: some Widget {
         ConnectionControl()
+        ConnectionLiveActivity()
     }
 }

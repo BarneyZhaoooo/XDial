@@ -24,7 +24,7 @@ struct ScenarioList: View {
                                     "\(issues.count) setup item(s) required"
                                 ))
                                 .font(.caption)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(XDialTheme.warning)
                             }
                         }
                     }
@@ -50,6 +50,7 @@ struct ScenarioList: View {
                 }
             }
         }
+        .xdialGroupedBackground()
         .overlay {
             if app.profile.scenarios.isEmpty {
                 ContentUnavailableView(
@@ -132,6 +133,21 @@ private struct ScenarioDetailView: View {
                 .disabled(app.hasActiveTunnel || app.isBusy)
 
                 Section {
+                    WiFiNamesField(
+                        placeholder: app.tr("Wi-Fi 名称", "Wi-Fi names"),
+                        names: scenarioBinding(index, \.matchSSIDs)
+                    )
+                } header: {
+                    Text(app.tr("自动选择", "Auto Select"))
+                } footer: {
+                    Text(app.tr(
+                        "连上这些 Wi-Fi 时自动用这个场景。多个名称用逗号隔开，大小写要和 Wi-Fi 名称一致。",
+                        "Use this scenario automatically on these Wi-Fi networks. Separate names with commas; names are case-sensitive."
+                    ))
+                }
+                .disabled(app.hasActiveTunnel || app.isBusy)
+
+                Section {
                     if app.profile.ruleSets.isEmpty {
                         Text(app.tr("暂无规则集", "No rule sets"))
                             .foregroundStyle(.secondary)
@@ -195,6 +211,7 @@ private struct ScenarioDetailView: View {
                 ContentUnavailableView(app.tr("场景已删除", "Scenario deleted"), systemImage: "trash")
             }
         }
+        .xdialGroupedBackground()
         .navigationTitle(app.tr("编辑场景", "Edit Scenario"))
         .onDisappear { app.save() }
     }
@@ -317,5 +334,26 @@ private struct ScenarioDetailView: View {
         if !subscriptionID.isEmpty { return "sub:\(subscriptionID)" }
         if !lineID.isEmpty { return "port:\(lineID)" }
         return ""
+    }
+}
+
+/// 逗号分隔的 Wi-Fi 名称输入框。输入时不回写文字，免得刚打的逗号被吃掉。
+private struct WiFiNamesField: View {
+    let placeholder: String
+    @Binding var names: [String]
+    @State private var text = ""
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .onAppear { text = names.joined(separator: ", ") }
+            .onChange(of: text) { _, value in
+                let parsed = value
+                    .split(whereSeparator: { $0 == "," || $0 == "，" })
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                if parsed != names { names = parsed }
+            }
     }
 }

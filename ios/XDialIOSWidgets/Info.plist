@@ -25,5 +25,9 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>XDialAppGroupIdentifier</key>
+	<string>$(XDIAL_APP_GROUP)</string>
+	<key>XDialTunnelBundleIdentifier</key>
+	<string>$(XDIAL_BUNDLE_ID).tunnel</string>
 </dict>
 </plist>
