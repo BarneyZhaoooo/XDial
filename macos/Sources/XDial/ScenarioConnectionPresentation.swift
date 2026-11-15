@@ -8,12 +8,12 @@ enum ScenarioConnectionPresentation: Equatable {
     static func resolve(connected: Bool, busy: Bool, report: ConnectionReport?) -> Self {
         guard connected else { return busy ? .preparing : .inactive }
         guard let report, report.state == .committed, report.error == nil else { return .unconfirmed }
-        let lines = report.tasks.filter { $0.kind == "line" }
-        guard !lines.isEmpty, lines.allSatisfy({
+        let targets = report.tasks.filter { $0.kind == "line" || $0.kind == "subscription" }
+        guard !targets.isEmpty, targets.allSatisfy({
             ($0.state == .ready || $0.state == .committed) && $0.error == nil
         }) else { return .unconfirmed }
-        if lines.allSatisfy({ $0.resourceType == "direct" }) { return .direct }
-        if lines.contains(where: { $0.resourceType == "vpn" }) { return .vpn }
+        if targets.allSatisfy({ $0.kind == "line" && $0.resourceType == "direct" }) { return .direct }
+        if targets.contains(where: { $0.kind == "line" && $0.resourceType == "vpn" }) { return .vpn }
         // Groups, proxies, subscriptions and older reports must not be called
         // either a VPN connection or direct merely because their type is unknown.
         return .routed
@@ -39,32 +39,5 @@ enum ScenarioConnectionPresentation: Equatable {
         case .routed: return tr("流量按运行场景处理；场景启用不等于 VPN 已连接。", "Traffic follows the running scenario. An active scenario does not imply a VPN connection.")
         case .unconfirmed: return tr("尚无完整的已提交线路状态，请查看下方连接详情。", "Complete committed line status is unavailable. See connection details below.")
         }
-    }
-}
-
-/// A preview of saved bindings, not a second routing engine. Labels are explicitly
-/// configuration, so unsaved or unapplied edits cannot masquerade as live state.
-enum ScenarioRoutingDescription {
-    static func text(_ scenario: Scenario, in profile: Profile, tr: (String, String) -> String) -> String {
-        func target(_ lineID: String, _ subscriptionID: String) -> String {
-            if !subscriptionID.isEmpty {
-                return profile.subscriptions.first(where: { $0.id == subscriptionID })?.name
-                    ?? tr("订阅不可用", "Unavailable subscription")
-            }
-            guard let line = profile.lines.first(where: { $0.id == lineID }) else {
-                return tr("线路未配置", "Unconfigured line")
-            }
-            guard line.enabled else { return tr("\(line.name)（已禁用）", "\(line.name) (disabled)") }
-            return line.type == "direct" ? tr("原网络（直连）", "Existing network (direct)") : line.name
-        }
-        let defaultTarget = target(scenario.defaultLineID, scenario.defaultSubscriptionID)
-        var rows = scenario.bindings.map { binding -> String in
-            let name = profile.ruleSets.first(where: { $0.id == binding.ruleSetID })?.name
-                ?? tr("规则不可用", "Unavailable rule")
-            let selection = binding.conditionIDs.isEmpty ? "" : tr("（所选条件）", " (selected conditions)")
-            return "\(name)\(selection) → \(target(binding.lineID, binding.subscriptionID))"
-        }
-        rows.append(tr(scenario.bindings.isEmpty ? "全部流量" : "其余流量", scenario.bindings.isEmpty ? "All traffic" : "Other traffic") + " → " + defaultTarget)
-        return tr("配置：", "Configured: ") + rows.joined(separator: "\n")
     }
 }

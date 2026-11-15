@@ -49,21 +49,31 @@ final class ScenarioConnectionPresentationTests: XCTestCase {
         }
     }
 
-    func testRoutingPreviewShowsPurposeIndependentOfLocationName() {
-        var profile = Profile()
-        profile.lines = [Line(id: "d", name: "直连", type: "direct"), Line(id: "v", name: "公司 VPN", type: "vpn")]
-        profile.ruleSets = [RuleSet(id: "r", name: "公司内网", type: "manual")]
-        var scenario = Scenario(id: "s", name: "国内", bindings: [RuleBinding(ruleSetID: "r", lineID: "v")], defaultLineID: "d")
-        let text = ScenarioRoutingDescription.text(scenario, in: profile) { zh, _ in zh }
-        XCTAssertEqual(text, "配置：公司内网 → 公司 VPN\n其余流量 → 原网络（直连）")
-        scenario.name = "海外"
-        XCTAssertEqual(ScenarioRoutingDescription.text(scenario, in: profile) { zh, _ in zh }, text)
-        scenario.bindings = []
-        XCTAssertEqual(ScenarioRoutingDescription.text(scenario, in: profile) { zh, _ in zh }, "配置：全部流量 → 原网络（直连）")
+    func testSubscriptionsAreRoutedWithOrWithoutDirectLines() {
+        for types in [[], ["direct"]] {
+            for strategy in ["selector", "urltest", "direct", "vpn", ""] {
+                var committed = report(types)
+                committed.tasks.append(ConnectionTaskReport(
+                    id: "subscription:s", kind: "subscription", name: "Subscription", detail: "",
+                    preparation: "start-with-data-plane", resourceID: "s", resourceType: strategy, state: .pending))
+                committed.updateTask(id: "subscription:s", state: .ready)
+                XCTAssertEqual(ScenarioConnectionPresentation.resolve(connected: true, busy: false, report: committed), .routed)
+                for state in [ConnectionTaskState.pending, .running, .failed] {
+                    var incomplete = committed
+                    incomplete.updateTask(id: "subscription:s", state: state)
+                    XCTAssertEqual(ScenarioConnectionPresentation.resolve(connected: true, busy: false, report: incomplete), .unconfirmed)
+                }
+            }
+        }
     }
 
-    func testUnavailableTargetIsNotMisrepresentedAsDirect() {
-        let scenario = Scenario(id: "s", name: "公司", defaultLineID: "missing")
-        XCTAssertEqual(ScenarioRoutingDescription.text(scenario, in: Profile()) { _, en in en }, "Configured: All traffic → Unconfigured line")
+    func testVPNWithSubscriptionStillRequiresEveryTargetReady() {
+        var committed = report(["vpn"])
+        committed.tasks.append(ConnectionTaskReport(
+            id: "subscription:s", kind: "subscription", name: "Subscription", detail: "",
+            preparation: "start-with-data-plane", resourceID: "s", resourceType: "selector", state: .pending))
+        XCTAssertEqual(ScenarioConnectionPresentation.resolve(connected: true, busy: true, report: committed), .unconfirmed)
+        committed.updateTask(id: "subscription:s", state: .committed)
+        XCTAssertEqual(ScenarioConnectionPresentation.resolve(connected: true, busy: true, report: committed), .vpn)
     }
 }
