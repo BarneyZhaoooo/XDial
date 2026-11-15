@@ -1,0 +1,294 @@
+import Foundation
+import Network
+import NetworkExtension
+import Observation
+
+/// 当前网络的两条线索：连着哪个 Wi-Fi，流量从哪个国家或地区出去。
+struct NetworkSurroundings: Equatable, Sendable {
+    var ssid: String?
+    /// 两位地区代码，例如 JP、US；没查出来为空。
+    var countryCode: String?
+}
+
+/// 按当前网络挑场景。纯逻辑，方便测试。
+enum ScenarioAutoPicker {
+    struct Pick: Equatable, Sendable {
+        enum Reason: Equatable, Sendable {
+            /// 连上了某个场景登记过的 Wi-Fi。
+            case wifi(String)
+            /// 按网络出口所在地。
+            case country(String)
+        }
+
+        let scenarioID: String
+        let reason: Reason
+    }
+
+    /// 先看 Wi-Fi：连着哪个场景登记过的 Wi-Fi，就用哪个场景。
+    /// 否则看网络出口所在的地区：regionScenarios 里列了这个地区就用对应的场景，
+    /// 没列就用 "*" 对应的场景。两条线索都没有、或者对应的场景已经被删掉，就不动。
+    static func pick(
+        for surroundings: NetworkSurroundings,
+        scenarios: [Scenario],
+        regionScenarios: [String: String] = [:]
+    ) -> Pick? {
+        if let ssid = surroundings.ssid?.trimmingCharacters(in: .whitespacesAndNewlines), !ssid.isEmpty,
+           let matched = scenarios.first(where: { scenario in
+               scenario.matchSSIDs.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == ssid }
+           }) {
+            return Pick(scenarioID: matched.id, reason: .wifi(ssid))
+        }
+        guard let code = surroundings.countryCode?.uppercased(), code.count == 2,
+              code.allSatisfy({ $0.isASCII && $0.isLetter }),
+              let scenarioID = regionScenarios[code] ?? regionScenarios["*"],
+              scenarios.contains(where: { $0.id == scenarioID }) else { return nil }
+        return Pick(scenarioID: scenarioID, reason: .country(code))
+    }
+}
+
+/// 观察当前网络并给出该用哪个场景。只在 App 开着的时候工作。
+@Observable
+@MainActor
+final class ScenarioAutoPilot {
+    /// 最近一次判断的结果；还没判断过、或者没判断出来时为空。
+    private(set) var pick: ScenarioAutoPicker.Pick?
+    private(set) var isSurveying = false
+    /// 判断过至少一次（用来区分「还在判断」和「没判断出来」）。
+    private(set) var hasSurveyed = false
+    /// 网络变了（换了 Wi-Fi、Wi-Fi 换成蜂窝）时调用，由主屏决定要不要重新判断。
+    @ObservationIgnored var onNetworkChange: (() -> Void)?
+
+    @ObservationIgnored private var monitor: NWPathMonitor?
+    @ObservationIgnored private var lastPathSignature: String?
+    @ObservationIgnored private var changeDebounce: Task<Void, Never>?
+    @ObservationIgnored private var recentSwitches: [AutoSwitch] = []
+
+    /// 一次自动换场景的记录，用来防止来回切。
+    struct AutoSwitch: Equatable, Sendable {
+        let from: String
+        let to: String
+        let at: Date
+    }
+
+    /// 已连接时要不要自动换到 target。刚刚才从 target 自动换走的话就不再换回去——
+    /// 两次判断结果打架时（比如查出口的请求没能绕开隧道），宁可停下来提示，也不能反复断线重连。
+    func mayAutoSwitch(to target: String, now: Date = Date()) -> Bool {
+        recentSwitches.removeAll { now.timeIntervalSince($0.at) > 600 }
+        return !recentSwitches.contains { $0.from == target }
+    }
+
+    func noteAutoSwitch(from: String, to: String, now: Date = Date()) {
+        recentSwitches.append(AutoSwitch(from: from, to: to, at: now))
+    }
+    @ObservationIgnored private var running: Task<ScenarioAutoPicker.Pick?, Never>?
+    @ObservationIgnored private var lastSurveyAt: Date?
+
+    /// 最近一次判断是不是还新鲜（点连接时用，避免每次都等）。
+    var isFresh: Bool {
+        guard let lastSurveyAt else { return false }
+        return Date().timeIntervalSince(lastSurveyAt) < 20
+    }
+
+    func start() {
+        guard monitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            // 只关心物理网络换没换；VPN 自己的虚拟网卡上上下下不算。
+            let physical = path.availableInterfaces
+                .filter { $0.type == .wifi || $0.type == .cellular || $0.type == .wiredEthernet }
+                .map { "\($0.type):\($0.name)" }
+                .joined(separator: ",")
+            // 换一个 Wi-Fi 时网卡不变、网关会变，所以把网关也算进去。
+            let gateways = path.gateways.map { "\($0)" }.joined(separator: ",")
+            let signature = "\(path.status):\(physical):\(gateways)"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard signature != self.lastPathSignature else { return }
+                let isFirst = self.lastPathSignature == nil
+                self.lastPathSignature = signature
+                guard !isFirst else { return }
+                // 换网络时系统会连着报好几次，等它稳定下来再判断一次。
+                self.lastSurveyAt = nil
+                self.changeDebounce?.cancel()
+                self.changeDebounce = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(1.5))
+                    guard !Task.isCancelled else { return }
+                    self?.onNetworkChange?()
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "xdial.scenario-autopilot.path"))
+        self.monitor = monitor
+    }
+
+    func stop() {
+        monitor?.cancel()
+        monitor = nil
+        lastPathSignature = nil
+        changeDebounce?.cancel()
+        changeDebounce = nil
+    }
+
+    /// 看一眼当前网络，返回该用的场景。同时来的多次调用合并成一次。
+    /// regionScenarios 为空时只看 Wi-Fi，不去查网络出口。
+    @discardableResult
+    func survey(scenarios: [Scenario], regionScenarios: [String: String] = [:]) async -> ScenarioAutoPicker.Pick? {
+        if let running { return await running.value }
+        isSurveying = true
+        let task = Task { () -> ScenarioAutoPicker.Pick? in
+            let ssid = await NetworkProbe.currentSSID()
+            // 已经靠 Wi-Fi 认出来了，或者没有按地区选场景的配置，就不用去查出口。
+            if let pick = ScenarioAutoPicker.pick(
+                for: NetworkSurroundings(ssid: ssid, countryCode: nil),
+                scenarios: scenarios
+            ) {
+                return pick
+            }
+            guard !regionScenarios.isEmpty else { return nil }
+            let country = await NetworkProbe.exitCountryCode()
+            return ScenarioAutoPicker.pick(
+                for: NetworkSurroundings(ssid: ssid, countryCode: country),
+                scenarios: scenarios,
+                regionScenarios: regionScenarios
+            )
+        }
+        running = task
+        let result = await task.value
+        running = nil
+        // 这次没查出来（比如刚好断网）就保留上一次的结论，不把界面上的说明清掉。
+        if let result { pick = result }
+        isSurveying = false
+        hasSurveyed = true
+        lastSurveyAt = Date()
+        return result
+    }
+}
+
+/// 读 Wi-Fi 名称、查网络出口所在地。
+enum NetworkProbe {
+    static func currentSSID() async -> String? {
+        #if targetEnvironment(simulator)
+        // 模拟器读不到 Wi-Fi：-XDialFakeSSID <名称> 用来演示。
+        return launchArgument("-XDialFakeSSID")
+        #else
+        // 需要「访问 Wi-Fi 信息」权限；App 装了 VPN 配置，所以不用再要定位授权。
+        return await withCheckedContinuation { continuation in
+            NEHotspotNetwork.fetchCurrent { network in
+                continuation.resume(returning: network?.ssid)
+            }
+        }
+        #endif
+    }
+
+    /// 网络出口所在的国家或地区。先问苹果，问不到再问 Cloudflare。
+    /// 请求绑在物理网卡上，连着 VPN 时也不会绕进隧道，查到的始终是本地网络的出口。
+    static func exitCountryCode() async -> String? {
+        #if targetEnvironment(simulator)
+        if let fake = launchArgument("-XDialFakeCountry") { return fake.uppercased() }
+        #endif
+        if let text = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run(),
+           let code = countryCode(inAppleReply: text) {
+            return code
+        }
+        if let text = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run(),
+           let code = countryCode(inCloudflareTrace: text) {
+            return code
+        }
+        return nil
+    }
+
+    /// 苹果的回复正文就是两位地区代码。
+    static func countryCode(inAppleReply text: String) -> String? {
+        guard text.hasPrefix("HTTP/1.1 200") || text.hasPrefix("HTTP/1.0 200"),
+              let bodyStart = text.range(of: "\r\n\r\n") else { return nil }
+        return text[bodyStart.upperBound...]
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { $0.count == 2 && $0.allSatisfy { $0.isASCII && $0.isUppercase } }
+    }
+
+    /// Cloudflare 的回复里有一行 loc=XX。
+    static func countryCode(inCloudflareTrace text: String) -> String? {
+        for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix("loc=") {
+            let code = line.dropFirst(4).trimmingCharacters(in: .whitespaces).uppercased()
+            // XX、T1 是 Cloudflare 表示「不知道」的占位值。
+            if code.count == 2, code != "XX", code != "T1", code.allSatisfy(\.isLetter) { return code }
+        }
+        return nil
+    }
+
+    #if targetEnvironment(simulator)
+    private static func launchArgument(_ name: String) -> String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else { return nil }
+        let value = arguments[index + 1]
+        return value.isEmpty ? nil : value
+    }
+    #endif
+}
+
+/// 一次最简单的 HTTPS GET，连接禁止走虚拟网卡（VPN 隧道），只能从 Wi-Fi 或蜂窝网络直接出去。
+private final class DirectHTTPSProbe: @unchecked Sendable {
+    // 所有可变状态都只在 queue 上读写。
+    private let queue = DispatchQueue(label: "xdial.direct-https-probe")
+    private let connection: NWConnection
+    private let request: Data
+    private var buffer = Data()
+    private var continuation: CheckedContinuation<String?, Never>?
+
+    init(host: String, path: String) {
+        let parameters = NWParameters.tls
+        parameters.prohibitedInterfaceTypes = [.other, .loopback]
+        connection = NWConnection(host: NWEndpoint.Host(host), port: 443, using: parameters)
+        request = Data(
+            "GET \(path) HTTP/1.1\r\nHost: \(host)\r\nUser-Agent: XDial\r\nAccept: */*\r\nConnection: close\r\n\r\n".utf8
+        )
+    }
+
+    func run(timeout: TimeInterval = 2.5) async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                self.continuation = continuation
+                self.connection.stateUpdateHandler = { [weak self] state in
+                    guard let self else { return }
+                    switch state {
+                    case .ready:
+                        self.send()
+                    case .failed, .cancelled:
+                        self.finish()
+                    default:
+                        break
+                    }
+                }
+                self.connection.start(queue: self.queue)
+                self.queue.asyncAfter(deadline: .now() + timeout) { self.finish() }
+            }
+        }
+    }
+
+    private func send() {
+        connection.send(content: request, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            if error != nil { self.finish() } else { self.receive() }
+        })
+    }
+
+    private func receive() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let data { self.buffer.append(data) }
+            if isComplete || error != nil || self.buffer.count > 32_768 {
+                self.finish()
+            } else {
+                self.receive()
+            }
+        }
+    }
+
+    private func finish() {
+        guard let continuation else { return }
+        self.continuation = nil
+        connection.cancel()
+        continuation.resume(returning: buffer.isEmpty ? nil : String(decoding: buffer, as: UTF8.self))
+    }
+}

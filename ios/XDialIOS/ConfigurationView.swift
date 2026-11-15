@@ -10,43 +10,43 @@ struct ConfigurationView: View {
     @State private var subscriptionErrors: [String: String] = [:]
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("", selection: $section) {
-                    ForEach(ConfigSection.allCases) { item in
-                        Text(item.title(app)).tag(item)
-                    }
+        VStack(spacing: 0) {
+            Picker("", selection: $section) {
+                ForEach(ConfigSection.allCases) { item in
+                    Text(item.title(app)).tag(item)
                 }
-                .pickerStyle(.segmented)
-                .padding()
+            }
+            .pickerStyle(.segmented)
+            .padding()
 
-                if app.hasPendingRuntimeChanges {
-                    PendingRuntimeChangesBanner()
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
-                }
+            if app.hasPendingRuntimeChanges {
+                PendingRuntimeChangesBanner()
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
 
-                switch section {
-                case .lines: lineList
-                case .rules: ruleList
-                case .subscriptions: subscriptionList
-                case .scenarios: ScenarioList()
-                }
+            switch section {
+            case .lines: lineList
+            case .rules: ruleList
+            case .subscriptions: subscriptionList
+            case .scenarios: ScenarioList()
             }
-            .navigationTitle(app.tr("配置", "Configuration"))
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    addControl
-                        .disabled(app.hasActiveTunnel || app.isBusy)
-                }
+        }
+        .background(XDialTheme.canvas.ignoresSafeArea())
+        .navigationTitle(app.tr("线路与规则", "Lines & Rules"))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                addControl
+                    .disabled(app.hasActiveTunnel || app.isBusy)
             }
-            .sheet(isPresented: $showAddSubscription) {
-                AddSubscriptionView()
-                    .environmentObject(app)
-            }
-            .navigationDestination(item: $editingLineID) { lineID in
-                LineEditorView(lineID: lineID)
-            }
+        }
+        .sheet(isPresented: $showAddSubscription) {
+            AddSubscriptionView()
+                .environmentObject(app)
+        }
+        .navigationDestination(item: $editingLineID) { lineID in
+            LineEditorView(lineID: lineID)
         }
     }
 
@@ -93,7 +93,7 @@ struct ConfigurationView: View {
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: lineSymbol(line.type))
-                            .foregroundStyle(line.type == "tailscale" ? Color.orange : Color.accentColor)
+                            .foregroundStyle(line.type == "tailscale" ? XDialTheme.warning : Color.accentColor)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(line.name)
@@ -106,7 +106,7 @@ struct ConfigurationView: View {
                                     "Setup required: \(issues.joined(separator: ", "))"
                                 ))
                                 .font(.caption)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(XDialTheme.warning)
                                 .lineLimit(2)
                             }
                         }
@@ -132,6 +132,7 @@ struct ConfigurationView: View {
                 }
             }
         }
+        .xdialGroupedBackground()
         .overlay {
             if app.profile.lines.isEmpty {
                 ContentUnavailableView(
@@ -205,6 +206,7 @@ struct ConfigurationView: View {
                 }
             }
         }
+        .xdialGroupedBackground()
         .overlay {
             if app.profile.ruleSets.isEmpty {
                 ContentUnavailableView(
@@ -244,7 +246,7 @@ struct ConfigurationView: View {
                                 if let error = subscriptionErrors[subscription.id] {
                                     Label(error, systemImage: "exclamationmark.triangle.fill")
                                         .font(.caption2)
-                                        .foregroundStyle(.red)
+                                        .foregroundStyle(XDialTheme.danger)
                                         .lineLimit(2)
                                 }
                             }
@@ -287,6 +289,7 @@ struct ConfigurationView: View {
                 }
             }
         }
+        .xdialGroupedBackground()
     }
 
     private func addLineButton(type: String, name: String) -> some View {
@@ -476,6 +479,7 @@ private struct LineEditorView: View {
                 ContentUnavailableView(app.tr("线路已删除", "Line deleted"), systemImage: "trash")
             }
         }
+        .xdialGroupedBackground()
         .disabled(app.isBusy)
         .accessibilityIdentifier("line-editor-\(lineID)")
         .navigationTitle(app.tr("编辑线路", "Edit Line"))
@@ -709,7 +713,7 @@ private struct LineEditorView: View {
                                     ),
                                     systemImage: "exclamationmark.triangle.fill"
                                 )
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(XDialTheme.warning)
                             }
 
                             Button(role: .destructive) {
@@ -731,7 +735,7 @@ private struct LineEditorView: View {
 
                     if let tailscaleStatusError {
                         Label(tailscaleStatusError, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(XDialTheme.warning)
                     }
 
                     Button {
@@ -1184,6 +1188,7 @@ private struct RuleEditorView: View {
                 ContentUnavailableView(app.tr("规则已删除", "Rule deleted"), systemImage: "trash")
             }
         }
+        .xdialGroupedBackground()
         .navigationTitle(app.tr("编辑规则", "Edit Rule"))
         .disabled(app.hasActiveTunnel || app.isBusy || isConnectivityTestRule)
         .onAppear { loadManualValues() }
@@ -1443,7 +1448,7 @@ private struct SubscriptionEditorView: View {
                 if let operationError {
                     Section {
                         Label(operationError, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(XDialTheme.danger)
                     }
                 }
 
@@ -1581,6 +1586,7 @@ private struct SubscriptionEditorView: View {
                 ContentUnavailableView(app.tr("订阅已删除", "Subscription deleted"), systemImage: "trash")
             }
         }
+        .xdialGroupedBackground()
         .navigationTitle(app.tr("编辑订阅", "Edit Subscription"))
     }
 
@@ -1782,7 +1788,7 @@ private struct AddSubscriptionView: View {
                 if let error = parseError {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(XDialTheme.danger)
                     }
                 }
 
@@ -1802,6 +1808,7 @@ private struct AddSubscriptionView: View {
                     }
                 }
             }
+            .xdialGroupedBackground()
             .navigationTitle(app.tr("添加订阅", "Add Subscription"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -333,6 +333,8 @@ struct AppPersistenceContext {
     let autoReconnectKey: String
     let systemOnDemandKey: String
     let tailscaleSetupLineKey: String
+    /// 已经应用到哪一版预置配置；用来在升级后给老配置补一次新内容。
+    var seedRevisionKey: String { "xdial.preset-scenario-version" }
 
     static let production = AppPersistenceContext(
         defaults: .standard,
@@ -453,6 +455,10 @@ final class AppState: ObservableObject {
     private var onDemandStateSub: AnyCancellable?
 
     private let persistence: AppPersistenceContext
+    /// 打包时带进来的预置配置；没有时为空。「恢复默认」也回到它。
+    let seed: ProfileSeed?
+    /// 「恢复默认配置」用的那份：有预置用预置，没有用空白起步配置。
+    var defaultProfile: Profile { seed?.profile ?? Profile.bootstrap() }
     private let keychainPrefix = "xdial-line-"
     private let subKeychainPrefix = "xdial-sub-"
     private var persistedRevision: String?
@@ -674,6 +680,22 @@ final class AppState: ObservableObject {
             ids.insert(binding.lineID)
         }
         return ids
+    }
+
+    /// 当前场景用到、但还没填完的线路，首页据此用一句话告诉用户去哪儿补什么。
+    var incompleteActiveLineSummaries: [String] {
+        guard !persistenceRequiresRecovery, let scenario = activeScenario else { return [] }
+        let ids = effectiveReferencedLineIDs(in: scenario)
+        return profile.lines.compactMap { line in
+            guard ids.contains(line.id) else { return nil }
+            let issues = routeLineConfigurationIssues(line)
+            guard !issues.isEmpty else { return nil }
+            let name = line.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return tr(
+                "「\(name.isEmpty ? line.id : name)」\(issues.joined(separator: "、"))",
+                "“\(name.isEmpty ? line.id : name)”: \(issues.joined(separator: ", "))"
+            )
+        }
     }
 
     func routeLineConfigurationIssues(_ line: Line) -> [String] {
@@ -1015,15 +1037,19 @@ final class AppState: ObservableObject {
         engine: TunnelEngine = NoopTunnelEngine(),
         tunnelManager: TunnelManaging? = nil,
         tailscaleSetupRuntime: TailscaleSetupRuntime? = nil,
-        persistence: AppPersistenceContext = .production
+        persistence: AppPersistenceContext = .production,
+        seed: ProfileSeed? = nil
     ) {
         self.engine = engine
         self.tunnelManager = tunnelManager
         self.tailscaleSetupRuntime = tailscaleSetupRuntime
         self.persistence = persistence
+        self.seed = seed
 
-        // 先用 bootstrap 初始化，loadSaved 后会被覆盖
-        self.profile = Profile.bootstrap()
+        // 先用预置配置（没有就用 bootstrap）初始化，loadSaved 后会被覆盖
+        let initialProfile = seed?.profile ?? Profile.bootstrap()
+        self.profile = initialProfile
+        self.lastPersistedProfile = initialProfile
 
         // 语言：先读已保存，没有则用系统语言
         if let savedLang = persistence.defaults.string(forKey: persistence.languageKey),
@@ -1531,11 +1557,27 @@ final class AppState: ObservableObject {
         switch profileState {
         case .missing:
             lastPersistedProfile = profile
-            guard vaultState == .missing else {
-                blockPersistence(with: profile, log: "profile missing while secure vault exists or is unreadable")
+            switch vaultState {
+            case .missing:
+                break
+            case .available, .legacy, .corrupt:
+                // iOS 删除 App 时会清掉 UserDefaults，但钥匙串条目会保留。配置不存在而
+                // 钥匙串仍有凭据，说明是上一次安装留下的孤儿数据：与之配对的配置已经没了，
+                // 继续保留只会把首次启动锁死。清掉后按全新安装处理。
+                guard KeychainStore.clear(context: persistence.keychain) else {
+                    blockPersistence(with: profile, log: "stale secure vault from a previous install could not be cleared")
+                    return
+                }
+                appLog("loadSaved: cleared stale secure vault left by a previous install")
+            case .unavailable:
+                // 设备锁定等原因暂时读不到钥匙串时无法判断，保持原来的保护。
+                blockPersistence(with: profile, log: "profile missing while secure vault is unreadable")
                 return
             }
             appLog("loadSaved: no saved data, using bootstrap")
+            if let seed {
+                persistence.defaults.set(seed.revision, forKey: persistence.seedRevisionKey)
+            }
 
         case .corrupt:
             blockPersistence(with: profile, log: "profile envelope is corrupt")
@@ -1553,6 +1595,11 @@ final class AppState: ObservableObject {
             restoreStructuredValues(vaultEnvelope.values, into: &loaded)
             let profileBeforeNormalization = loaded
             normalizeLegacyProfile(&loaded)
+            // 预置配置有新增时，给老配置补一次；每个 revision 只补一次，用户之后删掉的不会再回来。
+            if let seed, persistence.defaults.integer(forKey: persistence.seedRevisionKey) < seed.revision {
+                loaded.adding(seed: seed.profile)
+                persistence.defaults.set(seed.revision, forKey: persistence.seedRevisionKey)
+            }
             let normalizationChanged = loaded != profileBeforeNormalization
             profile = loaded
             lastPersistedProfile = loaded

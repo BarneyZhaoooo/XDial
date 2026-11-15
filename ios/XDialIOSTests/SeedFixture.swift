@@ -1,0 +1,72 @@
+import Foundation
+@testable import XDial
+
+/// 测试用的预置配置：结构和企业包会带的那种一样，内容全是示例域名。
+enum SeedFixture {
+    static let json = """
+    {
+      "format": "xdial-mobile-seed",
+      "schema_version": 1,
+      "revision": 3,
+      "region_scenarios": { "JP": "home-region", "SG": "harbor", "*": "abroad" },
+      "profile": {
+        "lines": [
+          { "id": "direct", "name": "直连", "type": "direct", "verified": true },
+          { "id": "office-vpn", "name": "公司 VPN", "type": "vpn", "vpn_server": "vpn.example.com:8443" }
+        ],
+        "rule_sets": [
+          { "id": "intranet", "name": "公司内网", "type": "manual", "enabled": true, "url": "", "format": "auto",
+            "domains": ["corp.example.com"], "cidrs": ["10.0.0.0/8"] },
+          { "id": "local-network", "name": "本地局域网", "type": "manual", "enabled": true, "url": "", "format": "auto",
+            "domains": [], "cidrs": ["192.168.0.0/16"] },
+          { "id": "region-domains", "name": "本地区网站", "type": "url", "enabled": true, "format": "srs",
+            "url": "https://rules.example.com/region-domains.srs", "domains": [], "cidrs": [] },
+          { "id": "region-ips", "name": "本地区 IP", "type": "url", "enabled": true, "format": "srs",
+            "url": "https://rules.example.com/region-ips.srs", "domains": [], "cidrs": [] },
+          { "id": "restricted-services", "name": "受限服务", "type": "manual", "enabled": true, "url": "", "format": "auto",
+            "domains": ["service.example.org"], "cidrs": [] }
+        ],
+        "subscriptions": [],
+        "scenarios": [
+          { "id": "office", "name": "在公司", "icon": "office", "match_ssids": ["Office"],
+            "bindings": [], "default_line_id": "direct" },
+          { "id": "home-region", "name": "在本地区", "icon": "regional",
+            "bindings": [
+              { "rule_set_id": "intranet", "line_id": "office-vpn" },
+              { "rule_set_id": "local-network", "line_id": "direct" },
+              { "rule_set_id": "region-domains", "line_id": "direct" },
+              { "rule_set_id": "region-ips", "line_id": "direct" }
+            ],
+            "default_line_id": "office-vpn" },
+          { "id": "abroad", "name": "在外地", "icon": "travel",
+            "bindings": [
+              { "rule_set_id": "local-network", "line_id": "direct" },
+              { "rule_set_id": "intranet", "line_id": "office-vpn" },
+              { "rule_set_id": "region-domains", "line_id": "office-vpn" },
+              { "rule_set_id": "region-ips", "line_id": "office-vpn" }
+            ],
+            "default_line_id": "direct" },
+          { "id": "harbor", "name": "在港口", "icon": "harbor",
+            "bindings": [
+              { "rule_set_id": "local-network", "line_id": "direct" },
+              { "rule_set_id": "intranet", "line_id": "office-vpn" },
+              { "rule_set_id": "restricted-services", "line_id": "office-vpn" },
+              { "rule_set_id": "region-domains", "line_id": "office-vpn" },
+              { "rule_set_id": "region-ips", "line_id": "office-vpn" }
+            ],
+            "default_line_id": "direct" }
+        ],
+        "active_scenario_id": "home-region"
+      }
+    }
+    """
+
+    static func seed() throws -> MobileSeed {
+        try MobileSeed.decode(Data(json.utf8))
+    }
+
+    static func profile() -> Profile {
+        // 测试里固定的内容，解不出来就是测试本身写错了。
+        try! seed().profileSeed.profile
+    }
+}

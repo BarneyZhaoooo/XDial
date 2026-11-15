@@ -8,6 +8,8 @@ import WidgetKit
 @MainActor
 enum MobileAppRuntime {
     static let state: AppState = makeState()
+    /// 实时活动（锁屏与灵动岛）的同步器，App 启动时创建。
+    static var connectionActivity: ConnectionActivityController?
 
     private static func makeState() -> AppState {
         #if targetEnvironment(simulator)
@@ -23,7 +25,8 @@ enum MobileAppRuntime {
             engine: engine,
             tunnelManager: manager,
             tailscaleSetupRuntime: FakeTailscaleSetupRuntime(),
-            persistence: persistence
+            persistence: persistence,
+            seed: MobileSeed.bundled?.profileSeed
         )
         #else
         let engine = GoEngine.shared
@@ -31,7 +34,8 @@ enum MobileAppRuntime {
         return AppState(
             engine: engine,
             tunnelManager: manager,
-            tailscaleSetupRuntime: LocalTailscaleSetupRuntime()
+            tailscaleSetupRuntime: LocalTailscaleSetupRuntime(),
+            seed: MobileSeed.bundled?.profileSeed
         )
         #endif
     }
