@@ -46,13 +46,14 @@ struct ConnectionLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                // 收起时只放网速：左边下载，右边上传；没有流量时两边都空着，灵动岛就是原样。
-                if context.state.showsCompactSpeed {
-                    CompactSpeed(symbol: "arrow.down", value: context.state.downloadBytesPerSecond, tint: tint)
+                // 收起时只放网速：左边下载，右边上传，各看各的。哪一侧没有速度可显示就空着不占地方，
+                // 两侧都没有时灵动岛就是原样。
+                if let speed = context.state.compactDownloadSpeed {
+                    CompactSpeed(symbol: "arrow.down", value: speed, tint: tint)
                 }
             } compactTrailing: {
-                if context.state.showsCompactSpeed {
-                    CompactSpeed(symbol: "arrow.up", value: context.state.uploadBytesPerSecond, tint: tint)
+                if let speed = context.state.compactUploadSpeed {
+                    CompactSpeed(symbol: "arrow.up", value: speed, tint: tint)
                 }
             } minimal: {
                 DialGlyph(filled: context.state.phase != .working, color: tint)
@@ -147,18 +148,10 @@ private struct DisconnectButton: View {
     }
 }
 
-private extension XDialConnectionAttributes.ContentState {
-    /// 灵动岛收起时只在真有流量时显示网速；还没采样、或只有不到 1 KB/s 的零星流量都不显示。
-    var showsCompactSpeed: Bool {
-        guard connectedAt != nil else { return false }
-        return max(downloadBytesPerSecond ?? 0, uploadBytesPerSecond ?? 0) >= 1_000
-    }
-}
-
 /// 灵动岛收起时的一侧网速。
 private struct CompactSpeed: View {
     let symbol: String
-    let value: Double?
+    let value: Double
     let tint: Color
 
     var body: some View {

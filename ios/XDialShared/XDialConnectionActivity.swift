@@ -29,6 +29,23 @@ struct XDialConnectionAttributes: ActivityAttributes {
     var disconnectTitle: String
 }
 
+extension XDialConnectionAttributes.ContentState {
+    /// 灵动岛收起时，一个方向的网速到这个数才值得占地方；再小只是零星的后台流量。
+    static let compactSpeedThreshold: Double = 1_000
+
+    /// 灵动岛收起时左侧要显示的下载速度；没连上、还没采样或没有像样的下载时为空，那一侧不占地方。
+    var compactDownloadSpeed: Double? { compactSpeed(downloadBytesPerSecond) }
+
+    /// 灵动岛收起时右侧要显示的上传速度，规则同下载，两侧各看各的。
+    var compactUploadSpeed: Double? { compactSpeed(uploadBytesPerSecond) }
+
+    private func compactSpeed(_ bytesPerSecond: Double?) -> Double? {
+        guard connectedAt != nil, let bytesPerSecond,
+              bytesPerSecond >= Self.compactSpeedThreshold else { return nil }
+        return bytesPerSecond
+    }
+}
+
 /// 网速的两种写法：灵动岛收起时地方小，用「1.4M」；其它地方用「1.4 MB/s」。
 enum XDialSpeedFormat {
     static func short(_ bytesPerSecond: Double?) -> String {
