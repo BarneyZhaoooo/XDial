@@ -28,9 +28,9 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Mapping, NamedTuple
 
-SOURCE_REPOSITORY = "kafeifei/XDial"
+SOURCE_REPOSITORY = "xindong/XDial"
 SOURCE_GIT_URL = f"https://github.com/{SOURCE_REPOSITORY}.git"
-PAGES_REPOSITORY = "saymiao/xdial-updates"
+PAGES_REPOSITORY = "xindong/xdial-updates"
 PAGES_GIT_URL = f"https://github.com/{PAGES_REPOSITORY}.git"
 # fetch and clone otherwise start a detached `git maintenance run --auto`,
 # which can still be writing objects/maintenance.lock while the temporary
@@ -40,8 +40,8 @@ STABLE = "stable"
 BETA = "beta"
 CHANNELS = (STABLE, BETA)
 FEED_URLS = {
-    STABLE: "https://saymiao.github.io/xdial-updates/stable.json",
-    BETA: "https://saymiao.github.io/xdial-updates/beta.json",
+    STABLE: "https://xindong.github.io/xdial-updates/stable.json",
+    BETA: "https://xindong.github.io/xdial-updates/beta.json",
 }
 ROOT = Path(__file__).resolve().parents[1]
 TAG_PATTERN = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")

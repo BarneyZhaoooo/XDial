@@ -16,6 +16,9 @@ jobs:
   release:
     runs-on: macos-15
     timeout-minutes: 90
+    # Signing and notarization secrets live only in this environment: it needs a
+    # maintainer's approval and accepts only v* tags.
+    environment: release
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}

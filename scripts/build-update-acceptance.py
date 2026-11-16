@@ -41,7 +41,7 @@ BETA_NOTES = """- 开启“接收 beta 版本”的 A 应升级到此 beta；关
 """
 APPLICATION_IDENTIFIER = "com.xd.xdial.app"
 # An acceptance feed's archives must come from the feed repository's releases.
-ACCEPTANCE_ARCHIVES = "https://github.com/saymiao/xdial-updates/releases/download"
+ACCEPTANCE_ARCHIVES = "https://github.com/xindong/xdial-updates/releases/download"
 # What a Release build embeds for a preset configuration package
 # (macos/project.yml); the beta contract rejects a bundle that carries either.
 PRIVATE_CONFIGURATION_VARIABLES = ("XDIAL_RULE_SET_PRESETS_FILE", "XDIAL_SEED_PROFILE_FILE")

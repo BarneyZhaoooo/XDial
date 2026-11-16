@@ -41,12 +41,12 @@ class PublishReleaseTests(unittest.TestCase):
         download_name = "untagged-0123456789abcdefabcd" if draft else "v1.2.3"
         return {
             "id": 123, "tag_name": "v1.2.3", "draft": draft, "prerelease": False,
-            "html_url": f"https://github.com/kafeifei/XDial/releases/tag/{download_name}",
+            "html_url": f"https://github.com/xindong/XDial/releases/tag/{download_name}",
             "body": "## 更新了什么\n\n- 修复更新检查。",
             "assets": [
                 {"name": name, "state": "uploaded", "size": 123,
                  "browser_download_url":
-                 f"https://github.com/kafeifei/XDial/releases/download/{download_name}/{name}"}
+                 f"https://github.com/xindong/XDial/releases/download/{download_name}/{name}"}
                 for name in ["XDial-v1.2.3.zip", "XDial-v1.2.3.zip.sha256"]
             ],
         }
@@ -64,7 +64,7 @@ class PublishReleaseTests(unittest.TestCase):
         with patch.object(PUBLISH, "gh_json", return_value=[[other], [draft]]) as gh_json:
             self.assertIs(PUBLISH.find_source_release("v1.2.3"), draft)
         gh_json.assert_called_once_with(
-            "api", "repos/kafeifei/XDial/releases?per_page=100", "--paginate", "--slurp"
+            "api", "repos/xindong/XDial/releases?per_page=100", "--paginate", "--slurp"
         )
 
     def test_missing_or_ambiguous_release_fails_before_mutation(self):
@@ -89,7 +89,7 @@ class PublishReleaseTests(unittest.TestCase):
             lambda release: release.update(body=" \n "),
             lambda release: release.update(html_url="https://example.com/untagged-0123456789abcdefabcd"),
             lambda release: release.update(
-                html_url="https://github.com/kafeifei/XDial/releases/tag/untagged-bad"),
+                html_url="https://github.com/xindong/XDial/releases/tag/untagged-bad"),
             lambda release: release["assets"].pop(),
             lambda release: release["assets"].append(copy.deepcopy(release["assets"][0])),
             lambda release: release["assets"][0].update(state="new"),
@@ -210,11 +210,11 @@ class PublishReleaseTests(unittest.TestCase):
 
         self.assertEqual(
             gh_json_mock.call_args_list[-1].args,
-            ("api", "repos/kafeifei/XDial/releases/123"),
+            ("api", "repos/xindong/XDial/releases/123"),
         )
         edit_index = next(index for index, event in enumerate(events) if event[:3] == ("gh", "release", "edit"))
         published_fetch_index = events.index(
-            ("api", "api", "repos/kafeifei/XDial/releases/123")
+            ("api", "api", "repos/xindong/XDial/releases/123")
         )
         pages_index = events.index(("pages",))
         self.assertLess(edit_index, published_fetch_index)
@@ -222,14 +222,14 @@ class PublishReleaseTests(unittest.TestCase):
         download = next(event for event in events if event[:3] == ("gh", "release", "download"))
         self.assertEqual(
             download[:11],
-            ("gh", "release", "download", "v1.2.3", "--repo", "kafeifei/XDial",
+            ("gh", "release", "download", "v1.2.3", "--repo", "xindong/XDial",
              "--pattern", "XDial-v1.2.3.zip", "--pattern", "XDial-v1.2.3.zip.sha256", "--dir"),
         )
 
     def test_rejects_untagged_asset_urls_after_publication(self):
         release = self.release(True)
         release["draft"] = False
-        release["html_url"] = "https://github.com/kafeifei/XDial/releases/tag/v1.2.3"
+        release["html_url"] = "https://github.com/xindong/XDial/releases/tag/v1.2.3"
         with self.assertRaisesRegex(ValueError, "missing or unexpected release asset"):
             PUBLISH.validate_release(release, "v1.2.3")
 
@@ -240,7 +240,7 @@ class PublishReleaseTests(unittest.TestCase):
         untagged_assets = self.release(True)
         untagged_assets["draft"] = False
         untagged_assets["html_url"] = (
-            "https://github.com/kafeifei/XDial/releases/tag/v1.2.3"
+            "https://github.com/xindong/XDial/releases/tag/v1.2.3"
         )
         cases = [
             (still_draft, "exact source release was not published"),
@@ -295,12 +295,12 @@ def release_fixture(tag, draft=True, prerelease=False):
     download_name = "untagged-0123456789abcdefabcd" if draft else tag
     return {
         "id": 123, "tag_name": tag, "draft": draft, "prerelease": prerelease,
-        "html_url": f"https://github.com/kafeifei/XDial/releases/tag/{download_name}",
+        "html_url": f"https://github.com/xindong/XDial/releases/tag/{download_name}",
         "body": f"# XDial {tag}\n\n## 更新了什么\n\n- 修复更新检查。",
         "assets": [
             {"name": name, "state": "uploaded", "size": 123,
              "browser_download_url":
-             f"https://github.com/kafeifei/XDial/releases/download/{download_name}/{name}"}
+             f"https://github.com/xindong/XDial/releases/download/{download_name}/{name}"}
             for name in [f"XDial-{tag}.zip", f"XDial-{tag}.zip.sha256"]
         ],
     }
@@ -320,7 +320,7 @@ def feed_release(tag, build):
         "minimumSystemVersion": "15.0",
         "publishedAt": "2026-10-18T00:00:00Z",
         "releaseNotes": "- 修复更新检查。",
-        "archiveURL": f"https://github.com/kafeifei/XDial/releases/download/{tag}/XDial-{tag}.zip",
+        "archiveURL": f"https://github.com/xindong/XDial/releases/download/{tag}/XDial-{tag}.zip",
         "archiveSize": 123,
         "archiveSHA256": hashlib.sha256(tag.encode()).hexdigest(),
     }
@@ -622,7 +622,7 @@ class BetaChannelTests(unittest.TestCase):
             self.assertEqual(PUBLISH.read_release_build("v1.3.1"), 180)
         self.assertEqual(
             run.call_args.args[0][:9],
-            ["gh", "release", "download", "v1.3.1", "--repo", "kafeifei/XDial",
+            ["gh", "release", "download", "v1.3.1", "--repo", "xindong/XDial",
              "--pattern", "XDial-v1.3.1.zip", "--dir"],
         )
 
@@ -692,7 +692,7 @@ class BetaChannelTests(unittest.TestCase):
         return order
 
     def test_dispatch_waits_for_the_publisher_and_names_only_the_beta_channel(self):
-        runs = "repos/saymiao/xdial-updates/actions/workflows/publish.yml/runs?per_page=30"
+        runs = "repos/xindong/xdial-updates/actions/workflows/publish.yml/runs?per_page=30"
         found = {"workflow_runs": [{"id": 7, "display_title": "publish beta v1.4.0-beta.1 [req]",
                                     "html_url": "https://example.invalid/7"}]}
         order = self.dispatch("beta", "v1.4.0-beta.1", [
@@ -703,12 +703,12 @@ class BetaChannelTests(unittest.TestCase):
         ])
         self.assertEqual(order[:2], [("api", runs), ("api", runs)])
         self.assertEqual(order[2], (
-            "gh", "workflow", "run", "publish.yml", "--repo", "saymiao/xdial-updates",
+            "gh", "workflow", "run", "publish.yml", "--repo", "xindong/xdial-updates",
             "--ref", "main", "-f", "release_tag=v1.4.0-beta.1", "-f", "operation=publish",
             "-f", "channel=beta", "-f", "request_id=req",
         ))
         self.assertEqual(order[4][:4], ("gh", "run", "watch", "7"))
-        self.assertEqual(order[5], ("api", "repos/saymiao/xdial-updates/actions/runs/7"))
+        self.assertEqual(order[5], ("api", "repos/xindong/xdial-updates/actions/runs/7"))
 
         # Stable dispatches exactly as before the channel existed.
         found["workflow_runs"][0]["display_title"] = "Publish v1.2.3 [req]"
@@ -716,7 +716,7 @@ class BetaChannelTests(unittest.TestCase):
             {"workflow_runs": []}, found, {"conclusion": "success"},
         ])
         self.assertEqual(order[1], (
-            "gh", "workflow", "run", "publish.yml", "--repo", "saymiao/xdial-updates",
+            "gh", "workflow", "run", "publish.yml", "--repo", "xindong/xdial-updates",
             "--ref", "main", "-f", "release_tag=v1.2.3", "-f", "operation=publish",
             "-f", "request_id=req",
         ))
@@ -787,7 +787,7 @@ class BetaChannelTests(unittest.TestCase):
         self.assertEqual(
             self.served(PUBLISH.render_feed(feed("stable", stable)),
                         "v1.2.3", "123", stable["archiveSHA256"]),
-            "https://saymiao.github.io/xdial-updates/stable.json",
+            "https://xindong.github.io/xdial-updates/stable.json",
         )
 
         reordered = dict(reversed(list(beta.items())))
@@ -821,7 +821,7 @@ class BetaChannelTests(unittest.TestCase):
         run.remote.assert_called_once_with("v1.4.0-beta.1", "beta", PUBLISH.SOURCE_GIT_URL)
         self.assertEqual(run.verify_archive.call_args.args[2:], ("v1.4.0-beta.1", "beta"))
         self.assertEqual(self.edits(run), [(
-            "gh", "release", "edit", "v1.4.0-beta.1", "--repo", "kafeifei/XDial",
+            "gh", "release", "edit", "v1.4.0-beta.1", "--repo", "xindong/XDial",
             "--draft=false", "--prerelease", "--latest=false",
         )])
         # A pending Pages run is waited out while the release is still a draft.

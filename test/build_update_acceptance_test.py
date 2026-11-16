@@ -354,7 +354,7 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
         self.assertLessEqual(release["publishedAt"], manifest["generatedAt"])
         self.assertTrue(release["releaseNotes"].strip())
         self.assertEqual(release["archiveURL"],
-                         "https://github.com/saymiao/xdial-updates/releases/download/"
+                         "https://github.com/xindong/xdial-updates/releases/download/"
                          f"{release['tag']}/XDial-{release['tag']}.zip")
         self.assertIs(type(release["archiveSize"]), int)
         self.assertGreater(release["archiveSize"], 0)
