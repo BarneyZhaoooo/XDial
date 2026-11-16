@@ -299,6 +299,8 @@ schema 1 重启意图能否被新版本接受。要覆盖 schema 2 → schema 2�
 
 - ref 必须能解析为本地提交（先 fetch 标签），它的 Makefile 必须已有
   `RELEASE_UPDATE_ACCEPTANCE_ID` 和 `RELEASE_NOTES_FILE`；否则开始前报错。
+- ref 的客户端必须读 `https://xindong.github.io/xdial-updates/` 下的验收清单。更新源迁到
+  `xindong/xdial-updates` 之前的 ref 读上游地址，A 收不到这次的验收清单，开始前报错。
 - 只传该 ref 的 Makefile 声明过的变量：没有 `RELEASE_CHANNEL` 的旧 Makefile 只构建 stable，
   不传通道。旧 ref 不写 `XDialReleaseTag`，客户端把这样的包当作 `v<短版本>`。
 - 两边都只有已跟踪文件，本机被忽略的 `macos/PrivateConfig` 不进任何一个包，A 与高版本包

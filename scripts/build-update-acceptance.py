@@ -40,6 +40,8 @@ BETA_NOTES = """- 开启“接收 beta 版本”的 A 应升级到此 beta；关
 - 此包仅用于正式身份的更新验收，不进入正式更新清单。
 """
 APPLICATION_IDENTIFIER = "com.xd.xdial.app"
+# Where the acceptance feeds are deployed; a lower ref's A must read this host.
+ACCEPTANCE_FEED_PREFIX = "https://xindong.github.io/xdial-updates/"
 # An acceptance feed's archives must come from the feed repository's releases.
 ACCEPTANCE_ARCHIVES = "https://github.com/xindong/xdial-updates/releases/download"
 # What a Release build embeds for a preset configuration package
@@ -124,6 +126,11 @@ def makefile_variables(commit: str) -> frozenset:
     """Variables the commit's Makefile assigns; an older Makefile ignores the rest."""
     return frozenset(re.findall(r"^([A-Z][A-Z0-9_]*)[ \t]*[:?+]?=",
                                 git("show", f"{commit}:Makefile"), re.MULTILINE))
+
+
+def reads_acceptance_feed(commit: str) -> bool:
+    return subprocess.run(["git", "grep", "--quiet", "--fixed-strings", ACCEPTANCE_FEED_PREFIX,
+                           commit, "--", "macos/Sources"], cwd=ROOT).returncode == 0
 
 
 def has_beta_switch(commit: str) -> bool:
@@ -416,6 +423,10 @@ def main(argv: list | None = None) -> None:
         if missing:
             parser.error(f"--lower-ref {args.lower_ref} predates acceptance builds: its Makefile "
                          f"has no {', '.join(missing)}")
+        if not reads_acceptance_feed(lower_commit):
+            parser.error(f"--lower-ref {args.lower_ref} reads another update feed, not "
+                         f"{ACCEPTANCE_FEED_PREFIX}, so its A cannot read this run's acceptance "
+                         "feed; pick a ref from after the feed moved to xindong/xdial-updates")
         if args.beta and not has_beta_switch(lower_commit):
             parser.error(f"--lower-ref {args.lower_ref} has no beta switch ({BETA_SWITCH_KEY}), so "
                          "step 1 cannot run; pick the first stable tag with the client beta "
