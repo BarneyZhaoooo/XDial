@@ -358,8 +358,9 @@ def write_pages_state(root, channels):
 
 
 def commit_pages_state(root):
+    # The publisher commits feed state to its own branch, never to main.
     for arguments in (
-        ["init", "--quiet", "--initial-branch=main"],
+        ["init", "--quiet", f"--initial-branch={PUBLISH.PAGES_STATE_BRANCH}"],
         ["config", "user.name", "XDial Test"],
         ["config", "user.email", "xdial-test@example.invalid"],
         ["add", "."],

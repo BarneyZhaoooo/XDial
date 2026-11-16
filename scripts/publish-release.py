@@ -32,6 +32,9 @@ SOURCE_REPOSITORY = "xindong/XDial"
 SOURCE_GIT_URL = f"https://github.com/{SOURCE_REPOSITORY}.git"
 PAGES_REPOSITORY = "xindong/xdial-updates"
 PAGES_GIT_URL = f"https://github.com/{PAGES_REPOSITORY}.git"
+# The publisher commits feed state to this branch; main holds only its code,
+# so the organization's pull-request rule on default branches still applies.
+PAGES_STATE_BRANCH = "feed"
 # fetch and clone otherwise start a detached `git maintenance run --auto`,
 # which can still be writing objects/maintenance.lock while the temporary
 # repository is removed.
@@ -328,7 +331,7 @@ class PublishedPackage(NamedTuple):
 
 
 class FeedState(NamedTuple):
-    """Both feeds as the Pages repository's main records them."""
+    """Both feeds as the Pages repository's feed branch records them."""
 
     # Every package either feed ever published, withdrawn ones included.
     packages: tuple[PublishedPackage, ...] = ()
@@ -355,7 +358,7 @@ def load_feed_state(source_url: str = PAGES_GIT_URL) -> FeedState:
         root = Path(directory_name) / "pages"
         try:
             subprocess.run(
-                [*GIT_WITHOUT_MAINTENANCE, "clone", "--quiet", "--depth", "1", "--branch", "main",
+                [*GIT_WITHOUT_MAINTENANCE, "clone", "--quiet", "--depth", "1", "--branch", PAGES_STATE_BRANCH,
                  source_url, str(root)],
                 check=True,
                 capture_output=True,

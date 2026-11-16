@@ -125,7 +125,7 @@ Pages 发布器串行生成清单、历史与审计记录，拒绝旧版本覆�
 不让它会拒绝的包先公开：
 
 - 构建号：新包的构建号必须大于所有“X.Y.Z 不高于新包”的已公开包。数据是 GitHub
-  Releases 列表（含 prerelease，不含 draft），以及更新仓库 main 上两个通道的 ledger 与
+  Releases 列表（含 prerelease，不含 draft），以及更新仓库 `feed` 分支上两个通道的 ledger 与
   history（含已撤回的包，构建号取自首次发布该标签的 history 记录）；清单没有记录的公开
   Release 下载归档读取构建号。X.Y.Z 更高的包不构成约束，所以 beta 线开放期间发 X.Y.Z
   更低的 stable 热修复，不要求高于 beta 的构建号。
