@@ -96,6 +96,7 @@ daemon plist 使用标准 `Program` 指向各通道的固定安装路径，保�
 
 Next 身份已移除，产品不再把它当作已知的兄弟版本；它从未分发，只可能残留在开发机上。
 Next 的旧配置仍是首次只读迁移的来源，也仍在“删除数据”的清单里，所以下面只做定点清理。
+以下路径记录已退役版本的历史身份，不随当前产品的团队和包名迁移。
 
 1. 先只读自查，有输出才需要处理：
 
@@ -103,10 +104,10 @@ Next 的旧配置仍是首次只读迁移的来源，也仍在“删除数据”
    ls -d "/Applications/XDial Next.app" ~/.xdial-next ~/Library/Preferences/com.kafeifei.xdial.next.plist \
      ~/Library/Logs/"XDial Next" ~/Library/"Application Support"/"XDial Next" \
      "/Library/Application Support/XDial Next" \
-     ~/Library/"Group Containers"/SX9RG894L5.com.xd.xdial.next.network \
-     ~/Library/"Application Scripts"/SX9RG894L5.com.xd.xdial.next.network 2>/dev/null
+     ~/Library/"Group Containers"/UVZM439VGU.com.kafeifei.xdial.next.network \
+     ~/Library/"Application Scripts"/UVZM439VGU.com.kafeifei.xdial.next.network 2>/dev/null
    ls -a /Applications | grep '^\.XDial-next\.'
-   sudo ls -d "/private/var/root/Library/Group Containers/SX9RG894L5.com.xd.xdial.next.network" 2>/dev/null
+   sudo ls -d "/private/var/root/Library/Group Containers/UVZM439VGU.com.kafeifei.xdial.next.network" 2>/dev/null
    find /tmp/ -maxdepth 1 -name 'xdial-next*'
    security find-generic-password -s com.kafeifei.xdial.next >/dev/null 2>&1 && echo "keychain item present"
    systemextensionsctl list | grep -F com.kafeifei.xdial.next

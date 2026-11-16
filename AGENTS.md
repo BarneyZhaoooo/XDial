@@ -9,8 +9,10 @@ macOS 菜单栏网络分流工具；iOS / tvOS 共用 Go 核心。
 - 本仓库（`xindong/XDial`，remote `origin`）独立维护：工作分支推到这里，PR 只开向这里的 `main`。
 - 上游 `kafeifei/XDial`（remote `upstream`）只作参考：需要时把它的改动合进来，不向它推送、不向它提 PR。
   fork 里 `gh pr create` 默认指向上游，必须显式带 `--repo xindong/XDial`。
-- 企业专属的内容（预置 Profile、随包规则、签名身份）保存在企业私有仓库，打包时注入，不进本仓库。
-  提交前跑 `make public-content-gate`。
+- 本仓库的 macOS / iOS 产品使用 XD Entertainment 的签名身份；公开的团队 ID、包名和 App Group 随源码维护。
+  这是本仓库独立维护的产品身份，不要求上游采用；其他打包方仍可覆盖构建设置。
+- 企业专属的预置 Profile、随包规则和私有签名覆盖配置保存在企业私有仓库，打包时注入，不进本仓库。
+  证书私钥、API 密钥、公证凭据和描述文件不进本仓库。提交前跑 `make public-content-gate`。
 
 ## 分支
 
