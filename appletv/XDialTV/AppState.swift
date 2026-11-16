@@ -260,6 +260,16 @@ protocol TunnelManaging: AnyObject {
 
     /// 扩展内全线路累计上下行字节数；隧道未运行或不可读时返回 nil。
     func trafficTotals() async -> TrafficTotals?
+
+    /// 经 Direct 线路查到的网络出口地区（两位代码）。只在隧道运行时有意义：
+    /// 连着时 App 自己的请求按场景分流、域名解析也归隧道，查不到本地网络的出口。
+    func directExitCountry() async -> ExitCountryProbeResult
+}
+
+/// 一次出口地区查询的结果；查到时 code 非空，否则 failure 说明原因。
+struct ExitCountryProbeResult: Equatable, Sendable {
+    let code: String?
+    let failure: String?
 }
 
 extension TunnelManaging {
@@ -282,6 +292,9 @@ extension TunnelManaging {
     }
 
     func trafficTotals() async -> TrafficTotals? { nil }
+    func directExitCountry() async -> ExitCountryProbeResult {
+        ExitCountryProbeResult(code: nil, failure: "VPN 扩展不可用")
+    }
 }
 
 private let appOSLog = OSLog(subsystem: "com.kafeifei.xdial.mobile", category: "app")
@@ -498,6 +511,14 @@ final class AppState: ObservableObject {
     func trafficTotals() async -> TrafficTotals? {
         guard isConnected, let tunnelManager else { return nil }
         return await tunnelManager.trafficTotals()
+    }
+
+    /// 已连接时经 Direct 线路查网络出口地区；没连着时不唤醒隧道。
+    func directExitCountry() async -> ExitCountryProbeResult {
+        guard isConnected, let tunnelManager else {
+            return ExitCountryProbeResult(code: nil, failure: "未连接")
+        }
+        return await tunnelManager.directExitCountry()
     }
     var isTailscaleSetupActive: Bool {
         tailscaleSetupLineID != nil && tailscaleSetupRuntime?.isActive == true

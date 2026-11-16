@@ -1922,6 +1922,37 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         return try? JSONDecoder().decode(TrafficTotals.self, from: data)
     }
 
+    func directExitCountry() async -> ExitCountryProbeResult {
+        guard let session = providerSession else {
+            return ExitCountryProbeResult(code: nil, failure: "VPN 扩展不可用")
+        }
+        let request = Data("{\"cmd\":\"probe-exit-country\",\"timeout_ms\":\"8000\"}".utf8)
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<ExitCountryProbeResult>(continuation)
+            // 扩展内最多用 8 秒，留出排队的余量。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 12) {
+                oneShot.finish(ExitCountryProbeResult(code: nil, failure: "VPN 扩展没有及时回应"))
+            }
+            do {
+                try session.sendProviderMessage(request) { responseData in
+                    guard let responseData,
+                          let response = try? JSONDecoder().decode(DaemonResponse.self, from: responseData) else {
+                        oneShot.finish(ExitCountryProbeResult(code: nil, failure: "VPN 扩展回应无效"))
+                        return
+                    }
+                    guard response.ok == true, let code = response.data,
+                          code.count == 2, code.allSatisfy({ $0.isASCII && $0.isUppercase }) else {
+                        oneShot.finish(ExitCountryProbeResult(code: nil, failure: response.message ?? "查询失败"))
+                        return
+                    }
+                    oneShot.finish(ExitCountryProbeResult(code: code, failure: nil))
+                }
+            } catch {
+                oneShot.finish(ExitCountryProbeResult(code: nil, failure: error.localizedDescription))
+            }
+        }
+    }
+
     private func requestRoutingProbeSnapshot() async -> RoutingProbeSnapshot? {
         guard let session = providerSession else { return nil }
         let request = Data("{\"cmd\":\"routing-probe-snapshot\"}".utf8)

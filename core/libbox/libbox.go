@@ -509,6 +509,10 @@ func (l *Libbox) TestOutbound(outboundTag, testURL string, timeoutMS int) (int, 
 type outboundAddressProbeEndpoint struct {
 	url         string
 	destination M.Socksaddr
+	// lineResolved resolves the hostname with the probed Line's own compiled
+	// resolver (IPv4 only) before dialing, instead of handing the name to the
+	// outbound.
+	lineResolved bool
 }
 
 type outboundAddressProbeError struct {
@@ -549,8 +553,9 @@ var outboundAddressProbeEndpointsByFamily = map[string][]outboundAddressProbeEnd
 			destination: M.ParseSocksaddrHostPortStr("1.1.1.1", "443"),
 		},
 		{
-			url:         "https://r.inews.qq.com/api/ip2city",
-			destination: M.ParseSocksaddrHostPortStr("r.inews.qq.com", "443"),
+			url:          "https://r.inews.qq.com/api/ip2city",
+			destination:  M.ParseSocksaddrHostPortStr("r.inews.qq.com", "443"),
+			lineResolved: true,
 		},
 	},
 	"ipv6": {
@@ -590,17 +595,20 @@ func (l *Libbox) ProbeOutboundIPForFamily(
 	return l.probeOutboundIP(outboundTag, addressFamily, endpoints, timeoutMS)
 }
 
-func (l *Libbox) probeOutboundIP(
-	outboundTag string,
-	addressFamily string,
-	endpoints []outboundAddressProbeEndpoint,
-	timeoutMS int,
-) (string, error) {
+// borrowRunningOutbound leases one outbound of the running generation for a
+// bounded probe. The caller must call release when done.
+func (l *Libbox) borrowRunningOutbound(outboundTag string, timeoutMS int) (
+	outbound adapter.Outbound,
+	ctx context.Context,
+	release func(),
+	generation uint64,
+	err error,
+) {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if !l.running || l.box == nil || l.runtimeCtx == nil ||
 		l.switchCommitInProgress {
-		l.mu.Unlock()
-		return "", fmt.Errorf("connection is not running")
+		return nil, nil, nil, 0, fmt.Errorf("connection is not running")
 	}
 	if timeoutMS < 500 {
 		timeoutMS = 500
@@ -610,24 +618,39 @@ func (l *Libbox) probeOutboundIP(
 	}
 	outbound, loaded := l.box.Outbound().Outbound(outboundTag)
 	if !loaded {
-		l.mu.Unlock()
-		return "", fmt.Errorf("probe outbound is unavailable")
+		return nil, nil, nil, 0, fmt.Errorf("probe outbound is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(l.runtimeCtx, time.Duration(timeoutMS)*time.Millisecond)
-	generation := l.boxGeneration
-	probe := l.probeOutboundAddressFunc
-	if probe == nil {
-		probe = probeOutboundAddress
-	}
 	// adapter.Outbound is a bare Dialer and does not grant an external caller
 	// a lifetime lease. Box.Close closes its outbound manager and endpoint
 	// implementations, so cleanup must wait until this borrowed outbound is
 	// no longer in use. Add happens under l.mu while the generation is still
 	// running; detach flips running/cleaning under the same lock before Wait.
 	l.runtimeUsers.Add(1)
+	release = func() {
+		cancel()
+		l.runtimeUsers.Done()
+	}
+	return outbound, ctx, release, l.boxGeneration, nil
+}
+
+func (l *Libbox) probeOutboundIP(
+	outboundTag string,
+	addressFamily string,
+	endpoints []outboundAddressProbeEndpoint,
+	timeoutMS int,
+) (string, error) {
+	outbound, ctx, release, generation, err := l.borrowRunningOutbound(outboundTag, timeoutMS)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	l.mu.Lock()
+	probe := l.probeOutboundAddressFunc
 	l.mu.Unlock()
-	defer l.runtimeUsers.Done()
-	defer cancel()
+	if probe == nil {
+		probe = probeOutboundAddress
+	}
 
 	if addressFamily != "" {
 		key := outboundTag + "/" + addressFamily
@@ -797,9 +820,34 @@ func probeOutboundAddress(
 	endpoint outboundAddressProbeEndpoint,
 	remainingEndpoints int,
 ) (string, error) {
+	body, err := fetchOutboundProbe(parentCtx, outbound, endpoint, remainingEndpoints)
+	if err != nil {
+		return "", err
+	}
+	var address string
+	if endpoint.destination.Fqdn == "r.inews.qq.com" {
+		address, err = parseTencentProbeAddress(body)
+	} else {
+		address, err = parsePublicProbeAddress(string(body))
+	}
+	if err != nil {
+		return "", newOutboundAddressProbeError("invalid-address", err)
+	}
+	return address, nil
+}
+
+// fetchOutboundProbe sends one GET for a fixed probe endpoint through exactly
+// the given outbound and returns the body of a 200 response. The attempt gets
+// an equal share of the remaining time across remainingEndpoints.
+func fetchOutboundProbe(
+	parentCtx context.Context,
+	outbound adapter.Outbound,
+	endpoint outboundAddressProbeEndpoint,
+	remainingEndpoints int,
+) ([]byte, error) {
 	remainingTime := time.Until(deadlineFromContext(parentCtx))
 	if remainingTime <= 0 {
-		return "", context.DeadlineExceeded
+		return nil, context.DeadlineExceeded
 	}
 	attemptTimeout := remainingTime / time.Duration(remainingEndpoints)
 	if attemptTimeout < 500*time.Millisecond {
@@ -809,36 +857,38 @@ func probeOutboundAddress(
 	defer cancel()
 
 	destination := endpoint.destination
-	if destination.Fqdn == "r.inews.qq.com" {
+	if endpoint.lineResolved {
 		// Resolve through the selected Line's compiled resolver, never the
 		// Scenario default or a host-side HTTP client. Force an IPv4 target.
 		router := service.FromContext[adapter.DNSRouter](ctx)
 		transports := service.FromContext[adapter.DNSTransportManager](ctx)
 		if router == nil || transports == nil {
-			return "", newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
+			return nil, newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
 		}
-		resolverTag := "proxy-dns-" + outbound.Tag()
+		var transport adapter.DNSTransport
+		loaded := false
 		if outbound.Tag() == "direct" {
-			resolverTag = config.TransparentNativeDNSTag
+			transport, loaded = directLineResolver(transports)
+		} else {
+			transport, loaded = transports.Transport("proxy-dns-" + outbound.Tag())
 		}
-		transport, loaded := transports.Transport(resolverTag)
 		if !loaded {
-			return "", newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
+			return nil, newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
 		}
 		addresses, lookupErr := router.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{
 			Transport: transport, Strategy: C.DomainStrategyIPv4Only,
 		})
 		if lookupErr != nil || len(addresses) == 0 {
-			return "", newOutboundAddressProbeError("dns-failed", fmt.Errorf("address probe resolution failed"))
+			return nil, newOutboundAddressProbeError("dns-failed", fmt.Errorf("address probe resolution failed"))
 		}
 		destination = M.SocksaddrFrom(addresses[0].Unmap(), destination.Port)
 		if !destination.Addr.Is4() {
-			return "", newOutboundAddressProbeError("dns-wrong-family", fmt.Errorf("resolver returned wrong family"))
+			return nil, newOutboundAddressProbeError("dns-wrong-family", fmt.Errorf("resolver returned wrong family"))
 		}
 	}
 	conn, err := outbound.DialContext(ctx, "tcp", destination)
 	if err != nil {
-		return "", newOutboundAddressProbeError(
+		return nil, newOutboundAddressProbeError(
 			"dial-failed",
 			fmt.Errorf("outbound address probe dial failed: %w", err),
 		)
@@ -847,7 +897,7 @@ func probeOutboundAddress(
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 	if err != nil {
-		return "", newOutboundAddressProbeError(
+		return nil, newOutboundAddressProbeError(
 			"request-failed",
 			fmt.Errorf("create address probe request: %w", err),
 		)
@@ -879,35 +929,39 @@ func probeOutboundAddress(
 		if isTypedTLSProbeError(err) {
 			code = "tls-failed"
 		}
-		return "", newOutboundAddressProbeError(
+		return nil, newOutboundAddressProbeError(
 			code,
 			fmt.Errorf("outbound address probe request failed: %w", err),
 		)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", newOutboundAddressProbeError(
+		return nil, newOutboundAddressProbeError(
 			fmt.Sprintf("http-status-%d", response.StatusCode),
 			fmt.Errorf("address probe returned HTTP %d", response.StatusCode),
 		)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	if err != nil {
-		return "", newOutboundAddressProbeError(
+		return nil, newOutboundAddressProbeError(
 			"body-read-failed",
 			fmt.Errorf("read address probe response: %w", err),
 		)
 	}
-	var address string
-	if endpoint.destination.Fqdn == "r.inews.qq.com" {
-		address, err = parseTencentProbeAddress(body)
-	} else {
-		address, err = parsePublicProbeAddress(string(body))
+	return body, nil
+}
+
+// directLineResolver returns the resolver Direct uses for its own hostnames on
+// this platform: the macOS-native resolver in transparent proxy mode, or the
+// route default domain resolver in the iOS / tvOS Network Extension, whose
+// config has no native resolver.
+func directLineResolver(transports adapter.DNSTransportManager) (adapter.DNSTransport, bool) {
+	for _, tag := range []string{config.TransparentNativeDNSTag, config.MobilePublicDNSTag} {
+		if transport, loaded := transports.Transport(tag); loaded {
+			return transport, true
+		}
 	}
-	if err != nil {
-		return "", newOutboundAddressProbeError("invalid-address", err)
-	}
-	return address, nil
+	return nil, false
 }
 
 func isTypedTLSProbeError(err error) bool {

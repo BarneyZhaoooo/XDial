@@ -384,6 +384,7 @@ enum MobileDiagnosticsService {
         profile: Profile,
         lastError: String?,
         dataPathSummary: String?,
+        autoScenarioSummary: String? = nil,
         isChinese: Bool
     ) -> String {
         let safeStatus = redacted(status, using: profile) ?? status
@@ -401,6 +402,7 @@ enum MobileDiagnosticsService {
             系统描述文件：\(systemProfileInstalled ? "已安装" : "未安装")
             对象计数：线路 \(profile.lines.count)，规则 \(profile.ruleSets.count)，场景 \(profile.scenarios.count)，订阅 \(profile.subscriptions.count)
             出口探针：\(renderedProbe ?? "未运行")
+            自动选场景：\(autoScenarioSummary ?? "未判断")
             最近错误：\(renderedError ?? "无")
             """
         }
@@ -411,6 +413,7 @@ enum MobileDiagnosticsService {
         System profile: \(systemProfileInstalled ? "Installed" : "Not installed")
         Object counts: lines \(profile.lines.count), rules \(profile.ruleSets.count), scenarios \(profile.scenarios.count), subscriptions \(profile.subscriptions.count)
         Egress probe: \(renderedProbe ?? "Not run")
+        Automatic scenario: \(autoScenarioSummary ?? "Not checked")
         Last error: \(renderedError ?? "None")
         """
     }

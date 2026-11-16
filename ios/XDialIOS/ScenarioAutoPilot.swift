@@ -46,6 +46,54 @@ enum ScenarioAutoPicker {
     }
 }
 
+/// 最近一次自动判断的经过，写进「XDial 诊断」。不记录 Wi-Fi 名称。
+struct ScenarioSurveyRecord: Equatable, Sendable {
+    enum ExitLookup: Equatable, Sendable {
+        /// 已经靠 Wi-Fi 认出来，或者没有按地区选场景的配置。
+        case notNeeded
+        /// viaTunnel：已连接时由 VPN 扩展经 Direct 线路查；否则由 App 直接查。
+        case found(code: String, viaTunnel: Bool)
+        case failed(viaTunnel: Bool, reason: String?)
+    }
+
+    let at: Date
+    let ssidRead: Bool
+    let ssidMatched: Bool
+    let exit: ExitLookup
+    let picked: Bool
+
+    /// 「XDial 诊断」里的一行。
+    func summary(isChinese: Bool) -> String {
+        let time = Self.timeFormatter.string(from: at)
+        let wifi = ssidRead
+            ? (ssidMatched ? (isChinese ? "已读到并匹配" : "read, matched") : (isChinese ? "已读到，未匹配" : "read, no match"))
+            : (isChinese ? "未读到" : "not read")
+        let (open, close, colon) = isChinese ? ("（", "）", "：") : (" (", ")", ": ")
+        let exitText: String
+        switch exit {
+        case .notNeeded:
+            exitText = isChinese ? "未查询" : "not queried"
+        case .found(let code, let viaTunnel):
+            let source = viaTunnel ? (isChinese ? "经直连线路" : "via Direct line") : (isChinese ? "本机直接查询" : "queried locally")
+            exitText = "\(code)\(open)\(source)\(close)"
+        case .failed(let viaTunnel, let reason):
+            let source = viaTunnel ? (isChinese ? "经直连线路" : "via Direct line") : (isChinese ? "本机直接查询" : "queried locally")
+            let failed = isChinese ? "查询失败" : "failed"
+            exitText = "\(failed)\(open)\(source)\(reason.map { "\(colon)\($0)" } ?? "")\(close)"
+        }
+        let outcome = picked ? (isChinese ? "已判断" : "decided") : (isChinese ? "没判断出来" : "undecided")
+        return isChinese
+            ? "\(time) \(outcome)；Wi-Fi \(wifi)；出口 \(exitText)"
+            : "\(time) \(outcome); Wi-Fi \(wifi); exit \(exitText)"
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+}
+
 /// 观察当前网络并给出该用哪个场景。只在 App 开着的时候工作。
 @Observable
 @MainActor
@@ -55,6 +103,8 @@ final class ScenarioAutoPilot {
     private(set) var isSurveying = false
     /// 判断过至少一次（用来区分「还在判断」和「没判断出来」）。
     private(set) var hasSurveyed = false
+    /// 最近一次判断的经过。设置页的诊断和主屏不在同一个视图里，所以放在共享位置。
+    static private(set) var lastRecord: ScenarioSurveyRecord?
     /// 网络变了（换了 Wi-Fi、Wi-Fi 换成蜂窝）时调用，由主屏决定要不要重新判断。
     @ObservationIgnored var onNetworkChange: (() -> Void)?
 
@@ -131,26 +181,56 @@ final class ScenarioAutoPilot {
 
     /// 看一眼当前网络，返回该用的场景。同时来的多次调用合并成一次。
     /// regionScenarios 为空时只看 Wi-Fi，不去查网络出口。
+    /// 已连接时传入 exitCountryViaTunnel：这时 App 自己的请求按场景分流、域名解析也归隧道，
+    /// 只有 VPN 扩展经 Direct 线路才查得到本地网络的出口。
     @discardableResult
-    func survey(scenarios: [Scenario], regionScenarios: [String: String] = [:]) async -> ScenarioAutoPicker.Pick? {
+    func survey(
+        scenarios: [Scenario],
+        regionScenarios: [String: String] = [:],
+        exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)? = nil
+    ) async -> ScenarioAutoPicker.Pick? {
         if let running { return await running.value }
         isSurveying = true
         let task = Task { () -> ScenarioAutoPicker.Pick? in
             let ssid = await NetworkProbe.currentSSID()
+            let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             // 已经靠 Wi-Fi 认出来了，或者没有按地区选场景的配置，就不用去查出口。
             if let pick = ScenarioAutoPicker.pick(
                 for: NetworkSurroundings(ssid: ssid, countryCode: nil),
                 scenarios: scenarios
             ) {
+                Self.lastRecord = ScenarioSurveyRecord(
+                    at: Date(), ssidRead: ssidRead, ssidMatched: true, exit: .notNeeded, picked: true
+                )
                 return pick
             }
-            guard !regionScenarios.isEmpty else { return nil }
-            let country = await NetworkProbe.exitCountryCode()
-            return ScenarioAutoPicker.pick(
-                for: NetworkSurroundings(ssid: ssid, countryCode: country),
+            guard !regionScenarios.isEmpty else {
+                Self.lastRecord = ScenarioSurveyRecord(
+                    at: Date(), ssidRead: ssidRead, ssidMatched: false, exit: .notNeeded, picked: false
+                )
+                return nil
+            }
+            let viaTunnel = exitCountryViaTunnel != nil
+            let lookup: ExitCountryProbeResult
+            if let exitCountryViaTunnel {
+                lookup = await exitCountryViaTunnel()
+            } else {
+                lookup = await NetworkProbe.exitCountryCode()
+            }
+            let pick = ScenarioAutoPicker.pick(
+                for: NetworkSurroundings(ssid: ssid, countryCode: lookup.code),
                 scenarios: scenarios,
                 regionScenarios: regionScenarios
             )
+            Self.lastRecord = ScenarioSurveyRecord(
+                at: Date(),
+                ssidRead: ssidRead,
+                ssidMatched: false,
+                exit: lookup.code.map { .found(code: $0, viaTunnel: viaTunnel) }
+                    ?? .failed(viaTunnel: viaTunnel, reason: lookup.failure),
+                picked: pick != nil
+            )
+            return pick
         }
         running = task
         let result = await task.value
@@ -180,43 +260,31 @@ enum NetworkProbe {
         #endif
     }
 
-    /// 网络出口所在的国家或地区，查到的始终是本地网络（Direct）的出口。
-    ///
-    /// 先直接请求 1.0.0.1：地址固定、不用解析域名。没连接时它直接出去；连着时每个场景都有
-    /// 一条锁定规则把 1.0.0.1 交给 Direct 线路，同样从本地网络出去。
-    /// 问不到再用绑在物理网卡上的请求问苹果和 Cloudflare。这两个要解析域名，连着时系统把
-    /// 域名解析交给隧道，禁止走隧道的请求就解析不了，只在没连接时有用。
-    static func exitCountryCode() async -> String? {
+    /// 没连接时网络出口所在的国家或地区。先问苹果，问不到再问 Cloudflare。
+    /// 请求绑在物理网卡上。已连接时不用它：系统把域名解析交给隧道，禁止走隧道的请求解析不了，
+    /// 改由 VPN 扩展经 Direct 线路查（见 ScenarioAutoPilot.survey）。
+    /// 两处都没查到时，failure 写明各自是没有回应还是回复无效，供诊断使用。
+    static func exitCountryCode() async -> ExitCountryProbeResult {
         #if targetEnvironment(simulator)
-        if let fake = launchArgument("-XDialFakeCountry") { return fake.uppercased() }
+        if let fake = launchArgument("-XDialFakeCountry") {
+            return ExitCountryProbeResult(code: fake.uppercased(), failure: nil)
+        }
         #endif
-        if let code = await directLineCountryCode() {
-            return code
+        let appleReply = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run()
+        if let code = appleReply.flatMap(countryCode(inAppleReply:)) {
+            return ExitCountryProbeResult(code: code, failure: nil)
         }
-        if let text = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run(),
-           let code = countryCode(inAppleReply: text) {
-            return code
+        let cloudflareReply = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run()
+        if let code = cloudflareReply.flatMap(countryCode(inCloudflareTrace:)) {
+            return ExitCountryProbeResult(code: code, failure: nil)
         }
-        if let text = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run(),
-           let code = countryCode(inCloudflareTrace: text) {
-            return code
-        }
-        return nil
+        return ExitCountryProbeResult(code: nil, failure: localFailure(apple: appleReply, cloudflare: cloudflareReply))
     }
 
-    private static func directLineCountryCode() async -> String? {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForRequest = 3
-        configuration.timeoutIntervalForResource = 4
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-        var request = URLRequest(url: URL(string: "https://1.0.0.1/cdn-cgi/trace")!)
-        request.setValue("XDial", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await session.data(for: request),
-              let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        return countryCode(inCloudflareTrace: String(decoding: data, as: UTF8.self))
+    /// 例如「Apple 无回应；Cloudflare 回复无效」。只说结果类别，不带回复内容。
+    static func localFailure(apple: String?, cloudflare: String?) -> String {
+        func describe(_ reply: String?) -> String { reply == nil ? "无回应" : "回复无效" }
+        return "Apple \(describe(apple))；Cloudflare \(describe(cloudflare))"
     }
 
     /// 苹果的回复正文就是两位地区代码。

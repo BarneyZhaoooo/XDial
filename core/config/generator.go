@@ -39,6 +39,9 @@ const (
 	transparentEnterpriseDNSTag   = "xdial-anyconnect-dns"
 	transparentProxyDoHIPv4Server = "1.1.1.1"
 	transparentProxyDoHIPv6Server = "2606:4700:4700::1111"
+	// MobilePublicDNSTag is exported because it is also how Direct resolves its
+	// own hostnames in the Network Extension (route default_domain_resolver).
+	MobilePublicDNSTag = mobilePublicDNSTag
 	// TransparentNativeDNSTag is exported so isolated Direct RuleSet refresh
 	// sessions use the same macOS-native resolver contract as Direct traffic.
 	TransparentNativeDNSTag       = "xdial-native-dns"

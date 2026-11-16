@@ -1179,6 +1179,13 @@ func TestGenerateNETailscaleEndpoint(t *testing.T) {
 	if cfg.Route["default_domain_resolver"] != mobilePublicDNSTag {
 		t.Fatalf("NE control-plane resolver must stay public/direct: %v", cfg.Route)
 	}
+	// Engine probes through Direct pick the native resolver first and fall back
+	// to MobilePublicDNSTag, so the NE config must not carry the macOS one.
+	for _, server := range servers {
+		if server.(map[string]interface{})["tag"] == TransparentNativeDNSTag {
+			t.Fatalf("NE config must not contain the macOS-native resolver: %v", server)
+		}
+	}
 }
 
 func TestTailscaleMagicDNSOnUnreferencedLineHasNoSideEffects(t *testing.T) {

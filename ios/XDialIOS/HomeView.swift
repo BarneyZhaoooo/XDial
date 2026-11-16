@@ -158,9 +158,16 @@ struct HomeView: View {
     /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就自动断开、切换、重连。
     private func refreshAutoScenario() async {
         guard autoScenario, !app.profile.scenarios.isEmpty else { return }
+        // 已连接时只有 VPN 扩展查得到本地网络的出口，见 ScenarioAutoPilot.survey。
+        var exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)?
+        if app.isConnected {
+            let app = app
+            exitCountryViaTunnel = { await app.directExitCountry() }
+        }
         let pick = await autoPilot.survey(
             scenarios: app.profile.scenarios,
-            regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:]
+            regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:],
+            exitCountryViaTunnel: exitCountryViaTunnel
         )
         guard let pick, autoScenario else { return }
         let current = app.profile.activeScenarioID
