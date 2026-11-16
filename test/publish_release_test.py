@@ -57,6 +57,18 @@ class PublishReleaseTests(unittest.TestCase):
             self.assertEqual(PUBLISH.validate_release(release, "v1.2.3"),
                              ("XDial-v1.2.3.zip", "XDial-v1.2.3.zip.sha256"))
 
+    def test_first_stable_release_has_no_latest_to_compare(self):
+        missing = subprocess.CalledProcessError(1, ["gh", "api"])
+        with patch.object(PUBLISH, "gh_json", side_effect=missing):
+            # Only drafts so far: GitHub has no Latest release yet.
+            self.assertIsNone(PUBLISH.latest_stable_release_tag([{"draft": True}]))
+            self.assertIsNone(PUBLISH.latest_stable_release_tag([]))
+            # A public release always has a Latest, so the failure stands.
+            with self.assertRaises(subprocess.CalledProcessError):
+                PUBLISH.latest_stable_release_tag([{"draft": True}, {"draft": False}])
+        with patch.object(PUBLISH, "gh_json", return_value={"tag_name": "v1.2.3"}):
+            self.assertEqual(PUBLISH.latest_stable_release_tag([{"draft": False}]), "v1.2.3")
+
     def test_finds_draft_by_exact_tag_from_all_release_pages(self):
         draft = self.release()
         other = self.release(False)
