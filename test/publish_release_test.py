@@ -57,6 +57,18 @@ class PublishReleaseTests(unittest.TestCase):
             self.assertEqual(PUBLISH.validate_release(release, "v1.2.3"),
                              ("XDial-v1.2.3.zip", "XDial-v1.2.3.zip.sha256"))
 
+    def test_first_stable_release_has_no_latest_to_compare(self):
+        missing = subprocess.CalledProcessError(1, ["gh", "api"])
+        with patch.object(PUBLISH, "gh_json", side_effect=missing):
+            # Only drafts so far: GitHub has no Latest release yet.
+            self.assertIsNone(PUBLISH.latest_stable_release_tag([{"draft": True}]))
+            self.assertIsNone(PUBLISH.latest_stable_release_tag([]))
+            # A public release always has a Latest, so the failure stands.
+            with self.assertRaises(subprocess.CalledProcessError):
+                PUBLISH.latest_stable_release_tag([{"draft": True}, {"draft": False}])
+        with patch.object(PUBLISH, "gh_json", return_value={"tag_name": "v1.2.3"}):
+            self.assertEqual(PUBLISH.latest_stable_release_tag([{"draft": False}]), "v1.2.3")
+
     def test_finds_draft_by_exact_tag_from_all_release_pages(self):
         draft = self.release()
         other = self.release(False)
@@ -831,6 +843,29 @@ class BetaChannelTests(unittest.TestCase):
         run.dispatch.assert_called_once_with("v1.4.0-beta.1", 900, "beta")
         run.verify_feed.assert_called_once_with(
             "v1.4.0-beta.1", "200", "digest", "beta", "- 修复更新检查。")
+
+    def test_first_stable_release_publishes_without_a_latest_release(self):
+        state = PUBLISH.FeedState((), {"stable": feed("stable", None), "beta": feed("beta", None)})
+        draft = release_fixture("v1.4.0", draft=True)
+        published = release_fixture("v1.4.0", draft=False)
+        # Until one release is public, GitHub answers releases/latest with 404.
+        missing = subprocess.CalledProcessError(1, ["gh", "api"])
+        with self.publication(["v1.4.0"], [[[draft]], missing, published], state) as run:
+            PUBLISH.main()
+        self.assertEqual(len(self.edits(run)), 1)
+        run.dispatch.assert_called_once_with("v1.4.0", 900, "stable")
+
+    def test_beta_needs_a_published_stable_release_first(self):
+        state = PUBLISH.FeedState((), {"stable": feed("stable", None), "beta": feed("beta", None)})
+        draft = release_fixture("v1.4.0-beta.1", draft=True, prerelease=True)
+        missing = subprocess.CalledProcessError(1, ["gh", "api"])
+        with (
+            self.publication(["--channel", "beta", "v1.4.0-beta.1"], [[[draft]], missing], state) as run,
+            self.assertRaisesRegex(ValueError, "no published stable release"),
+        ):
+            PUBLISH.main()
+        self.assertEqual(self.edits(run), [])
+        run.dispatch.assert_not_called()
 
     def test_beta_publication_stops_before_pages_when_latest_moves(self):
         state = PUBLISH.FeedState((), {"stable": feed("stable", None), "beta": feed("beta", None)})
