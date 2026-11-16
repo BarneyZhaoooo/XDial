@@ -5,7 +5,7 @@ import Foundation
 // Default is read-only; --apply changes only foreign references to Debug.
 @main
 enum MenuBarTrackingRepairTool {
-    static let target = "com.kafeifei.xdial.debug"
+    static let target = "com.xd.xdial.debug"
     static let reportDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/XDial-menu-bar-repair")
 

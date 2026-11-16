@@ -4,7 +4,10 @@ import Security
 
 enum ConfigurationDataDeletion {
     /// Retired identities stay listed: a running one could write its data back.
+    /// The com.kafeifei.* apps are the upstream builds this app replaces; they
+    /// share the same profile library, so they block deletion too.
     static let applicationIdentifiers: Set<String> = [
+        "com.xd.xdial.app", "com.xd.xdial.debug",
         "com.kafeifei.xdial", "com.kafeifei.xdial.app", "com.kafeifei.xdial.debug",
         "com.kafeifei.xdial.next", "com.kafeifei.xdial.ne-probe",
     ]

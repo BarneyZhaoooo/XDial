@@ -39,7 +39,7 @@ BETA_NOTES = """- 开启“接收 beta 版本”的 A 应升级到此 beta；关
 - 同一版本号的正式版 C 发布后，应从此 beta 升级到 C。
 - 此包仅用于正式身份的更新验收，不进入正式更新清单。
 """
-APPLICATION_IDENTIFIER = "com.kafeifei.xdial.app"
+APPLICATION_IDENTIFIER = "com.xd.xdial.app"
 # An acceptance feed's archives must come from the feed repository's releases.
 ACCEPTANCE_ARCHIVES = "https://github.com/saymiao/xdial-updates/releases/download"
 # What a Release build embeds for a preset configuration package

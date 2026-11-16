@@ -1,7 +1,7 @@
 import XCTest
 
 final class MenuBarTrackingRepairTests: XCTestCase {
-    private let target = "com.kafeifei.xdial.debug"
+    private let target = "com.xd.xdial.debug"
     private func location(_ id: String) -> [String: Any] { ["bundle": ["_0": id]] }
     private func entry(_ id: String, allowed: Bool, items: [String]) -> [Any] {
         [location(id), ["location": location(id), "isAllowed": allowed,
@@ -20,13 +20,13 @@ final class MenuBarTrackingRepairTests: XCTestCase {
     func testRemovesOnlyDebugReferencesFromEveryForeignOwner() throws {
         let original = entry(target, allowed: true, items: [target])
             + entry("com.openai.codex", allowed: false,
-                    items: ["com.openai.codex", target, "com.kafeifei.xdial.app", "com.openai.sky.CUAService"])
+                    items: ["com.openai.codex", target, "com.xd.xdial.app", "com.openai.sky.CUAService"])
             + entry("terminal", allowed: true, items: [target, "terminal"])
         let plan = try MenuBarTrackingRepair.plan(data(original), target: target)
         let actual = try records(XCTUnwrap(plan.repairedTracking))
         let expected = entry(target, allowed: true, items: [target])
             + entry("com.openai.codex", allowed: false,
-                    items: ["com.openai.codex", "com.kafeifei.xdial.app", "com.openai.sky.CUAService"])
+                    items: ["com.openai.codex", "com.xd.xdial.app", "com.openai.sky.CUAService"])
             + entry("terminal", allowed: true, items: ["terminal"])
         XCTAssertTrue(NSArray(array: actual).isEqual(to: expected))
         XCTAssertEqual(plan.outer["showSpotlight"] as? Bool, false)

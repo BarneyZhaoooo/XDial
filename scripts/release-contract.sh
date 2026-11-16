@@ -6,7 +6,7 @@ set -euo pipefail
 # syntax and the branch a release tag must sit on; it never changes a bundle.
 readonly PRODUCT_NAME="XDial"
 readonly ARCHIVE_PREFIX="XDial"
-readonly RELEASE_APPLICATION_IDENTIFIER="com.kafeifei.xdial.app"
+readonly RELEASE_APPLICATION_IDENTIFIER="com.xd.xdial.app"
 readonly RELEASE_CHANNEL="${XDIAL_RELEASE_CHANNEL:-stable}"
 case "$RELEASE_CHANNEL" in
     stable) RELEASE_BRANCH="main" ;;
@@ -17,7 +17,7 @@ readonly RELEASE_BRANCH
 readonly RELEASE_SETTINGS_IDENTIFIER="$RELEASE_APPLICATION_IDENTIFIER.settings-ui"
 readonly RELEASE_EXTENSION_IDENTIFIER="$RELEASE_APPLICATION_IDENTIFIER.transparent-proxy"
 readonly RELEASE_HELPER_IDENTIFIER="$RELEASE_APPLICATION_IDENTIFIER.helper"
-readonly RELEASE_TEAM_IDENTIFIER="UVZM439VGU"
+readonly RELEASE_TEAM_IDENTIFIER="SX9RG894L5"
 readonly RELEASE_CONTRACT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly DEPLOYMENT_TARGET_VERIFIER="$RELEASE_CONTRACT_DIRECTORY/verify-macos-deployment-target.py"
 readonly COMPONENT_NAMES_VERIFIER="$RELEASE_CONTRACT_DIRECTORY/verify-macos-component-names.py"

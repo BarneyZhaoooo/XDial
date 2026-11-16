@@ -3,7 +3,7 @@ import XCTest
 
 final class SiblingProductProcessIdentityTests: XCTestCase {
     private let sibling = XDialBuildIdentity.InstalledChannel(
-        applicationIdentifier: "com.kafeifei.xdial.debug", bundleName: "XDial Debug.app",
+        applicationIdentifier: "com.xd.xdial.debug", bundleName: "XDial Debug.app",
         daemonSocketPath: "/tmp/xdial-debug.sock"
     )
 
@@ -15,7 +15,7 @@ final class SiblingProductProcessIdentityTests: XCTestCase {
 
     func testBundlePathOrIdentifierAloneCannotIdentifySibling() {
         for app in [
-            SiblingProductProcessIdentity.Application(identifier: "com.kafeifei.xdial.app", bundleURL: sibling.bundleURL),
+            SiblingProductProcessIdentity.Application(identifier: "com.xd.xdial.app", bundleURL: sibling.bundleURL),
             .init(identifier: sibling.applicationIdentifier, bundleURL: URL(fileURLWithPath: "/tmp/Other.app"))
         ] {
             XCTAssertFalse(SiblingProductProcessIdentity.contains(42, channels: [sibling], application: { _ in app }, daemonPeer: { _ in nil }))

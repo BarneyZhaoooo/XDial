@@ -39,7 +39,7 @@ final class LocalProcessInventoryTests: XCTestCase {
 
     func testDebugStaysASiblingAtItsPreviousPathUntilItMigrates() {
         let debug = XDialBuildIdentity.installedChannels.filter {
-            $0.applicationIdentifier == "com.kafeifei.xdial.debug"
+            $0.applicationIdentifier == "com.xd.xdial.debug"
         }
         XCTAssertEqual(debug.map(\.bundleName), ["XDial Debug.app", "XDail Debug.app"])
         XCTAssertTrue(Set(debug.map(\.daemonSocketPath)) == ["/tmp/xdial-debug.sock"])

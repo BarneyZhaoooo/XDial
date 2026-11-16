@@ -1,6 +1,6 @@
 name: XDialIOS
 options:
-  bundleIdPrefix: com.kafeifei
+  bundleIdPrefix: com.xd
   deploymentTarget:
     iOS: "17.0"
 configs:
@@ -9,15 +9,15 @@ configs:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: UVZM439VGU
+    DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     # 应用身份。换一个开发者团队打包时不要改这里：用 `xcodebuild -xcconfig` 覆盖
     # DEVELOPMENT_TEAM、XDIAL_BUNDLE_ID、XDIAL_APP_GROUP、XDIAL_SHARED_KEYCHAIN_GROUP，
     # 需要手动签名时再给出 CODE_SIGN_STYLE、CODE_SIGN_IDENTITY 和三个 XDIAL_PROFILE_*。
-    XDIAL_BUNDLE_ID: com.kafeifei.xdial.ios
-    XDIAL_APP_GROUP: group.com.kafeifei.xdial.ios
-    XDIAL_SHARED_KEYCHAIN_GROUP: UVZM439VGU.com.kafeifei.xdial.shared
+    XDIAL_BUNDLE_ID: com.xd.xdial.ios
+    XDIAL_APP_GROUP: group.com.xd.xdial.ios
+    XDIAL_SHARED_KEYCHAIN_GROUP: SX9RG894L5.com.xd.xdial.shared
 
 schemes:
   XDialIOS:

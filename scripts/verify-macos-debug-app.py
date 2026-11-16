@@ -27,7 +27,7 @@ def main():
     flavor = sys.argv[2] if len(sys.argv) > 2 else "debug"
     require(flavor == "debug", "unknown development channel")
     product = "XDial Debug"
-    prefix = "com.kafeifei.xdial." + flavor
+    prefix = "com.xd.xdial." + flavor
     require(bundle.name == product + ".app", "unexpected development app filename")
     deployment_verifier = pathlib.Path(__file__).with_name(
         "verify-macos-deployment-target.py"
@@ -42,7 +42,7 @@ def main():
         deployment_result.stderr.strip() or "invalid macOS deployment target",
     )
     run("/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle))
-    group = "UVZM439VGU." + prefix + ".network"
+    group = "SX9RG894L5." + prefix + ".network"
     components = [
         (bundle, prefix, True),
         (bundle / "Contents/Helpers/XDial Settings UI.app",
@@ -73,14 +73,14 @@ def main():
             check=True, capture_output=True, text=True,
         ).stderr
         require("Authority=Apple Development:" in signature, f"wrong signing class: {path}")
-        require("TeamIdentifier=UVZM439VGU" in signature, f"wrong signing team: {path}")
+        require("TeamIdentifier=SX9RG894L5" in signature, f"wrong signing team: {path}")
         if has_group:
             entitlements = plistlib.loads(run("/usr/bin/codesign", "-d", "--entitlements", ":-", str(path)))
             require(entitlements.get("com.apple.security.application-groups") == [group],
                     f"wrong shared data group: {path}")
             profile = plistlib.loads(run("/usr/bin/security", "cms", "-D", "-i",
                                         str(path / "Contents/embedded.provisionprofile")))
-            require(profile["Entitlements"]["com.apple.application-identifier"] == "UVZM439VGU." + identifier,
+            require(profile["Entitlements"]["com.apple.application-identifier"] == "SX9RG894L5." + identifier,
                     f"profile does not authorize development identity: {path}")
             require(bool(profile.get("ProvisionedDevices")), f"missing development devices: {path}")
     helper = bundle / "Contents/MacOS/xdial-daemon"

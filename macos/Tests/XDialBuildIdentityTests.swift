@@ -6,27 +6,27 @@ final class XDialBuildIdentityTests: XCTestCase {
         XCTAssertTrue(XDialBuildIdentity.isDevelopment)
         XCTAssertEqual(
             XDialBuildIdentity.applicationIdentifier,
-            "com.kafeifei.xdial.debug"
+            "com.xd.xdial.debug"
         )
         XCTAssertEqual(
             XDialBuildIdentity.helperIdentifier,
-            "com.kafeifei.xdial.debug.helper"
+            "com.xd.xdial.debug.helper"
         )
         XCTAssertEqual(
             XDialBuildIdentity.daemonIdentifier,
-            "com.kafeifei.xdial.debug.daemon"
+            "com.xd.xdial.debug.daemon"
         )
         XCTAssertEqual(
             XDialBuildIdentity.transparentProxyIdentifier,
-            "com.kafeifei.xdial.debug.transparent-proxy"
+            "com.xd.xdial.debug.transparent-proxy"
         )
         XCTAssertEqual(
             XDialBuildIdentity.settingsUIIdentifier,
-            "com.kafeifei.xdial.debug.settings-ui"
+            "com.xd.xdial.debug.settings-ui"
         )
         XCTAssertEqual(
             XDialBuildIdentity.appGroupIdentifier,
-            "UVZM439VGU.com.kafeifei.xdial.debug.network"
+            "SX9RG894L5.com.xd.xdial.debug.network"
         )
         XCTAssertEqual(
             XDialBuildIdentity.applicationBundleName,
@@ -64,20 +64,20 @@ final class XDialBuildIdentityTests: XCTestCase {
         XCTAssertEqual(XDialBuildIdentity.installationArtifactPrefix, ".Xdial-debug")
         #else
         XCTAssertFalse(XDialBuildIdentity.isDevelopment)
-        XCTAssertEqual(XDialBuildIdentity.applicationIdentifier, "com.kafeifei.xdial.app")
-        XCTAssertEqual(XDialBuildIdentity.helperIdentifier, "com.kafeifei.xdial.app.helper")
-        XCTAssertEqual(XDialBuildIdentity.daemonIdentifier, "com.kafeifei.xdial.app.daemon")
+        XCTAssertEqual(XDialBuildIdentity.applicationIdentifier, "com.xd.xdial.app")
+        XCTAssertEqual(XDialBuildIdentity.helperIdentifier, "com.xd.xdial.app.helper")
+        XCTAssertEqual(XDialBuildIdentity.daemonIdentifier, "com.xd.xdial.app.daemon")
         XCTAssertEqual(
             XDialBuildIdentity.transparentProxyIdentifier,
-            "com.kafeifei.xdial.app.transparent-proxy"
+            "com.xd.xdial.app.transparent-proxy"
         )
         XCTAssertEqual(
             XDialBuildIdentity.settingsUIIdentifier,
-            "com.kafeifei.xdial.app.settings-ui"
+            "com.xd.xdial.app.settings-ui"
         )
         XCTAssertEqual(
             XDialBuildIdentity.appGroupIdentifier,
-            "UVZM439VGU.com.kafeifei.xdial.network"
+            "SX9RG894L5.com.xd.xdial.network"
         )
         XCTAssertEqual(XDialBuildIdentity.applicationBundleName, "XDial.app")
         XCTAssertEqual(XDialBuildIdentity.applicationDisplayName, "XDial")
@@ -135,7 +135,7 @@ final class XDialBuildIdentityTests: XCTestCase {
     func testNameOnlySiblingExtensionDoesNotBecomeOwnedOccupancy() {
         let siblingIdentifier = XDialBuildIdentity.isDevelopment
             ? XDialBuildIdentity.formalTransparentProxyIdentifier
-            : "com.kafeifei.xdial.debug.transparent-proxy"
+            : "com.xd.xdial.debug.transparent-proxy"
         XCTAssertFalse(
             ApplicationInstallationOccupancy.mayBeInUse(
                 XDialBuildIdentity.applicationDestinationURL,

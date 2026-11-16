@@ -91,14 +91,14 @@ check_hardened_signature_details() (
 )
 
 # Shape of a notarized Developer ID signature as printed by codesign -dvvv.
-hardened_details='Identifier=com.kafeifei.xdial.app
+hardened_details='Identifier=com.xd.xdial.app
 Format=app bundle with Mach-O thin (arm64)
 CodeDirectory v=20500 size=29092 flags=0x10000(runtime) hashes=898+7 location=embedded
-Authority=Developer ID Application: XDial Fixture (UVZM439VGU)
+Authority=Developer ID Application: XDial Fixture (SX9RG894L5)
 Authority=Developer ID Certification Authority
 Authority=Apple Root CA
 Timestamp=Oct 11, 2026 at 23:06:00
-TeamIdentifier=UVZM439VGU
+TeamIdentifier=SX9RG894L5
 Runtime Version=26.0.0'
 check_hardened_signature_details "$hardened_details"
 check_hardened_signature_details \
@@ -183,11 +183,11 @@ EOF
 
 distribution_app="$distribution_root/clean/XDial.app"
 distribution_settings="$distribution_app/Contents/Helpers/XDial Settings UI.app"
-distribution_extension_name=com.kafeifei.xdial.app.transparent-proxy
+distribution_extension_name=com.xd.xdial.app.transparent-proxy
 distribution_extension="$distribution_app/Contents/Library/SystemExtensions/$distribution_extension_name.systemextension"
-write_bundle_info "$distribution_app" XDial com.kafeifei.xdial.app
+write_bundle_info "$distribution_app" XDial com.xd.xdial.app
 write_bundle_info "$distribution_settings" 'XDial Settings UI' \
-    com.kafeifei.xdial.app.settings-ui
+    com.xd.xdial.app.settings-ui
 write_bundle_info "$distribution_extension" "$distribution_extension_name" \
     "$distribution_extension_name"
 cp "$distribution_root/host" "$distribution_app/Contents/MacOS/XDial"
@@ -391,17 +391,17 @@ check_system_extension_authorization() (
     assert_system_extension_authorization_plists "$1" "$2" "$3" 1800000000
 )
 
-for identifier in com.kafeifei.xdial.app com.kafeifei.xdial.app.transparent-proxy; do
+for identifier in com.xd.xdial.app com.xd.xdial.app.transparent-proxy; do
     authorization_dictionary="<dict>
-<key>com.apple.application-identifier</key><string>UVZM439VGU.$identifier</string>
-<key>com.apple.developer.team-identifier</key><string>UVZM439VGU</string>
+<key>com.apple.application-identifier</key><string>SX9RG894L5.$identifier</string>
+<key>com.apple.developer.team-identifier</key><string>SX9RG894L5</string>
 <key>com.apple.developer.networking.networkextension</key>
 <array><string>app-proxy-provider-systemextension</string></array>
 <key>com.apple.developer.system-extension.install</key><true/>
 </dict>"
     signed="<plist version=\"1.0\">$authorization_dictionary</plist>"
     profile="<plist version=\"1.0\"><dict>
-<key>TeamIdentifier</key><array><string>UVZM439VGU</string></array>
+<key>TeamIdentifier</key><array><string>SX9RG894L5</string></array>
 <key>ProvisionsAllDevices</key><true/>
 <key>CreationDate</key><date>2026-01-01T00:00:00Z</date>
 <key>ExpirationDate</key><date>2044-01-01T00:00:00Z</date>
@@ -412,13 +412,13 @@ for identifier in com.kafeifei.xdial.app com.kafeifei.xdial.app.transparent-prox
     expect_failure check_system_extension_authorization "$identifier" "$signed" ''
     expect_failure check_system_extension_authorization "$identifier" "$signed" 'invalid plist'
     expect_failure check_system_extension_authorization "$identifier" \
-        "${signed/UVZM439VGU.$identifier/UVZM439VGU.wrong}" "$profile"
+        "${signed/SX9RG894L5.$identifier/SX9RG894L5.wrong}" "$profile"
     expect_failure check_system_extension_authorization "$identifier" "$signed" \
-        "${profile/UVZM439VGU.$identifier/UVZM439VGU.wrong}"
+        "${profile/SX9RG894L5.$identifier/SX9RG894L5.wrong}"
     expect_failure check_system_extension_authorization "$identifier" \
-        "${signed/<string>UVZM439VGU<\//<string>WRONGTEAM<\/}" "$profile"
+        "${signed/<string>SX9RG894L5<\//<string>WRONGTEAM<\/}" "$profile"
     expect_failure check_system_extension_authorization "$identifier" "$signed" \
-        "${profile/<string>UVZM439VGU<\//<string>WRONGTEAM<\/}"
+        "${profile/<string>SX9RG894L5<\//<string>WRONGTEAM<\/}"
     expect_failure check_system_extension_authorization "$identifier" \
         "${signed/app-proxy-provider-systemextension/app-proxy-provider}" "$profile"
     expect_failure check_system_extension_authorization "$identifier" "$signed" \
@@ -431,7 +431,7 @@ for identifier in com.kafeifei.xdial.app com.kafeifei.xdial.app.transparent-prox
         "${profile/CreationDate/MissingCreationDate}"
     expect_failure check_system_extension_authorization "$identifier" "$signed" \
         "${profile/ProvisionsAllDevices/MissingProvisionsAllDevices}"
-    if [[ "$identifier" == com.kafeifei.xdial.app ]]; then
+    if [[ "$identifier" == com.xd.xdial.app ]]; then
         expect_failure check_system_extension_authorization "$identifier" \
             "${signed/system-extension.install/missing.install}" "$profile"
         expect_failure check_system_extension_authorization "$identifier" "$signed" \
@@ -835,7 +835,7 @@ check_release_bundle() (
     source "$contract"
     assert_release_tag_key "$2" "$3" \
         "$3/Contents/Helpers/XDial Settings UI.app" \
-        "$3/Contents/Library/SystemExtensions/com.kafeifei.xdial.app.transparent-proxy.systemextension"
+        "$3/Contents/Library/SystemExtensions/com.xd.xdial.app.transparent-proxy.systemextension"
     assert_private_configuration_absent "$3"
 )
 
@@ -855,7 +855,7 @@ release_bundle() {
     local app="$test_root/release-bundle/$1/XDial.app"
     write_bundle_plist "$app" "$2"
     write_bundle_plist "$app/Contents/Helpers/XDial Settings UI.app" "${3:-}"
-    write_bundle_plist "$app/Contents/Library/SystemExtensions/com.kafeifei.xdial.app.transparent-proxy.systemextension" "${3:-}"
+    write_bundle_plist "$app/Contents/Library/SystemExtensions/com.xd.xdial.app.transparent-proxy.systemextension" "${3:-}"
     printf '%s\n' "$app"
 }
 
@@ -932,13 +932,13 @@ EOF
 
 verify_app_bundle() {
     local app="$test_root/verify-app/$1/XDial.app"
-    write_component_plist "$app" com.kafeifei.xdial.app \
+    write_component_plist "$app" com.xd.xdial.app \
         "<key>NSLocationUsageDescription</key><string>fixture</string>$2"
     write_component_plist "$app/Contents/Helpers/XDial Settings UI.app" \
-        com.kafeifei.xdial.app.settings-ui ''
+        com.xd.xdial.app.settings-ui ''
     write_component_plist \
-        "$app/Contents/Library/SystemExtensions/com.kafeifei.xdial.app.transparent-proxy.systemextension" \
-        com.kafeifei.xdial.app.transparent-proxy ''
+        "$app/Contents/Library/SystemExtensions/com.xd.xdial.app.transparent-proxy.systemextension" \
+        com.xd.xdial.app.transparent-proxy ''
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     printf '%s\n' '#!/bin/sh' 'exit 1' >"$app/Contents/MacOS/xdial-daemon"
     chmod +x "$app/Contents/MacOS/xdial-daemon"

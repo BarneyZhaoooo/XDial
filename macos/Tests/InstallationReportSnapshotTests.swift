@@ -8,7 +8,7 @@ final class InstallationReportSnapshotTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("installation-report.json")
         let old = InstallationReportSnapshot(
-            processIdentifier: 10, bundleIdentifier: "com.kafeifei.xdial.app",
+            processIdentifier: 10, bundleIdentifier: "com.xd.xdial.app",
             bundleVersion: "100", recordedAt: Date(),
             report: .fresh(applicationAlreadyInstalled: true)
         )
