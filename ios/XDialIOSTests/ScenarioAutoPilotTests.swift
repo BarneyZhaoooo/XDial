@@ -187,6 +187,14 @@ final class ScenarioAutoPilotTests: XCTestCase {
         ) == true)
     }
 
+    func testALocalLookupFailureSaysWhichServiceDidNotAnswer() {
+        XCTAssertEqual(NetworkProbe.localFailure(apple: nil, cloudflare: nil), "Apple 无回应；Cloudflare 无回应")
+        XCTAssertEqual(
+            NetworkProbe.localFailure(apple: "HTTP/1.1 403 Forbidden\r\n\r\n", cloudflare: nil),
+            "Apple 回复无效；Cloudflare 无回应"
+        )
+    }
+
     func testTheDiagnosticLineNeverCarriesTheWiFiName() {
         let record = ScenarioSurveyRecord(
             at: Date(), ssidRead: true, ssidMatched: true, exit: .notNeeded, picked: true

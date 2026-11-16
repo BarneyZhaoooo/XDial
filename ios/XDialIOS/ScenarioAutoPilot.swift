@@ -215,8 +215,7 @@ final class ScenarioAutoPilot {
             if let exitCountryViaTunnel {
                 lookup = await exitCountryViaTunnel()
             } else {
-                let code = await NetworkProbe.exitCountryCode()
-                lookup = ExitCountryProbeResult(code: code, failure: nil)
+                lookup = await NetworkProbe.exitCountryCode()
             }
             let pick = ScenarioAutoPicker.pick(
                 for: NetworkSurroundings(ssid: ssid, countryCode: lookup.code),
@@ -264,19 +263,28 @@ enum NetworkProbe {
     /// 没连接时网络出口所在的国家或地区。先问苹果，问不到再问 Cloudflare。
     /// 请求绑在物理网卡上。已连接时不用它：系统把域名解析交给隧道，禁止走隧道的请求解析不了，
     /// 改由 VPN 扩展经 Direct 线路查（见 ScenarioAutoPilot.survey）。
-    static func exitCountryCode() async -> String? {
+    /// 两处都没查到时，failure 写明各自是没有回应还是回复无效，供诊断使用。
+    static func exitCountryCode() async -> ExitCountryProbeResult {
         #if targetEnvironment(simulator)
-        if let fake = launchArgument("-XDialFakeCountry") { return fake.uppercased() }
+        if let fake = launchArgument("-XDialFakeCountry") {
+            return ExitCountryProbeResult(code: fake.uppercased(), failure: nil)
+        }
         #endif
-        if let text = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run(),
-           let code = countryCode(inAppleReply: text) {
-            return code
+        let appleReply = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run()
+        if let code = appleReply.flatMap(countryCode(inAppleReply:)) {
+            return ExitCountryProbeResult(code: code, failure: nil)
         }
-        if let text = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run(),
-           let code = countryCode(inCloudflareTrace: text) {
-            return code
+        let cloudflareReply = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run()
+        if let code = cloudflareReply.flatMap(countryCode(inCloudflareTrace:)) {
+            return ExitCountryProbeResult(code: code, failure: nil)
         }
-        return nil
+        return ExitCountryProbeResult(code: nil, failure: localFailure(apple: appleReply, cloudflare: cloudflareReply))
+    }
+
+    /// 例如「Apple 无回应；Cloudflare 回复无效」。只说结果类别，不带回复内容。
+    static func localFailure(apple: String?, cloudflare: String?) -> String {
+        func describe(_ reply: String?) -> String { reply == nil ? "无回应" : "回复无效" }
+        return "Apple \(describe(apple))；Cloudflare \(describe(cloudflare))"
     }
 
     /// 苹果的回复正文就是两位地区代码。

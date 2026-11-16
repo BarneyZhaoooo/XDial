@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kafeifei/xdial/core/config"
 	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
@@ -58,7 +59,9 @@ func TestAppleCountryEndpointUsesTheLineResolver(t *testing.T) {
 	defer server.Close()
 	pool := x509.NewCertPool()
 	pool.AddCert(server.Certificate())
-	transport := newFakeMobileDNSTransport("xdial-native-dns")
+	// The Network Extension config has no native resolver; Direct resolves its
+	// own hostnames with the route default resolver there.
+	transport := newFakeMobileDNSTransport(config.MobilePublicDNSTag)
 	ctx := service.ContextWith[adapter.DNSRouter](context.Background(),
 		&addressTestDNSRouter{transport: transport, domain: "gspe1-ssl.ls.apple.com"})
 	ctx = service.ContextWith[adapter.DNSTransportManager](ctx, &addressTestDNSManager{transport: transport})
@@ -78,6 +81,37 @@ func TestAppleCountryEndpointUsesTheLineResolver(t *testing.T) {
 	if code, err := apple.parse(body); err != nil || code != "CN" {
 		t.Fatalf("parse=%q %v", code, err)
 	}
+}
+
+func TestDirectLineResolverPrefersNativeThenNetworkExtension(t *testing.T) {
+	native := newFakeMobileDNSTransport(config.TransparentNativeDNSTag)
+	mobile := newFakeMobileDNSTransport(config.MobilePublicDNSTag)
+	both := &directResolverTestManager{transports: map[string]adapter.DNSTransport{
+		native.Tag(): native, mobile.Tag(): mobile,
+	}}
+	if transport, loaded := directLineResolver(both); !loaded || transport != native {
+		t.Fatalf("transparent proxy must use the native resolver, got %v", transport)
+	}
+	onlyMobile := &directResolverTestManager{transports: map[string]adapter.DNSTransport{mobile.Tag(): mobile}}
+	if transport, loaded := directLineResolver(onlyMobile); !loaded || transport != mobile {
+		t.Fatalf("Network Extension must use its route default resolver, got %v", transport)
+	}
+	proxyOnly := &directResolverTestManager{transports: map[string]adapter.DNSTransport{
+		"proxy-dns-node-a": newFakeMobileDNSTransport("proxy-dns-node-a"),
+	}}
+	if _, loaded := directLineResolver(proxyOnly); loaded {
+		t.Fatal("Direct must never borrow another Line's resolver")
+	}
+}
+
+type directResolverTestManager struct {
+	adapter.DNSTransportManager
+	transports map[string]adapter.DNSTransport
+}
+
+func (m *directResolverTestManager) Transport(tag string) (adapter.DNSTransport, bool) {
+	transport, loaded := m.transports[tag]
+	return transport, loaded
 }
 
 func TestProbeOutboundCountryRequiresARunningConnection(t *testing.T) {

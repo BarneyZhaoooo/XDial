@@ -865,11 +865,13 @@ func fetchOutboundProbe(
 		if router == nil || transports == nil {
 			return nil, newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
 		}
-		resolverTag := "proxy-dns-" + outbound.Tag()
+		var transport adapter.DNSTransport
+		loaded := false
 		if outbound.Tag() == "direct" {
-			resolverTag = config.TransparentNativeDNSTag
+			transport, loaded = directLineResolver(transports)
+		} else {
+			transport, loaded = transports.Transport("proxy-dns-" + outbound.Tag())
 		}
-		transport, loaded := transports.Transport(resolverTag)
 		if !loaded {
 			return nil, newOutboundAddressProbeError("dns-unavailable", fmt.Errorf("line resolver unavailable"))
 		}
@@ -947,6 +949,19 @@ func fetchOutboundProbe(
 		)
 	}
 	return body, nil
+}
+
+// directLineResolver returns the resolver Direct uses for its own hostnames on
+// this platform: the macOS-native resolver in transparent proxy mode, or the
+// route default domain resolver in the iOS / tvOS Network Extension, whose
+// config has no native resolver.
+func directLineResolver(transports adapter.DNSTransportManager) (adapter.DNSTransport, bool) {
+	for _, tag := range []string{config.TransparentNativeDNSTag, config.MobilePublicDNSTag} {
+		if transport, loaded := transports.Transport(tag); loaded {
+			return transport, true
+		}
+	}
+	return nil, false
 }
 
 func isTypedTLSProbeError(err error) bool {
