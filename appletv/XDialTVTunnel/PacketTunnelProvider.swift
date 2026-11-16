@@ -789,6 +789,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ///   {"cmd":"select-outbound","group_tag":"...","outbound_tag":"..."}
     ///   {"cmd":"test-outbound","outbound_tag":"...","test_url":"...","timeout_ms":"5000"}
     ///   {"cmd":"probe-outbound-address","outbound_tag":"...","timeout_ms":"7000"}
+    ///   {"cmd":"probe-exit-country","timeout_ms":"8000"}      // 经 Direct 线路查出口地区
     ///   {"cmd":"routing-probe-snapshot"}
     ///   {"cmd":"traffic-snapshot"}
     ///   {"cmd":"tailscale-status","endpoint_tag":"tailscale-..."}
@@ -897,6 +898,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         ok: false,
                         message: "无法确认所选线路的出口地址：\(error.localizedDescription)"
                     ))
+                }
+            }
+
+        case "probe-exit-country":
+            let timeoutMS = Int(obj["timeout_ms"] as? String ?? "") ?? 8_000
+            engineOperationQueue.async { [weak self] in
+                guard let self, let engine = self.currentEngine() else {
+                    completion.value(self?.encodeResponse(ok: false, message: "连接引擎未运行"))
+                    return
+                }
+                var probeError: NSError?
+                let code = engine.probeOutboundCountry("direct", timeoutMS: timeoutMS, error: &probeError)
+                if let probeError {
+                    completion.value(self.encodeResponse(ok: false, message: probeError.localizedDescription))
+                } else {
+                    completion.value(self.encodeResponse(ok: true, dataString: code))
                 }
             }
 

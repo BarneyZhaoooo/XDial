@@ -22,10 +22,16 @@ import (
 type addressTestDNSRouter struct {
 	adapter.DNSRouter
 	transport adapter.DNSTransport
+	// domain is the only name the fake resolves; empty means r.inews.qq.com.
+	domain string
 }
 
 func (r *addressTestDNSRouter) Lookup(_ context.Context, domain string, opts adapter.DNSQueryOptions) ([]netip.Addr, error) {
-	if domain != "r.inews.qq.com" || opts.Transport != r.transport || opts.Strategy != C.DomainStrategyIPv4Only {
+	expected := r.domain
+	if expected == "" {
+		expected = "r.inews.qq.com"
+	}
+	if domain != expected || opts.Transport != r.transport || opts.Strategy != C.DomainStrategyIPv4Only {
 		return nil, fmt.Errorf("wrong Line DNS contract")
 	}
 	return []netip.Addr{netip.MustParseAddr("192.0.2.20")}, nil
@@ -74,7 +80,7 @@ func TestTencentProbeUsesSelectedLineDNSAndHTTPS(t *testing.T) {
 			ctx, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
 			outbound := &addressTestOutbound{tag: tag, target: server.Listener.Addr().String()}
-			endpoint := outboundAddressProbeEndpoint{url: server.URL, destination: M.ParseSocksaddrHostPortStr("r.inews.qq.com", "443")}
+			endpoint := outboundAddressProbeEndpoint{url: server.URL, destination: M.ParseSocksaddrHostPortStr("r.inews.qq.com", "443"), lineResolved: true}
 			ip, err := probeOutboundAddress(ctx, outbound, endpoint, 1)
 			if err != nil || ip != "8.8.8.8" || !outbound.dialed {
 				t.Fatalf("probe=%q %v dialed=%v", ip, err, outbound.dialed)

@@ -263,6 +263,7 @@ struct MobileSettingsView: View {
             profile: app.profile,
             lastError: app.engine.lastError,
             dataPathSummary: app.engine.dataPathSummary,
+            autoScenarioSummary: ScenarioAutoPilot.lastRecord?.summary(isChinese: app.language == .zh),
             isChinese: app.language == .zh
         )
     }

@@ -158,4 +158,43 @@ final class ScenarioAutoPilotTests: XCTestCase {
         // 没带规则的构建（公开仓库）：什么都不做。
         XCTAssertEqual(BundledRuleSets.seedCache(for: profile, basePath: base.path, bundle: .main), [])
     }
+    @MainActor
+    func testWhileConnectedTheTunnelAnswersWhereTheNetworkExits() async {
+        let pilot = ScenarioAutoPilot()
+        var asked = 0
+        let pick = await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+            asked += 1
+            return ExitCountryProbeResult(code: "SG", failure: nil)
+        }
+        XCTAssertEqual(asked, 1)
+        XCTAssertEqual(pick, ScenarioAutoPicker.Pick(scenarioID: "harbor", reason: .country("SG")))
+        XCTAssertEqual(ScenarioAutoPilot.lastRecord?.exit, .found(code: "SG", viaTunnel: true))
+        XCTAssertEqual(ScenarioAutoPilot.lastRecord?.picked, true)
+    }
+
+    @MainActor
+    func testAFailedTunnelLookupIsRecordedForDiagnostics() async {
+        let pilot = ScenarioAutoPilot()
+        let pick = await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+            ExitCountryProbeResult(code: nil, failure: "连接引擎未运行")
+        }
+        XCTAssertNil(pick)
+        let record = try? XCTUnwrap(ScenarioAutoPilot.lastRecord)
+        XCTAssertEqual(record?.exit, .failed(viaTunnel: true, reason: "连接引擎未运行"))
+        XCTAssertEqual(record?.ssidRead, false)
+        XCTAssertTrue(record?.summary(isChinese: true).hasSuffix(
+            "没判断出来；Wi-Fi 未读到；出口 查询失败（经直连线路：连接引擎未运行）"
+        ) == true)
+    }
+
+    func testTheDiagnosticLineNeverCarriesTheWiFiName() {
+        let record = ScenarioSurveyRecord(
+            at: Date(), ssidRead: true, ssidMatched: true, exit: .notNeeded, picked: true
+        )
+        XCTAssertTrue(record.summary(isChinese: true).hasSuffix("已判断；Wi-Fi 已读到并匹配；出口 未查询"))
+        let english = ScenarioSurveyRecord(
+            at: Date(), ssidRead: false, ssidMatched: false, exit: .found(code: "CN", viaTunnel: false), picked: true
+        ).summary(isChinese: false)
+        XCTAssertTrue(english.hasSuffix("decided; Wi-Fi not read; exit CN (queried locally)"))
+    }
 }
