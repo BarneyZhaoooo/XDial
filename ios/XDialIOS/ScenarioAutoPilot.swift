@@ -180,12 +180,19 @@ enum NetworkProbe {
         #endif
     }
 
-    /// 网络出口所在的国家或地区。先问苹果，问不到再问 Cloudflare。
-    /// 请求绑在物理网卡上，连着 VPN 时也不会绕进隧道，查到的始终是本地网络的出口。
+    /// 网络出口所在的国家或地区，查到的始终是本地网络（Direct）的出口。
+    ///
+    /// 先直接请求 1.0.0.1：地址固定、不用解析域名。没连接时它直接出去；连着时每个场景都有
+    /// 一条锁定规则把 1.0.0.1 交给 Direct 线路，同样从本地网络出去。
+    /// 问不到再用绑在物理网卡上的请求问苹果和 Cloudflare。这两个要解析域名，连着时系统把
+    /// 域名解析交给隧道，禁止走隧道的请求就解析不了，只在没连接时有用。
     static func exitCountryCode() async -> String? {
         #if targetEnvironment(simulator)
         if let fake = launchArgument("-XDialFakeCountry") { return fake.uppercased() }
         #endif
+        if let code = await directLineCountryCode() {
+            return code
+        }
         if let text = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run(),
            let code = countryCode(inAppleReply: text) {
             return code
@@ -195,6 +202,21 @@ enum NetworkProbe {
             return code
         }
         return nil
+    }
+
+    private static func directLineCountryCode() async -> String? {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 3
+        configuration.timeoutIntervalForResource = 4
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: URL(string: "https://1.0.0.1/cdn-cgi/trace")!)
+        request.setValue("XDial", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        return countryCode(inCloudflareTrace: String(decoding: data, as: UTF8.self))
     }
 
     /// 苹果的回复正文就是两位地区代码。
