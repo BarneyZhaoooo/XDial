@@ -67,7 +67,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     #if os(iOS)
     private static let appGroupID = XDialIdentity.appGroup
-    private static let subsystem = "com.kafeifei.xdial.ios.tunnel"
+    private static let subsystem = "com.xd.xdial.ios.tunnel"
     #else
     private static let appGroupID = "group.com.kafeifei.xdialtv"
     private static let subsystem = "com.kafeifei.xdialtv.tunnel"
@@ -1448,7 +1448,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 /// 静态版错误构造:供 startTunnel 内 `[weak self]` 闭包在 self 已释放时使用。
 private func providerErrorStatic(_ code: Int, _ message: String) -> NSError {
     #if os(iOS)
-    let domain = "com.kafeifei.xdial.ios.tunnel"
+    let domain = "com.xd.xdial.ios.tunnel"
     #else
     let domain = "com.kafeifei.xdialtv.tunnel"
     #endif

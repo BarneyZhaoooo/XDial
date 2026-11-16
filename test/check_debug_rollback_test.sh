@@ -67,7 +67,7 @@ install_plist() {
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>com.kafeifei.xdial.debug</string>
+<key>CFBundleIdentifier</key><string>com.xd.xdial.debug</string>
 $1
 </dict></plist>
 EOF

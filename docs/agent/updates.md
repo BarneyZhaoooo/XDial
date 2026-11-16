@@ -237,7 +237,7 @@ tailscale、sslcon 的全部本地补丁与组装它们的 `prepare-patched-go-m
 
 ## 正式身份更新验收
 
-> **验收包是正式身份（`com.kafeifei.xdial.app`）的公证包，安装会替换本机的正式 App
+> **验收包是正式身份（`com.xd.xdial.app`）的公证包，安装会替换本机的正式 App
 > `/Applications/XDial.app`，重启可能中断当前连接。构建、上传、安装和每一步核对都由作者执行。**
 > 验收包收不到正式更新，验收结束或中途放弃后都要按[结束验收](#结束验收)手动回到正式版。
 > 脚本只产出本地文件：不安装、不启动、不上传，也不改清单仓库。
@@ -355,12 +355,12 @@ python3 scripts/build-update-acceptance.py --beta \
 ```sh
 app=/Applications/XDial.app
 for bundle in "$app" "$app/Contents/Helpers/XDial Settings UI.app" \
-  "$app/Contents/Library/SystemExtensions/com.kafeifei.xdial.app.transparent-proxy.systemextension"; do
+  "$app/Contents/Library/SystemExtensions/com.xd.xdial.app.transparent-proxy.systemextension"; do
   echo "$bundle: $(plutil -extract CFBundleShortVersionString raw "$bundle/Contents/Info.plist")" \
     "$(plutil -extract CFBundleVersion raw "$bundle/Contents/Info.plist")"
 done
 plutil -extract XDialReleaseTag raw "$app/Contents/Info.plist"
-systemextensionsctl list | grep -F com.kafeifei.xdial.app.transparent-proxy
+systemextensionsctl list | grep -F com.xd.xdial.app.transparent-proxy
 python3 -c 'import json, socket
 s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect("/tmp/xdial.sock")
 s.sendall(b"{\"id\":\"acceptance\",\"cmd\":\"daemon-info\"}\n")

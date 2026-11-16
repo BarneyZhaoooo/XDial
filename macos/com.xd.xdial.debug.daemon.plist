@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.kafeifei.xdial.debug.daemon</string>
+	<string>com.xd.xdial.debug.daemon</string>
 	<!-- Installation fixes the app location before SMAppService registration.
 	     Avoid resolving an orphaned background-item container after replacement. -->
 	<key>Program</key>
@@ -17,7 +17,7 @@
 	</array>
 	<key>AssociatedBundleIdentifiers</key>
 	<array>
-		<string>com.kafeifei.xdial.debug</string>
+		<string>com.xd.xdial.debug</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

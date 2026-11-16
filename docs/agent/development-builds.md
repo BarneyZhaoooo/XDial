@@ -12,13 +12,13 @@
 |---|---|---|
 | 安装路径 | `/Applications/XDial Debug.app` | `/Applications/XDial.app` |
 | 系统设置显示名（App / 网络扩展） | `XDial Debug` / `XDial Debug Network Extension` | `XDial` / `XDial Network Extension` |
-| Host | `com.kafeifei.xdial.debug` | `com.kafeifei.xdial.app` |
+| Host | `com.xd.xdial.debug` | `com.xd.xdial.app` |
 | Settings UI / Extension / Helper / Daemon | Host 加 `.settings-ui` / `.transparent-proxy` / `.helper` / `.daemon` | 同左 |
 | 通道偏好域 | `com.kafeifei.xdial.debug` | `com.kafeifei.xdial` |
 | 通道运行目录 | `~/.xdial-debug` | `~/.xdial` |
 | 新版共享配置 / 密钥 service | `~/.xdial/configuration/profiles.enc` / `com.kafeifei.xdial.configuration` | 同左 |
 | helper 状态目录 | `/Library/Application Support/XDial Debug` | `/Library/Application Support/XDial` |
-| App Group | `UVZM439VGU.com.kafeifei.xdial.debug.network` | `UVZM439VGU.com.kafeifei.xdial.network` |
+| App Group | `SX9RG894L5.com.xd.xdial.debug.network` | `SX9RG894L5.com.xd.xdial.network` |
 | helper socket | `/tmp/xdial-debug.sock` | `/tmp/xdial.sock` |
 | 诊断 HTTP | `127.0.0.1:19877` | 当前构建不包含；旧正式身份 Debug 可能使用 `19876` |
 
@@ -38,6 +38,17 @@ Debug 的开发证书与 host、extension provisioning profiles 必须匹配 Deb
 ```sh
 make app-debug MACOS_DEBUG_XCODEBUILD_FLAGS=-allowProvisioningUpdates
 ```
+
+Xcode 没有登录账号时，也可以用团队的 App Store Connect API 密钥代替账号（密钥文件不进仓库）：
+
+```sh
+make app-debug MACOS_DEBUG_XCODEBUILD_FLAGS="-allowProvisioningUpdates \
+  -authenticationKeyPath <AuthKey_XXXX.p8> -authenticationKeyID <密钥 ID> -authenticationKeyIssuerID <Issuer ID>"
+```
+
+首次安装 Debug 时，App 只放进 `/Applications` 并启动，不会自动安装 helper 和网络扩展；
+需要在菜单栏的 XDial Debug 里点安装，并在系统设置中批准后台项目和系统扩展。在此之前
+`make restart` 会停在「runtime did not converge」，这不是构建问题。
 
 开发构建入口末尾的 [verify-macos-debug-app.py](../../scripts/verify-macos-debug-app.py)
 校验嵌套组件身份、签名、开发 profile、App Group、daemon plist 与 helper 编译通道，
@@ -85,6 +96,7 @@ daemon plist 使用标准 `Program` 指向各通道的固定安装路径，保�
 
 Next 身份已移除，产品不再把它当作已知的兄弟版本；它从未分发，只可能残留在开发机上。
 Next 的旧配置仍是首次只读迁移的来源，也仍在“删除数据”的清单里，所以下面只做定点清理。
+以下路径记录已退役版本的历史身份，不随当前产品的团队和包名迁移。
 
 1. 先只读自查，有输出才需要处理：
 

@@ -10,7 +10,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>UVZM439VGU.com.kafeifei.xdial.debug.network</string>
+		<string>SX9RG894L5.com.xd.xdial.debug.network</string>
 	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>

@@ -277,7 +277,7 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
         info = {
             "CFBundleShortVersionString": re.match(CORE, tag).group(0)[1:],
             "CFBundleVersion": values["RELEASE_BUILD_NUMBER"],
-            "CFBundleIdentifier": "com.kafeifei.xdial.app",
+            "CFBundleIdentifier": "com.xd.xdial.app",
             "XDialUpdateAcceptanceID": values["RELEASE_UPDATE_ACCEPTANCE_ID"],
             "LSMinimumSystemVersion": MINIMUM_SYSTEM[tag],
         }
@@ -704,7 +704,7 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
                               ("v1.0.0", {"XDialUpdateAcceptanceID": "other"}),
                               ("v1.1.0-beta.1", {"CFBundleVersion": "1"}),
                               ("v1.1.0", {"CFBundleShortVersionString": "1.0.0"}),
-                              ("v1.0.0", {"CFBundleIdentifier": "com.kafeifei.xdial.debug"})]:
+                              ("v1.0.0", {"CFBundleIdentifier": "com.xd.xdial.debug"})]:
             with self.subTest(tag=tag, override=override):
                 shutil.rmtree(self.output, ignore_errors=True)
                 self.builds = []

@@ -9,7 +9,7 @@ configs:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: UVZM439VGU
+    DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     # Source and CI builds use a neutral identity. `make release` is the only
@@ -20,15 +20,15 @@ settings:
     # Formal configurations retain their installed identity, which beta
     # releases share. Debug is the only other identity and owns a separate
     # app, helper, extension, and data namespace.
-    XDIAL_APPLICATION_BUNDLE_IDENTIFIER: com.kafeifei.xdial.app
-    XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER: com.kafeifei.xdial.app.transparent-proxy
-    XDIAL_SETTINGS_UI_BUNDLE_IDENTIFIER: com.kafeifei.xdial.app.settings-ui
-    XDIAL_HELPER_IDENTIFIER: com.kafeifei.xdial.app.helper
-    XDIAL_DAEMON_PLIST: com.kafeifei.xdial.app.daemon.plist
+    XDIAL_APPLICATION_BUNDLE_IDENTIFIER: com.xd.xdial.app
+    XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER: com.xd.xdial.app.transparent-proxy
+    XDIAL_SETTINGS_UI_BUNDLE_IDENTIFIER: com.xd.xdial.app.settings-ui
+    XDIAL_HELPER_IDENTIFIER: com.xd.xdial.app.helper
+    XDIAL_DAEMON_PLIST: com.xd.xdial.app.daemon.plist
     XDIAL_DAEMON_ENTITLEMENTS: XDialDaemon.entitlements
     XDIAL_HELPER_SOURCE: "$(SRCROOT)/../build/xdial"
     XDIAL_PRODUCT_DISPLAY_NAME: XDial
-    XDIAL_SETTINGS_ENTRY_IDENTIFIER: com.kafeifei.xdial.app.settings-entry
+    XDIAL_SETTINGS_ENTRY_IDENTIFIER: com.xd.xdial.app.settings-entry
     XDIAL_BUILD_FLAVOR: release
     XDIAL_UPDATE_ACCEPTANCE_ID: ""
     # The published tag (vX.Y.Z or vX.Y.Z-beta.N), empty unless a build passes
@@ -39,15 +39,15 @@ settings:
     XDIAL_SOURCE_REVISION: "unversioned"
   configs:
     Debug:
-      XDIAL_APPLICATION_BUNDLE_IDENTIFIER: com.kafeifei.xdial.debug
-      XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER: com.kafeifei.xdial.debug.transparent-proxy
-      XDIAL_SETTINGS_UI_BUNDLE_IDENTIFIER: com.kafeifei.xdial.debug.settings-ui
-      XDIAL_HELPER_IDENTIFIER: com.kafeifei.xdial.debug.helper
-      XDIAL_DAEMON_PLIST: com.kafeifei.xdial.debug.daemon.plist
+      XDIAL_APPLICATION_BUNDLE_IDENTIFIER: com.xd.xdial.debug
+      XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER: com.xd.xdial.debug.transparent-proxy
+      XDIAL_SETTINGS_UI_BUNDLE_IDENTIFIER: com.xd.xdial.debug.settings-ui
+      XDIAL_HELPER_IDENTIFIER: com.xd.xdial.debug.helper
+      XDIAL_DAEMON_PLIST: com.xd.xdial.debug.daemon.plist
       XDIAL_DAEMON_ENTITLEMENTS: XDialDaemonDebug.entitlements
       XDIAL_HELPER_SOURCE: "$(SRCROOT)/../build/xdial-debug"
       XDIAL_PRODUCT_DISPLAY_NAME: XDial Debug
-      XDIAL_SETTINGS_ENTRY_IDENTIFIER: com.kafeifei.xdial.debug.settings-entry
+      XDIAL_SETTINGS_ENTRY_IDENTIFIER: com.xd.xdial.debug.settings-entry
       XDIAL_BUILD_FLAVOR: debug
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG XDIAL_DEVELOPMENT_IDENTITY"
 

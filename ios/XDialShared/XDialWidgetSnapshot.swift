@@ -12,7 +12,7 @@ struct XDialWidgetSnapshot: Codable, Equatable, Sendable {
 
     static let appGroupIdentifier = XDialIdentity.appGroup
     static let tunnelBundleIdentifier = XDialIdentity.tunnelBundleIdentifier
-    static let connectionControlKind = "com.kafeifei.xdial.ios.connection-toggle"
+    static let connectionControlKind = "com.xd.xdial.ios.connection-toggle"
     private static let defaultsKey = "xdial.widget-snapshot.v1"
 
     var scenarios: [ScenarioItem]

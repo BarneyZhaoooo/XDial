@@ -6,11 +6,11 @@ import Foundation
 enum XDialIdentity {
     static let appGroup = value(
         forInfoKey: "XDialAppGroupIdentifier",
-        default: "group.com.kafeifei.xdial.ios"
+        default: "group.com.xd.xdial.ios"
     )
     static let tunnelBundleIdentifier = value(
         forInfoKey: "XDialTunnelBundleIdentifier",
-        default: "com.kafeifei.xdial.ios.tunnel"
+        default: "com.xd.xdial.ios.tunnel"
     )
 
     private static func value(forInfoKey key: String, default fallback: String) -> String {
