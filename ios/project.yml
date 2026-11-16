@@ -59,6 +59,7 @@ targets:
         CFBundleDisplayName: XDial Tunnel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Same export compliance answer as the app; see INFOPLIST_KEY_ITSAppUsesNonExemptEncryption.
         ITSAppUsesNonExemptEncryption: false
         XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
         XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
@@ -172,6 +173,11 @@ targets:
         CURRENT_PROJECT_VERSION: "11"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: XDial
+        # Export compliance: the app implements only standard encryption (TLS, DTLS,
+        # AES-GCM, ChaCha20-Poly1305 via Go and sing-box) and is not offered on the
+        # French App Store, so App Store Connect needs no encryption documentation.
+        # Offering it in France needs an encryption declaration with the French
+        # import document, and these keys then change.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         INFOPLIST_KEY_UILaunchScreen_Generation: true
