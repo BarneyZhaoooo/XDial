@@ -138,9 +138,13 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
         makefile = ["RELEASE_TAG ?=", "RELEASE_BUILD_NUMBER ?="]
         self.commit("v0.1.0", makefile)
         makefile += ["RELEASE_UPDATE_ACCEPTANCE_ID ?=", "RELEASE_NOTES_FILE ?= RELEASE_NOTES.md"]
+        feed = self.root / "macos/Sources/XDial/AppUpdateReleaseLookup.swift"
+        feed.parent.mkdir(parents=True)
+        feed.write_text('string: "https://saymiao.github.io/xdial-updates/"\n')
+        self.commit("v0.9.0", makefile)
+        feed.write_text('string: "https://xindong.github.io/xdial-updates/"\n')
         self.commit("v1.0.0", makefile)
         switch = self.root / "macos/Sources/XDial/AppUpdateChecker.swift"
-        switch.parent.mkdir(parents=True)
         switch.write_text('    static let key = "xdial.update.channel"\n')
         self.commit("v1.1.0", makefile)
         self.commit(None, makefile + ["RELEASE_CHANNEL ?= stable"])
@@ -354,7 +358,7 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
         self.assertLessEqual(release["publishedAt"], manifest["generatedAt"])
         self.assertTrue(release["releaseNotes"].strip())
         self.assertEqual(release["archiveURL"],
-                         "https://github.com/saymiao/xdial-updates/releases/download/"
+                         "https://github.com/xindong/xdial-updates/releases/download/"
                          f"{release['tag']}/XDial-{release['tag']}.zip")
         self.assertIs(type(release["archiveSize"]), int)
         self.assertGreater(release["archiveSize"], 0)
@@ -719,6 +723,8 @@ class BuildUpdateAcceptanceTests(unittest.TestCase):
         message = self.rejected("--lower-ref", "v0.1.0")
         self.assertIn("predates acceptance builds", message)
         self.assertIn("RELEASE_UPDATE_ACCEPTANCE_ID, RELEASE_NOTES_FILE", message)
+        message = self.rejected("--lower-ref", "v0.9.0")
+        self.assertIn("reads another update feed", message)
         message = self.rejected("--beta", "--lower-ref", "v1.0.0")
         self.assertIn("has no beta switch (xdial.update.channel)", message)
         self.assertFalse(self.output.exists())

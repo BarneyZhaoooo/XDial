@@ -53,12 +53,12 @@ final class AppUpdateCheckerTests: XCTestCase {
         XCTAssertEqual(acceptance.acceptanceID, acceptanceID)
         XCTAssertEqual(
             acceptance.feedURL.absoluteString,
-            "https://saymiao.github.io/xdial-updates/acceptance/"
+            "https://xindong.github.io/xdial-updates/acceptance/"
                 + acceptanceID + "/stable.json"
         )
         XCTAssertTrue(acceptance.permitsArchiveURL(
             URL(string:
-                "https://github.com/saymiao/xdial-updates/releases/download/"
+                "https://github.com/xindong/xdial-updates/releases/download/"
                     + "v0.8.0/XDial-v0.8.0.zip"
             )!,
             tag: "v0.8.0",
@@ -913,7 +913,7 @@ final class AppUpdateCheckerTests: XCTestCase {
 
     private func productionArchiveURL(tag: String) -> URL {
         URL(string:
-            "https://github.com/kafeifei/XDial/releases/download/"
+            "https://github.com/xindong/XDial/releases/download/"
                 + "\(tag)/XDial-\(tag).zip"
         )!
     }
@@ -1148,7 +1148,7 @@ final class AppUpdateCheckerTests: XCTestCase {
         )
         for rejected in [
             "http://release-assets.githubusercontent.com/file",
-            "https://github.com/kafeifei/XDial/file",
+            "https://github.com/xindong/XDial/file",
             "https://objects.githubusercontent.com/file",
             "https://release-assets.githubusercontent.com:444/file",
             "https://user@release-assets.githubusercontent.com/file",
@@ -1571,12 +1571,12 @@ final class AppUpdateCheckerTests: XCTestCase {
     func testStableFeedURLCacheKeyAndNamespaceAreFrozen() async throws {
         XCTAssertEqual(
             production.feedURL.absoluteString,
-            "https://saymiao.github.io/xdial-updates/stable.json"
+            "https://xindong.github.io/xdial-updates/stable.json"
         )
         XCTAssertEqual(production.cacheNamespace, "production")
         XCTAssertEqual(production.channel, .stable)
         XCTAssertNil(production.acceptanceID)
-        XCTAssertEqual(production.archiveOwner, "kafeifei")
+        XCTAssertEqual(production.archiveOwner, "xindong")
         XCTAssertEqual(production.archiveRepository, "XDial")
         XCTAssertEqual(production.configuration(for: .stable), production)
 
@@ -1584,10 +1584,10 @@ final class AppUpdateCheckerTests: XCTestCase {
         XCTAssertEqual(beta, .productionBeta)
         XCTAssertEqual(
             beta.feedURL.absoluteString,
-            "https://saymiao.github.io/xdial-updates/beta.json"
+            "https://xindong.github.io/xdial-updates/beta.json"
         )
         XCTAssertEqual(beta.cacheNamespace, "production-beta")
-        XCTAssertEqual(beta.archiveOwner, "kafeifei")
+        XCTAssertEqual(beta.archiveOwner, "xindong")
         XCTAssertEqual(beta.archiveRepository, "XDial")
         XCTAssertEqual(beta.configuration(for: .stable), production)
 
@@ -1596,18 +1596,18 @@ final class AppUpdateCheckerTests: XCTestCase {
         )
         XCTAssertEqual(
             acceptance.feedURL.absoluteString,
-            "https://saymiao.github.io/xdial-updates/acceptance/"
+            "https://xindong.github.io/xdial-updates/acceptance/"
                 + "pages-a/stable.json"
         )
         XCTAssertEqual(acceptance.cacheNamespace, "acceptance-pages-a")
         let acceptanceBeta = acceptance.configuration(for: .beta)
         XCTAssertEqual(
             acceptanceBeta.feedURL.absoluteString,
-            "https://saymiao.github.io/xdial-updates/acceptance/"
+            "https://xindong.github.io/xdial-updates/acceptance/"
                 + "pages-a/beta.json"
         )
         XCTAssertEqual(acceptanceBeta.acceptanceID, "pages-a")
-        XCTAssertEqual(acceptanceBeta.archiveOwner, "saymiao")
+        XCTAssertEqual(acceptanceBeta.archiveOwner, "xindong")
         XCTAssertEqual(
             acceptanceBeta.cacheNamespace,
             "acceptance-pages-a.beta"
@@ -1650,7 +1650,7 @@ final class AppUpdateCheckerTests: XCTestCase {
         )
         XCTAssertEqual(
             stableObject["endpoint"] as? String,
-            "https://saymiao.github.io/xdial-updates/stable.json"
+            "https://xindong.github.io/xdial-updates/stable.json"
         )
         XCTAssertNotNil(
             defaults.data(forKey: "xdial.update.pages-cache.production-beta")
@@ -1859,7 +1859,7 @@ final class AppUpdateCheckerTests: XCTestCase {
         XCTAssertEqual(urls, [production.feedURL])
         XCTAssertEqual(
             urls.map(\.absoluteString),
-            ["https://saymiao.github.io/xdial-updates/stable.json"]
+            ["https://xindong.github.io/xdial-updates/stable.json"]
         )
         XCTAssertNil(
             defaults.data(forKey: "xdial.update.pages-cache.production-beta")

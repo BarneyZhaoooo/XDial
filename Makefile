@@ -401,7 +401,7 @@ release: release-app
 	@echo "release archive: $(RELEASE_ARCHIVE)"
 	@echo "release checksum: $(RELEASE_ARCHIVE).sha256"
 
-# 显式公开已验收的 Release，再触发 saymiao/xdial-updates 的 Pages 部署。
+# 显式公开已验收的 Release，再触发 xindong/xdial-updates 的 Pages 部署。
 # 使用操作者现有 gh 登录；不把跨仓库凭据嵌入 App 或 Actions。
 publish:
 	@test -z "$(RELEASE_UPDATE_ACCEPTANCE_ID)" || { \
