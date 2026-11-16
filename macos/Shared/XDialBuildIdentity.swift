@@ -16,19 +16,19 @@ enum XDialBuildIdentity {
         #endif
     }
 
-    static let formalApplicationIdentifier = "com.kafeifei.xdial.app"
-    static let formalHelperIdentifier = "com.kafeifei.xdial.app.helper"
-    static let formalDaemonIdentifier = "com.kafeifei.xdial.app.daemon"
+    static let formalApplicationIdentifier = "com.xd.xdial.app"
+    static let formalHelperIdentifier = "com.xd.xdial.app.helper"
+    static let formalDaemonIdentifier = "com.xd.xdial.app.daemon"
     static let formalTransparentProxyIdentifier =
-        "com.kafeifei.xdial.app.transparent-proxy"
+        "com.xd.xdial.app.transparent-proxy"
     static let formalSettingsUIIdentifier =
-        "com.kafeifei.xdial.app.settings-ui"
+        "com.xd.xdial.app.settings-ui"
     static let formalDataIdentifier = "com.kafeifei.xdial"
     static let formalUserDataDirectoryName = ".xdial"
     static let developmentApplicationIdentifier =
-        "com.kafeifei.xdial.debug"
+        "com.xd.xdial.debug"
     static let developmentSettingsUIIdentifier =
-        "com.kafeifei.xdial.debug.settings-ui"
+        "com.xd.xdial.debug.settings-ui"
     static let legacyProbeApplicationIdentifier =
         "com.kafeifei.xdial.ne-probe"
     static let legacyApplicationIdentifier = "com.kafeifei.xdial"
@@ -43,13 +43,13 @@ enum XDialBuildIdentity {
     #if XDIAL_DEVELOPMENT_IDENTITY
     static let isDevelopment = true
     static let applicationIdentifier = developmentApplicationIdentifier
-    static let helperIdentifier = "com.kafeifei.xdial.debug.helper"
-    static let daemonIdentifier = "com.kafeifei.xdial.debug.daemon"
+    static let helperIdentifier = "com.xd.xdial.debug.helper"
+    static let daemonIdentifier = "com.xd.xdial.debug.daemon"
     static let transparentProxyIdentifier =
-        "com.kafeifei.xdial.debug.transparent-proxy"
+        "com.xd.xdial.debug.transparent-proxy"
     static let settingsUIIdentifier = developmentSettingsUIIdentifier
     static let appGroupIdentifier =
-        "UVZM439VGU.com.kafeifei.xdial.debug.network"
+        "SX9RG894L5.com.xd.xdial.debug.network"
     static let applicationBundleName = "XDial Debug.app"
     /// Debug was installed under a misspelled name; installation migrates it.
     static let previousApplicationBundleNames = ["XDail Debug.app"]
@@ -77,7 +77,7 @@ enum XDialBuildIdentity {
         formalTransparentProxyIdentifier
     static let settingsUIIdentifier = formalSettingsUIIdentifier
     static let appGroupIdentifier =
-        "UVZM439VGU.com.kafeifei.xdial.network"
+        "SX9RG894L5.com.xd.xdial.network"
     static let applicationBundleName = "XDial.app"
     static let previousApplicationBundleNames: [String] = []
     static let applicationDisplayName = "XDial"
@@ -115,10 +115,10 @@ enum XDialBuildIdentity {
         var bundleURL: URL { URL(fileURLWithPath: "/Applications/\(bundleName)", isDirectory: true) }
     }
     static let installedChannels: [InstalledChannel] = [
-        .init(applicationIdentifier: "com.kafeifei.xdial.app", bundleName: "XDial.app", daemonSocketPath: "/tmp/xdial.sock"),
-        .init(applicationIdentifier: "com.kafeifei.xdial.debug", bundleName: "XDial Debug.app", daemonSocketPath: "/tmp/xdial-debug.sock"),
+        .init(applicationIdentifier: "com.xd.xdial.app", bundleName: "XDial.app", daemonSocketPath: "/tmp/xdial.sock"),
+        .init(applicationIdentifier: "com.xd.xdial.debug", bundleName: "XDial Debug.app", daemonSocketPath: "/tmp/xdial-debug.sock"),
         // Debug stays recognizable at its previous path until it migrates.
-        .init(applicationIdentifier: "com.kafeifei.xdial.debug", bundleName: "XDail Debug.app", daemonSocketPath: "/tmp/xdial-debug.sock"),
+        .init(applicationIdentifier: "com.xd.xdial.debug", bundleName: "XDail Debug.app", daemonSocketPath: "/tmp/xdial-debug.sock"),
     ]
     static let siblingChannels = installedChannels.filter { $0.applicationIdentifier != applicationIdentifier }
     static let siblingApplicationDestinationURLs = siblingChannels.map(\.bundleURL)

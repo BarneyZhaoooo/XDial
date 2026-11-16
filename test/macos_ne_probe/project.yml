@@ -4,7 +4,7 @@ options:
     macOS: "15.0"
 settings:
   base:
-    DEVELOPMENT_TEAM: UVZM439VGU
+    DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
 targets:

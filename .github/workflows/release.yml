@@ -16,6 +16,9 @@ jobs:
   release:
     runs-on: macos-15
     timeout-minutes: 90
+    # Signing and notarization secrets live only in this environment: it needs a
+    # maintainer's approval and accepts only v* tags.
+    environment: release
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
@@ -115,14 +118,14 @@ jobs:
           test "$(/usr/bin/security cms -D -i "$host_profile" \
             | /usr/bin/plutil -extract \
               'Entitlements.com\.apple\.application-identifier' raw -o - -)" \
-            = "UVZM439VGU.com.kafeifei.xdial.app"
+            = "SX9RG894L5.com.xd.xdial.app"
           test "$(/usr/bin/security cms -D -i "$extension_profile" \
             | /usr/bin/plutil -extract Name raw -o - -)" \
             = "XDial Developer ID App Transparent Proxy"
           test "$(/usr/bin/security cms -D -i "$extension_profile" \
             | /usr/bin/plutil -extract \
               'Entitlements.com\.apple\.application-identifier' raw -o - -)" \
-            = "UVZM439VGU.com.kafeifei.xdial.app.transparent-proxy"
+            = "SX9RG894L5.com.xd.xdial.app.transparent-proxy"
           /usr/bin/security find-identity -v -p codesigning "$keychain" \
             | grep -F 'Developer ID Application:'
           echo "SIGNING_KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"

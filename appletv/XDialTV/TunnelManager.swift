@@ -28,8 +28,8 @@ import Security
 
 /// bundle id 与 App Group 必须和各平台 target 的 entitlement 一致。
 #if os(iOS)
-private let kTunnelBundleIdentifier = "com.kafeifei.xdial.ios.tunnel"
-private let kAppGroupIdentifier = "group.com.kafeifei.xdial.ios"
+private let kTunnelBundleIdentifier = XDialIdentity.tunnelBundleIdentifier
+private let kAppGroupIdentifier = XDialIdentity.appGroup
 #else
 private let kTunnelBundleIdentifier = "com.kafeifei.xdialtv.tunnel"
 private let kAppGroupIdentifier = "group.com.kafeifei.xdialtv"
@@ -461,18 +461,50 @@ enum DataPathProbe {
     private static func probeConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForRequest = 6
-        configuration.timeoutIntervalForResource = 8
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 15
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         return configuration
     }
 
     private static func probeRequest(_ url: URL) -> URLRequest {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 6
+        request.timeoutInterval = 12
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         return request
     }
+}
+
+/// 路由命中自检没过时的明细，例如
+/// 「；命中明细：1.0.0.1 直连×1 · 1.1.1.1 没有记到；测试请求：1.0.0.1 无回应 · 1.1.1.1 回应 203.0.113.9」。
+func routingHitDetail(
+    before: RoutingProbeSnapshot?,
+    after: RoutingProbeSnapshot?,
+    labels: [String: String],
+    directReply: String?,
+    currentReply: String??
+) -> String {
+    func reply(_ address: String?) -> String {
+        address.map { "回应 \($0)" } ?? "无回应"
+    }
+    var replies = "1.0.0.1 \(reply(directReply))"
+    if let currentReply { replies += " · 1.1.1.1 \(reply(currentReply))" }
+
+    guard let before, let after else {
+        return "；命中明细：VPN 扩展没有返回计数；测试请求：\(replies)"
+    }
+    func hits(_ old: [String: Int64], _ new: [String: Int64]) -> String {
+        let parts = Set(old.keys).union(new.keys).sorted().compactMap { tag -> String? in
+            let delta = (new[tag] ?? 0) - (old[tag] ?? 0)
+            guard delta != 0 else { return nil }
+            let name = tag.isEmpty ? "未匹配到线路" : (labels[tag] ?? tag)
+            return "\(name)×\(delta)"
+        }
+        return parts.isEmpty ? "没有记到" : parts.joined(separator: "、")
+    }
+    return "；命中明细：1.0.0.1 \(hits(before.directTargetTags, after.directTargetTags))"
+        + " · 1.1.1.1 \(hits(before.anyConnectTargetTags, after.anyConnectTargetTags))"
+        + "；测试请求：\(replies)"
 }
 
 enum SplitRoutingAcceptanceState: String, Sendable, Equatable {
@@ -882,8 +914,14 @@ final class TunnelProviderSession: TunnelSession {
 
 /// NETunnelProviderManager 管理层。负责:加载已有配置、组装 & 保存新配置、把真实
 /// 扩展会话喂给 GoEngine。conform `TunnelManaging` 供 AppState 查询「是否已安装」。
+/// 连接验收没通过、但隧道保留时，写在 dataPathSummary 开头的标记，首页据此提示。
+let dataPathDegradedPrefix = "自检未通过，连接已保留："
+
 @MainActor
 final class TunnelManager: ObservableObject, TunnelManaging {
+    /// 手机网络经常高延迟或受限，验收失败时保留隧道而不是主动断开。
+    static let keepsTunnelWhenAcceptanceFails = true
+
 
     private static let configGenerationQueue = TunnelConfigGenerationQueue()
 
@@ -1415,6 +1453,18 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 self.armSystemOnDemandIfReady()
                 self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
                 appLog("DataPathProbe: passed \(outcome.logSummary)")
+            } else if Self.keepsTunnelWhenAcceptanceFails {
+                // 机上 Wi-Fi、弱信号等高延迟或受限网络里，验收探针常常超时，但隧道本身已经在转发
+                // 流量。主动断开会把能用的连接断掉，所以保留连接，只记下未通过的原因供首页提示。
+                self.dataPathProbeID = nil
+                self.dataPathVerified = false
+                self.activeStartAttemptID = nil
+                self.startWatchdogTask?.cancel()
+                self.startWatchdogTask = nil
+                self.armSystemOnDemandIfReady()
+                self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
+                self.engine?.dataPathSummary = dataPathDegradedPrefix + outcome.summary
+                appLog("DataPathProbe: degraded, keeping tunnel \(outcome.logSummary)")
             } else {
                 self.dataPathVerified = false
                 appLog("DataPathProbe: failed \(outcome.logSummary)")
@@ -1467,11 +1517,22 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     ) {
         startWatchdogTask?.cancel()
         startWatchdogTask = Task { @MainActor [weak self, weak connection] in
-            try? await Task.sleep(nanoseconds: 45_000_000_000)
+            try? await Task.sleep(nanoseconds: 90_000_000_000)
             guard !Task.isCancelled, let self, let connection,
                   self.dataPathProbeID == probeID else { return }
             self.dataPathProbeTask?.cancel()
             self.dataPathProbeTask = nil
+            if Self.keepsTunnelWhenAcceptanceFails, connection.status == .connected {
+                self.dataPathProbeID = nil
+                self.dataPathVerified = false
+                self.activeStartAttemptID = nil
+                self.startWatchdogTask = nil
+                self.armSystemOnDemandIfReady()
+                self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
+                self.engine?.dataPathSummary = dataPathDegradedPrefix + "连接验收超时"
+                appLog("DataPathProbe: watchdog expired, keeping tunnel")
+                return
+            }
             self.applyProbeFailure(
                 baseMessage: "连接验收超时",
                 diagnostics: TunnelDiagnosticFormatter.persistedSummary(
@@ -1753,9 +1814,20 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             routingEvidenceOK: routingEvidenceOK,
             currentRouteTag: plan.currentRouteTag
         )
-        let failureDetails = probeFailures.isEmpty
+        var failureDetails = probeFailures.isEmpty
             ? ""
             : "；拨号错误：\(probeFailures.joined(separator: "；"))"
+        if !routingEvidenceOK {
+            // 「路由命中未通过」时把依据写出来：两个测试地址各被记到几次、走的哪条线路，
+            // 以及测试请求有没有收到回应。否则只凭「未通过」三个字分不出是没记到还是走错了。
+            failureDetails += routingHitDetail(
+                before: routingBefore,
+                after: routingAfter,
+                labels: Dictionary(plan.targets.map { ($0.tag, $0.label) }, uniquingKeysWith: { first, _ in first }),
+                directReply: routed.routedDirectEgressIP,
+                currentReply: plan.currentRouteTag == nil ? nil : .some(routed.routedAnyConnectEgressIP)
+            )
+        }
         return ProbeOutcome(
             isUsable: result.isUsable,
             summary: result.diagnosticSummary + failureDetails,
@@ -1778,7 +1850,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
               let request = try? JSONSerialization.data(withJSONObject: [
                 "cmd": "probe-outbound-address",
                 "outbound_tag": outboundTag,
-                "timeout_ms": "7000",
+                "timeout_ms": "10000",
               ]) else {
             return OutboundAddressProbeResult(address: nil, failure: "线路探针不可用")
         }
@@ -1787,7 +1859,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             let oneShot = OneShotContinuation<OutboundAddressProbeResult>(continuation)
             // 取消旧验收时，provider 中已经开始的一条最多还会占用 7s。
             // 留出“一条旧任务 + 本任务”的上界，不把排队当成线路超时。
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 16) {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 22) {
                 oneShot.finish(OutboundAddressProbeResult(address: nil, failure: "线路探针超时"))
             }
             do {
@@ -1848,6 +1920,37 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         guard let raw, let data = raw.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(TrafficTotals.self, from: data)
+    }
+
+    func directExitCountry() async -> ExitCountryProbeResult {
+        guard let session = providerSession else {
+            return ExitCountryProbeResult(code: nil, failure: "VPN 扩展不可用")
+        }
+        let request = Data("{\"cmd\":\"probe-exit-country\",\"timeout_ms\":\"8000\"}".utf8)
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<ExitCountryProbeResult>(continuation)
+            // 扩展内最多用 8 秒，留出排队的余量。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 12) {
+                oneShot.finish(ExitCountryProbeResult(code: nil, failure: "VPN 扩展没有及时回应"))
+            }
+            do {
+                try session.sendProviderMessage(request) { responseData in
+                    guard let responseData,
+                          let response = try? JSONDecoder().decode(DaemonResponse.self, from: responseData) else {
+                        oneShot.finish(ExitCountryProbeResult(code: nil, failure: "VPN 扩展回应无效"))
+                        return
+                    }
+                    guard response.ok == true, let code = response.data,
+                          code.count == 2, code.allSatisfy({ $0.isASCII && $0.isUppercase }) else {
+                        oneShot.finish(ExitCountryProbeResult(code: nil, failure: response.message ?? "查询失败"))
+                        return
+                    }
+                    oneShot.finish(ExitCountryProbeResult(code: code, failure: nil))
+                }
+            } catch {
+                oneShot.finish(ExitCountryProbeResult(code: nil, failure: error.localizedDescription))
+            }
+        }
     }
 
     private func requestRoutingProbeSnapshot() async -> RoutingProbeSnapshot? {
@@ -2025,6 +2128,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         activeAcceptancePlan = acceptancePlan
         let server = anyConnect?.server ?? ""
+
+        // 国内下不到 GitHub 上的规则：先把随 App 带的那份放进缓存，保证没网也有一份能用。
+        // 只是拷两个几十 KB 的本地文件，不涉及网络。
+        let seeded = BundledRuleSets.seedCache(for: profile, basePath: basePath)
+        if !seeded.isEmpty {
+            appLog("startTunnel: seeded bundled rule sets \(seeded.joined(separator: ","))")
+        }
 
         // 远程规则会在这里通过严格链路预取并落为 App Group 本地文件；绝不能在
         // MainActor 同步等待网络。准备期间立即进入 connecting，完成后再保存系统配置。

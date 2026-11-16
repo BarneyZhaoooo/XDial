@@ -28,10 +28,13 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Mapping, NamedTuple
 
-SOURCE_REPOSITORY = "kafeifei/XDial"
+SOURCE_REPOSITORY = "xindong/XDial"
 SOURCE_GIT_URL = f"https://github.com/{SOURCE_REPOSITORY}.git"
-PAGES_REPOSITORY = "saymiao/xdial-updates"
+PAGES_REPOSITORY = "xindong/xdial-updates"
 PAGES_GIT_URL = f"https://github.com/{PAGES_REPOSITORY}.git"
+# The publisher commits feed state to this branch; main holds only its code,
+# so the organization's pull-request rule on default branches still applies.
+PAGES_STATE_BRANCH = "feed"
 # fetch and clone otherwise start a detached `git maintenance run --auto`,
 # which can still be writing objects/maintenance.lock while the temporary
 # repository is removed.
@@ -40,8 +43,8 @@ STABLE = "stable"
 BETA = "beta"
 CHANNELS = (STABLE, BETA)
 FEED_URLS = {
-    STABLE: "https://saymiao.github.io/xdial-updates/stable.json",
-    BETA: "https://saymiao.github.io/xdial-updates/beta.json",
+    STABLE: "https://xindong.github.io/xdial-updates/stable.json",
+    BETA: "https://xindong.github.io/xdial-updates/beta.json",
 }
 ROOT = Path(__file__).resolve().parents[1]
 TAG_PATTERN = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
@@ -328,7 +331,7 @@ class PublishedPackage(NamedTuple):
 
 
 class FeedState(NamedTuple):
-    """Both feeds as the Pages repository's main records them."""
+    """Both feeds as the Pages repository's feed branch records them."""
 
     # Every package either feed ever published, withdrawn ones included.
     packages: tuple[PublishedPackage, ...] = ()
@@ -355,7 +358,7 @@ def load_feed_state(source_url: str = PAGES_GIT_URL) -> FeedState:
         root = Path(directory_name) / "pages"
         try:
             subprocess.run(
-                [*GIT_WITHOUT_MAINTENANCE, "clone", "--quiet", "--depth", "1", "--branch", "main",
+                [*GIT_WITHOUT_MAINTENANCE, "clone", "--quiet", "--depth", "1", "--branch", PAGES_STATE_BRANCH,
                  source_url, str(root)],
                 check=True,
                 capture_output=True,
@@ -478,7 +481,7 @@ def require_build_gate(tag: str, channel: str, build: str, packages) -> None:
 
 
 def require_channel_order(tag: str, channel: str, releases: list[dict],
-                          latest_tag: str, feed_state: FeedState) -> None:
+                          latest_tag: str | None, feed_state: FeedState) -> None:
     """Refuse, before publication, what the Pages publisher would refuse after it."""
     if tag in feed_state.withdrawn:
         raise ValueError(f"{tag} was withdrawn from the {channel} feed and cannot be published again")
@@ -490,7 +493,7 @@ def require_channel_order(tag: str, channel: str, releases: list[dict],
         return
     if feed_state.feeds.get(BETA) is None:
         raise ValueError(f"{PAGES_REPOSITORY} has no beta feed yet; deploy beta.json before a beta")
-    stable = [latest_tag]
+    stable = [latest_tag] if latest_tag is not None else []
     stable += [package.tag for package in feed_state.packages if package.channel == STABLE]
     stable += [
         release.get("tag_name") for release in releases
@@ -556,8 +559,16 @@ def beta_followup_steps(beta: dict, tag: str, choice: str) -> str:
     )
 
 
-def latest_stable_release_tag() -> str:
-    latest = gh_json("api", f"repos/{SOURCE_REPOSITORY}/releases/latest")
+def latest_stable_release_tag(releases: list[dict]) -> str | None:
+    """GitHub's Latest release; None only while the repository has published none."""
+    try:
+        latest = gh_json("api", f"repos/{SOURCE_REPOSITORY}/releases/latest")
+    except subprocess.CalledProcessError:
+        # Latest is missing exactly when no release is public yet: the first
+        # stable release. Any other failure, or a public release, still fails.
+        if any(release.get("draft") is not True for release in releases):
+            raise
+        return None
     latest_tag = latest.get("tag_name", "")
     if not TAG_PATTERN.fullmatch(latest_tag):
         raise ValueError("cannot verify the currently published stable release")
@@ -728,8 +739,10 @@ def main() -> None:
     releases = list_source_releases()
     release = find_source_release(args.tag, releases)
     archive, checksum = validate_release(release, args.tag, args.channel)
-    latest_tag = latest_stable_release_tag()
-    if args.channel == STABLE and tag_key(latest_tag) > tag_key(args.tag):
+    latest_tag = latest_stable_release_tag(releases)
+    if args.channel == BETA and latest_tag is None:
+        raise ValueError(f"{SOURCE_REPOSITORY} has no published stable release; publish one before a beta")
+    if args.channel == STABLE and latest_tag is not None and tag_key(latest_tag) > tag_key(args.tag):
         raise ValueError("refusing to replace a newer published release with an older tag")
     with tempfile.TemporaryDirectory(prefix="xdial-publish-") as directory_name:
         directory = Path(directory_name)

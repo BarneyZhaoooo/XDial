@@ -42,9 +42,9 @@ struct AppUpdateFeedConfiguration: Equatable, Sendable {
     /// Released clients read exactly this URL and cache namespace.
     static let production = AppUpdateFeedConfiguration(
         feedURL: URL(
-            string: "https://saymiao.github.io/xdial-updates/stable.json"
+            string: "https://xindong.github.io/xdial-updates/stable.json"
         )!,
-        archiveOwner: "kafeifei",
+        archiveOwner: "xindong",
         archiveRepository: "XDial",
         cacheNamespace: "production",
         acceptanceID: nil,
@@ -52,9 +52,9 @@ struct AppUpdateFeedConfiguration: Equatable, Sendable {
     )
     static let productionBeta = AppUpdateFeedConfiguration(
         feedURL: URL(
-            string: "https://saymiao.github.io/xdial-updates/beta.json"
+            string: "https://xindong.github.io/xdial-updates/beta.json"
         )!,
-        archiveOwner: "kafeifei",
+        archiveOwner: "xindong",
         archiveRepository: "XDial",
         cacheNamespace: "production-beta",
         acceptanceID: nil,
@@ -113,14 +113,14 @@ struct AppUpdateFeedConfiguration: Equatable, Sendable {
     ) throws -> AppUpdateFeedConfiguration {
         guard permitsAcceptanceID(id),
               let feedURL = URL(
-                  string: "https://saymiao.github.io/xdial-updates/"
+                  string: "https://xindong.github.io/xdial-updates/"
                       + "acceptance/\(id)/\(channel.rawValue).json"
               ) else {
             throw AppUpdateFeedConfigurationError.invalidAcceptanceID
         }
         return AppUpdateFeedConfiguration(
             feedURL: feedURL,
-            archiveOwner: "saymiao",
+            archiveOwner: "xindong",
             archiveRepository: "xdial-updates",
             // IDs never contain ".", so no stable namespace can collide.
             cacheNamespace: channel == .stable

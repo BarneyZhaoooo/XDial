@@ -1,6 +1,6 @@
 name: XDialIOS
 options:
-  bundleIdPrefix: com.kafeifei
+  bundleIdPrefix: com.xd
   deploymentTarget:
     iOS: "17.0"
 configs:
@@ -9,10 +9,15 @@ configs:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: UVZM439VGU
+    DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
-    XDIAL_SHARED_KEYCHAIN_GROUP: UVZM439VGU.com.kafeifei.xdial.shared
+    # 应用身份。换一个开发者团队打包时不要改这里：用 `xcodebuild -xcconfig` 覆盖
+    # DEVELOPMENT_TEAM、XDIAL_BUNDLE_ID、XDIAL_APP_GROUP、XDIAL_SHARED_KEYCHAIN_GROUP，
+    # 需要手动签名时再给出 CODE_SIGN_STYLE、CODE_SIGN_IDENTITY 和三个 XDIAL_PROFILE_*。
+    XDIAL_BUNDLE_ID: com.xd.xdial.ios
+    XDIAL_APP_GROUP: group.com.xd.xdial.ios
+    XDIAL_SHARED_KEYCHAIN_GROUP: SX9RG894L5.com.xd.xdial.shared
 
 schemes:
   XDialIOS:
@@ -43,6 +48,9 @@ targets:
     sources:
       - path: ../appletv/XDialTVTunnel/PacketTunnelProvider.swift
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
+      - path: XDialIOSTunnel/TunnelActivityUpdater.swift
+      - path: XDialShared/XDialConnectionActivity.swift
+      - path: XDialShared/XDialIdentity.swift
       - path: XDialIOSTunnel/PrivacyInfo.xcprivacy
         buildPhase: resources
     info:
@@ -51,8 +59,11 @@ targets:
         CFBundleDisplayName: XDial Tunnel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Same export compliance answer as the app; see INFOPLIST_KEY_ITSAppUsesNonExemptEncryption.
         ITSAppUsesNonExemptEncryption: false
         XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
+        XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
+        XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
@@ -62,12 +73,13 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.com.kafeifei.xdial.ios
+          - $(XDIAL_APP_GROUP)
         keychain-access-groups:
           - $(XDIAL_SHARED_KEYCHAIN_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kafeifei.xdial.ios.tunnel
+        PRODUCT_BUNDLE_IDENTIFIER: $(XDIAL_BUNDLE_ID).tunnel
+        PROVISIONING_PROFILE_SPECIFIER: $(XDIAL_PROFILE_TUNNEL)
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "11"
         APPLICATION_EXTENSION_API_ONLY: true
@@ -94,6 +106,8 @@ targets:
         CFBundleDisplayName: XDial Widgets
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
+        XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
@@ -102,10 +116,11 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.com.kafeifei.xdial.ios
+          - $(XDIAL_APP_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kafeifei.xdial.ios.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(XDIAL_BUNDLE_ID).widgets
+        PROVISIONING_PROFILE_SPECIFIER: $(XDIAL_PROFILE_WIDGETS)
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "11"
         APPLICATION_EXTENSION_API_ONLY: true
@@ -117,8 +132,12 @@ targets:
     platform: iOS
     sources:
       - path: XDialIOS
+        excludes:
+          - Info.plist
+          - XDialIOS.entitlements
       - path: XDialShared
       - path: ../appletv/XDialTV/AppState.swift
+      - path: ../appletv/XDialTV/BundledRuleSets.swift
       - path: ../appletv/XDialTV/FakeTunnel.swift
       - path: ../appletv/XDialTV/GoEngine.swift
       - path: ../appletv/XDialTV/KeychainStore.swift
@@ -126,29 +145,70 @@ targets:
       - path: ../appletv/XDialTV/Models.swift
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
       - path: ../appletv/XDialTV/TunnelManager.swift
+    info:
+      path: XDialIOS/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
+        XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
+        XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
     entitlements:
       path: XDialIOS/XDialIOS.entitlements
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+        # 读当前 Wi-Fi 名称，用来按场景登记的 Wi-Fi 自动选场景。
+        com.apple.developer.networking.wifi-info: true
         com.apple.security.application-groups:
-          - group.com.kafeifei.xdial.ios
+          - $(XDIAL_APP_GROUP)
         keychain-access-groups:
           - $(XDIAL_SHARED_KEYCHAIN_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kafeifei.xdial.ios
+        PRODUCT_BUNDLE_IDENTIFIER: $(XDIAL_BUNDLE_ID)
+        PROVISIONING_PROFILE_SPECIFIER: $(XDIAL_PROFILE_APP)
         PRODUCT_NAME: XDial
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "11"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: XDial
+        # Export compliance: the app implements only standard encryption (TLS, DTLS,
+        # AES-GCM, ChaCha20-Poly1305 via Go and sing-box) and is not offered on the
+        # French App Store, so App Store Connect needs no encryption documentation.
+        # Offering it in France needs an encryption declaration with the French
+        # import document, and these keys then change.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
-        INFOPLIST_KEY_XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_NSSupportsLiveActivities: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    postBuildScripts:
+      # 企业包的预置配置和随包规则不进仓库：打包时从被忽略的 ios/PrivateConfig，
+      # 或 XDIAL_IOS_PRIVATE_CONFIG_DIR 指向的目录里取。两处都没有时，App 用空白起步配置。
+      - name: Embed private build configuration
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/PrivateConfig"
+          rm -rf "${destination}"
+          source_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-}"
+          # 明确指定的目录必须存在；只有默认的 ios/PrivateConfig 可以没有。
+          if [ -n "${source_dir}" ] && [ ! -f "${source_dir}/Seed.json" ]; then
+            echo "error: private build configuration not found: ${source_dir}/Seed.json" >&2
+            exit 1
+          fi
+          source_dir="${source_dir:-${SRCROOT}/PrivateConfig}"
+          [ -f "${source_dir}/Seed.json" ] || exit 0
+          mkdir -p "${destination}"
+          cp "${source_dir}/Seed.json" "${destination}/Seed.json"
+          if [ -d "${source_dir}/RuleSets" ]; then
+            mkdir -p "${destination}/RuleSets"
+            find "${source_dir}/RuleSets" -maxdepth 1 -type f \( -name '*.srs' -o -name '*.json' \) \
+              -exec cp {} "${destination}/RuleSets/" \;
+          fi
     dependencies:
       - target: XDialIOSTunnel
         embed: true

@@ -288,6 +288,7 @@ final class HomeViewUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["配置"].waitForExistence(timeout: 2))
 
         app.tabBars.buttons["首页"].tap()
+        revealHomeScenarios(in: app)
         XCTAssertTrue(homeScenario(named: "空白场景", in: app).waitForExistence(timeout: 2))
 
         app.tabBars.buttons["设置"].tap()
@@ -311,32 +312,58 @@ final class HomeViewUITests: XCTestCase {
 
     func testHomeListsScenariosAndSwitchesWithOneTap() {
         let app = launchApp()
-
-        XCTAssertEqual(app.tabBars.buttons.count, 3)
-        XCTAssertFalse(app.tabBars.buttons["场景"].exists)
-
+        let disclosure = app.buttons["home-scenario-disclosure"]
+        let automatic = app.switches["home-auto-scenario"]
         let overseas = homeScenario(named: "海外", in: app)
         let domestic = homeScenario(named: "国内", in: app)
-        XCTAssertTrue(overseas.waitForExistence(timeout: 3))
+
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 3))
+        XCTAssertEqual(disclosure.value as? String, "已收起")
+        XCTAssertFalse(overseas.exists)
+        XCTAssertFalse(domestic.exists)
+        XCTAssertEqual(automatic.value as? String, "1")
+
+        revealHomeScenarios(in: app)
+        XCTAssertTrue(overseas.exists)
         XCTAssertTrue(domestic.exists)
+        XCTAssertEqual(disclosure.value as? String, "已展开")
+        XCTAssertEqual(automatic.value as? String, "1")
         XCTAssertTrue(overseas.isSelected)
         XCTAssertFalse(domestic.isSelected)
 
-        app.buttons["连接"].tap()
-        XCTAssertTrue(app.staticTexts["断开后可切换"].waitForExistence(timeout: 3))
-        XCTAssertFalse(domestic.isEnabled)
-        app.buttons["断开"].tap()
-        XCTAssertTrue(app.staticTexts["未连接"].waitForExistence(timeout: 3))
-
+        // 收起只改变展示，不应关闭自动或开始连接。
+        scrollTo(disclosure, in: app)
+        disclosure.tap()
+        XCTAssertFalse(domestic.exists)
+        XCTAssertEqual(automatic.value as? String, "1")
+        revealHomeScenarios(in: app)
+        scrollTo(domestic, in: app)
         domestic.tap()
         XCTAssertTrue(domestic.isSelected)
         XCTAssertFalse(overseas.isSelected)
+        XCTAssertFalse(disclosure.exists)
+        XCTAssertEqual(automatic.value as? String, "0")
+        XCTAssertEqual(app.staticTexts["home-status"].label, "未连接")
         app.terminate()
 
         let relaunched = launchApp(reset: false)
         let persisted = homeScenario(named: "国内", in: relaunched)
         XCTAssertTrue(persisted.waitForExistence(timeout: 3))
         XCTAssertTrue(persisted.isSelected)
+        XCTAssertFalse(relaunched.buttons["home-scenario-disclosure"].exists)
+
+        let restoredAutomatic = relaunched.switches["home-auto-scenario"]
+        scrollTo(restoredAutomatic, in: relaunched)
+        restoredAutomatic.tap()
+        let restoredDisclosure = relaunched.buttons["home-scenario-disclosure"]
+        XCTAssertTrue(restoredDisclosure.waitForExistence(timeout: 3))
+        XCTAssertEqual(restoredDisclosure.value as? String, "已收起")
+        XCTAssertFalse(persisted.exists)
+
+        // 直接关闭自动也应立即显示列表。
+        restoredAutomatic.tap()
+        XCTAssertTrue(persisted.waitForExistence(timeout: 3))
+        XCTAssertFalse(restoredDisclosure.exists)
     }
 
     func testConnectivityAcceptanceRulesAreVisibleAndProtected() {
@@ -699,6 +726,7 @@ final class HomeViewUITests: XCTestCase {
             "这是 XDial 内置线路的独立授权，与手机上的 Tailscale App 登录状态不共享。完成一次授权后，XDial 会自动继续连接验收。"
         ].exists)
 
+        revealHomeScenarios(in: app)
         XCTAssertFalse(homeScenario(named: "国内", in: app).isEnabled)
 
         app.tabBars.buttons["配置"].tap()
@@ -773,6 +801,22 @@ final class HomeViewUITests: XCTestCase {
         }
         XCTAssertTrue(rule.waitForExistence(timeout: 2))
         return rule
+    }
+
+    private func scrollTo(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<6 {
+            if element.isHittable { return }
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable)
+    }
+
+    private func revealHomeScenarios(in app: XCUIApplication) {
+        let disclosure = app.buttons["home-scenario-disclosure"]
+        if disclosure.exists, disclosure.value as? String == "已收起" {
+            scrollTo(disclosure, in: app)
+            disclosure.tap()
+        }
     }
 
     private func homeScenario(named name: String, in app: XCUIApplication) -> XCUIElement {

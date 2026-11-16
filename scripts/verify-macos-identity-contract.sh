@@ -3,9 +3,9 @@
 set -euo pipefail
 
 readonly project_path="${1:-macos/XDial.xcodeproj}"
-readonly application_identifier="com.kafeifei.xdial.app"
-readonly settings_identifier="com.kafeifei.xdial.app.settings-ui"
-readonly extension_identifier="com.kafeifei.xdial.app.transparent-proxy"
+readonly application_identifier="com.xd.xdial.app"
+readonly settings_identifier="com.xd.xdial.app.settings-ui"
+readonly extension_identifier="com.xd.xdial.app.transparent-proxy"
 readonly settings_cache="$(mktemp -d "${TMPDIR:-/tmp}/xdial-build-settings.XXXXXX")"
 trap 'rm -rf "$settings_cache"' EXIT
 
@@ -101,13 +101,13 @@ for configuration in FormalDevelopment Release; do
         "$configuration" XDialTransparentProxy "$extension_identifier"
 done
 
-assert_setting Debug XDial com.kafeifei.xdial.debug
-assert_setting Debug XDialSettingsUI com.kafeifei.xdial.debug.settings-ui
-assert_setting Debug XDialTransparentProxy com.kafeifei.xdial.debug.transparent-proxy
+assert_setting Debug XDial com.xd.xdial.debug
+assert_setting Debug XDialSettingsUI com.xd.xdial.debug.settings-ui
+assert_setting Debug XDialTransparentProxy com.xd.xdial.debug.transparent-proxy
 assert_build_setting Debug XDial PRODUCT_NAME 'XDial Debug'
 assert_build_setting Debug XDial EXECUTABLE_NAME XDial
-assert_build_setting Debug XDial XDIAL_HELPER_IDENTIFIER com.kafeifei.xdial.debug.helper
-assert_build_setting Debug XDial XDIAL_DAEMON_PLIST com.kafeifei.xdial.debug.daemon.plist
+assert_build_setting Debug XDial XDIAL_HELPER_IDENTIFIER com.xd.xdial.debug.helper
+assert_build_setting Debug XDial XDIAL_DAEMON_PLIST com.xd.xdial.debug.daemon.plist
 assert_build_setting Debug XDial XDIAL_DAEMON_ENTITLEMENTS XDialDaemonDebug.entitlements
 assert_build_setting Debug XDial CODE_SIGN_ENTITLEMENTS XDialDebug.entitlements
 assert_build_setting Debug XDialTransparentProxy CODE_SIGN_ENTITLEMENTS TransparentProxyExtension/XDialTransparentProxyDebug.entitlements
@@ -126,8 +126,8 @@ for configuration in FormalDevelopment Release; do
             || fail "$configuration/$target compiles DebugServer and other DEBUG code"
     done
     assert_build_setting "$configuration" XDial PRODUCT_NAME XDial
-    assert_build_setting "$configuration" XDial XDIAL_HELPER_IDENTIFIER com.kafeifei.xdial.app.helper
-    assert_build_setting "$configuration" XDial XDIAL_DAEMON_PLIST com.kafeifei.xdial.app.daemon.plist
+    assert_build_setting "$configuration" XDial XDIAL_HELPER_IDENTIFIER com.xd.xdial.app.helper
+    assert_build_setting "$configuration" XDial XDIAL_DAEMON_PLIST com.xd.xdial.app.daemon.plist
 done
 for target in XDial XDialSettingsUI XDialTransparentProxy; do
     assert_build_setting Debug "$target" XDIAL_PRODUCT_DISPLAY_NAME 'XDial Debug'
@@ -162,18 +162,18 @@ python3 - <<'PYTHON'
 import pathlib, plistlib
 for path in ["XDialDebug.entitlements", "XDialDaemonDebug.entitlements", "TransparentProxyExtension/XDialTransparentProxyDebug.entitlements"]:
     value = plistlib.loads((pathlib.Path("macos") / path).read_bytes())
-    assert value["com.apple.security.application-groups"] == ["UVZM439VGU.com.kafeifei.xdial.debug.network"], path
-value = plistlib.loads(pathlib.Path("macos/com.kafeifei.xdial.debug.daemon.plist").read_bytes())
-assert value["Label"] == "com.kafeifei.xdial.debug.daemon"
+    assert value["com.apple.security.application-groups"] == ["SX9RG894L5.com.xd.xdial.debug.network"], path
+value = plistlib.loads(pathlib.Path("macos/com.xd.xdial.debug.daemon.plist").read_bytes())
+assert value["Label"] == "com.xd.xdial.debug.daemon"
 assert "/tmp/xdial-debug.sock" in value["ProgramArguments"]
-assert value["AssociatedBundleIdentifiers"] == ["com.kafeifei.xdial.debug"]
+assert value["AssociatedBundleIdentifiers"] == ["com.xd.xdial.debug"]
 assert value["StandardOutPath"] == value["StandardErrorPath"] == "/tmp/xdial-debug.log"
 PYTHON
 
 python3 - <<'PYTHON'
 import pathlib, plistlib
 for channel, name in [("debug", "XDial Debug"), ("app", "XDial")]:
-    path = pathlib.Path(f"macos/com.kafeifei.xdial.{channel}.daemon.plist")
+    path = pathlib.Path(f"macos/com.xd.xdial.{channel}.daemon.plist")
     value = plistlib.loads(path.read_bytes())
     assert value["Program"] == f"/Applications/{name}.app/Contents/MacOS/xdial-daemon", path
     assert "BundleProgram" not in value, path

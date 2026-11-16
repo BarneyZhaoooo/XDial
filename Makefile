@@ -133,14 +133,14 @@ define assemble_app
 	@cp $(BUILD_DIR)/xdial "$(2)/Contents/MacOS/xdial-daemon"
 	@cp macos/Info.plist "$(2)/Contents/Info.plist"
 	@cp macos/AppIcon.icns "$(2)/Contents/Resources/AppIcon.icns"
-	@cp macos/com.kafeifei.xdial.app.daemon.plist "$(2)/Contents/Library/LaunchDaemons/"
+	@cp macos/com.xd.xdial.app.daemon.plist "$(2)/Contents/Library/LaunchDaemons/"
 	@plutil -replace CFBundleExecutable -string XDial "$(2)/Contents/Info.plist"
-	@plutil -replace CFBundleIdentifier -string com.kafeifei.xdial.app "$(2)/Contents/Info.plist"
+	@plutil -replace CFBundleIdentifier -string com.xd.xdial.app "$(2)/Contents/Info.plist"
 	@plutil -replace CFBundleName -string XDial "$(2)/Contents/Info.plist"
 	@plutil -replace CFBundleVersion -string "$(PLIST_VERSION)" "$(2)/Contents/Info.plist"
 	@plutil -replace CFBundleShortVersionString -string "$(PLIST_VERSION)" "$(2)/Contents/Info.plist"
 	@plutil -replace LSMinimumSystemVersion -string "15.0" "$(2)/Contents/Info.plist"
-	@codesign -f -s "$(SIGN_IDENTITY)" -i com.kafeifei.xdial.app.helper --entitlements macos/XDialDaemon.entitlements "$(2)/Contents/MacOS/xdial-daemon"
+	@codesign -f -s "$(SIGN_IDENTITY)" -i com.xd.xdial.app.helper --entitlements macos/XDialDaemon.entitlements "$(2)/Contents/MacOS/xdial-daemon"
 	@codesign -f -s "$(SIGN_IDENTITY)" "$(2)"
 endef
 
@@ -401,7 +401,7 @@ release: release-app
 	@echo "release archive: $(RELEASE_ARCHIVE)"
 	@echo "release checksum: $(RELEASE_ARCHIVE).sha256"
 
-# 显式公开已验收的 Release，再触发 saymiao/xdial-updates 的 Pages 部署。
+# 显式公开已验收的 Release，再触发 xindong/xdial-updates 的 Pages 部署。
 # 使用操作者现有 gh 登录；不把跨仓库凭据嵌入 App 或 Actions。
 publish:
 	@test -z "$(RELEASE_UPDATE_ACCEPTANCE_ID)" || { \

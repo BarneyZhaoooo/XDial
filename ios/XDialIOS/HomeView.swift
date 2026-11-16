@@ -1,82 +1,461 @@
 import SwiftUI
 
+/// 主屏以拨盘和连接状态为主；自动模式收起场景，手动模式直接选择。
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
-    @Binding var selectedTab: MobileTab
-    @State private var showingConfigurationIssues = false
+
+    @State private var signInLineID: SignInTarget?
+    @State private var connectAfterSignIn = false
+    @State private var showingSettings = false
+    @State private var showingAdvanced = false
+    @State private var showingProblemDetail = false
+    @State private var isConfirmingReset = false
+    @State private var pendingScenario: Scenario?
     @State private var tailscaleLoginLineID: String?
     @State private var tailscaleLoginError: String?
     @State private var trafficRate = TrafficRate.unavailable
+    /// 按当前网络自动选场景；手动点了别的场景就关掉。
+    @AppStorage("xdial.auto-scenario") private var autoScenario = true
+    @State private var autoPilot = ScenarioAutoPilot()
+    @State private var showingAutoScenarios = false
+    @State private var dismissedSuggestionID: String?
+    /// 点了连接、正在先看一眼当前网络的那一两秒。
+    @State private var isPreparingConnection = false
+    /// 正在自动断开、换场景、重连。
+    @State private var isAutoSwitching = false
+
+    private struct SignInTarget: Identifiable {
+        let id: String
+    }
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { proxy in
+            // 横屏和 iPhone Duo 展开后足够宽：左边拨盘，右边场景和账号。
+            let isWide = proxy.size.width >= 700
+            let columns = isWide
+                ? AnyLayout(HStackLayout(alignment: .top, spacing: 32))
+                : AnyLayout(VStackLayout(spacing: 22))
+            // 拨盘跟着屏幕高度走：矮屏（Duo 折叠、横屏）缩小，展开的大屏放大一点。
+            let dialDiameter = isWide
+                ? min(240, max(170, proxy.size.height * 0.36))
+                : min(216, max(160, proxy.size.height * 0.26))
             ScrollView {
-                VStack(spacing: 24) {
-                    statusHero
-                    powerButton
-                    scenarioList
+                VStack(spacing: 22) {
+                    header
+                    columns {
+                        VStack(spacing: 22) {
+                            hero(dialDiameter: dialDiameter)
 
-                    if app.requiresUserAction {
-                        tailscaleSignInCard
+                            if app.requiresUserAction {
+                                tailscaleSignInCard
+                            }
+                            if isDegraded {
+                                degradedCard
+                            }
+                            if let suggested = suggestedScenario {
+                                suggestionCard(suggested)
+                            }
+                            if app.hasPendingRuntimeChanges {
+                                PendingRuntimeChangesBanner()
+                            }
+                            if let problem, isIdle {
+                                problemCard(problem)
+                            } else if isIdle, !app.activeScenarioNeedsSignIn, !setupIssues.isEmpty {
+                                setupCard
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        VStack(spacing: 22) {
+                            scenarioSection
+                            accountSection
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, isWide ? 26 : 0)
                     }
-
-                    if app.hasPendingRuntimeChanges {
-                        PendingRuntimeChangesBanner()
-                    }
-
-                    if !app.isConnectionConfigured && !app.hasActiveTunnel {
-                        warningCard(
-                            title: app.tr("连接配置尚未完成", "Connection setup is incomplete"),
-                            detail: app.activeConfigurationIssues.prefix(3).joined(separator: app.tr("；", "; "))
-                        )
-                    }
-
-                    activeLinesCard
                 }
-                .padding()
+                .padding(.horizontal, isWide ? 32 : 20)
+                .padding(.bottom, 28)
+                .frame(maxWidth: isWide ? 1080 : 560)
+                .frame(maxWidth: .infinity)
+                .animation(.smooth(duration: 0.4), value: isWide)
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("XDial")
+        }
+        .background(background)
+        .sheet(item: $signInLineID, onDismiss: connectIfRequested) { target in
+            SignInSheet(lineID: target.id) {
+                connectAfterSignIn = true
+            }
+            .environmentObject(app)
+        }
+        .sheet(isPresented: $showingSettings) {
+            MobileSettingsView()
+                .environmentObject(app)
+        }
+        .sheet(isPresented: $showingAdvanced) {
+            AdvancedConfigurationSheet()
+                .environmentObject(app)
+        }
+        .sheet(isPresented: $showingProblemDetail) {
+            ProblemDetailSheet(detail: problemDetailText)
+                .environmentObject(app)
+        }
+        .alert(
+            pendingScenario.map {
+                app.tr("切换到「\($0.name)」？", "Switch to “\($0.name)”?")
+            } ?? "",
+            isPresented: scenarioSwitchPresented,
+            presenting: pendingScenario
+        ) { scenario in
+            Button(app.tr("切换并重新连接", "Switch and Reconnect")) {
+                Task { await app.switchScenarioAndReconnect(to: scenario.id) }
+            }
+            Button(app.tr("取消", "Cancel"), role: .cancel) {}
+        } message: { _ in
+            Text(app.tr(
+                "会先断开，再用新的方式连上，大约几秒钟。",
+                "XDial disconnects, then reconnects with the new routing. It takes a few seconds."
+            ))
+        }
+        .alert(
+            app.tr("恢复默认配置？", "Restore the default configuration?"),
+            isPresented: $isConfirmingReset
+        ) {
+            Button(app.tr("恢复默认", "Restore Defaults"), role: .destructive) {
+                restoreDefaults()
+            }
+            Button(app.tr("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(app.tr(
+                "线路、规则和场景会回到公司默认配置，账号需要重新登录。",
+                "Lines, rules and scenarios return to the company defaults. You will need to sign in again."
+            ))
+        }
+        .sensoryFeedback(.error, trigger: problem?.detail) { _, new in new != nil }
+        .tint(XDialTheme.accent)
+        .task {
+            autoPilot.onNetworkChange = { Task { await refreshAutoScenario() } }
+            autoPilot.start()
+            await refreshAutoScenario()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refreshAutoScenario() } }
+        }
+        .onChange(of: autoScenario) { _, isOn in
+            showingAutoScenarios = false
+            if isOn { Task { await refreshAutoScenario() } }
+        }
+        .onChange(of: isIdle) { _, idle in
+            // 断开以后重新看一眼，接着按当前网络选场景。
+            if idle { Task { await refreshAutoScenario() } }
         }
     }
 
-    private var statusHero: some View {
-        VStack(spacing: 10) {
-            Image(systemName: statusIcon)
-                .font(.system(size: 66, weight: .medium))
-                .foregroundStyle(statusColor)
-                .symbolEffect(.pulse, isActive: app.isBusy)
-                .accessibilityHidden(true)
+    // MARK: - 自动选场景
 
-            Text(app.statusText)
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
+    /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就自动断开、切换、重连。
+    private func refreshAutoScenario() async {
+        guard autoScenario, !app.profile.scenarios.isEmpty else { return }
+        // 已连接时只有 VPN 扩展查得到本地网络的出口，见 ScenarioAutoPilot.survey。
+        var exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)?
+        if app.isConnected {
+            let app = app
+            exitCountryViaTunnel = { await app.directExitCountry() }
+        }
+        let pick = await autoPilot.survey(
+            scenarios: app.profile.scenarios,
+            regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:],
+            exitCountryViaTunnel: exitCountryViaTunnel
+        )
+        guard let pick, autoScenario else { return }
+        let current = app.profile.activeScenarioID
+        guard pick.scenarioID != current else {
+            dismissedSuggestionID = nil
+            return
+        }
+        if isIdle {
+            app.selectScenario(pick.scenarioID)
+        } else if app.isConnected, !isAutoSwitching, autoPilot.mayAutoSwitch(to: pick.scenarioID) {
+            // 刚从这个场景自动换走又要换回来的话不再自动换，改成在主屏上提示，免得反复断线。
+            autoPilot.noteAutoSwitch(from: current, to: pick.scenarioID)
+            isAutoSwitching = true
+            await app.switchScenarioAndReconnect(to: pick.scenarioID)
+            isAutoSwitching = false
+        }
+    }
 
-            Text(app.activeScenario?.name ?? app.tr("未选择场景", "No scenario selected"))
-                .foregroundStyle(.secondary)
+    /// 已连接、当前网络该用另一个场景、但又不适合自动换（刚刚才换过）时，给出的建议。
+    private var suggestedScenario: Scenario? {
+        guard autoScenario, app.isConnected, !isAutoSwitching, let pick = autoPilot.pick,
+              pick.scenarioID != app.profile.activeScenarioID,
+              pick.scenarioID != dismissedSuggestionID else { return nil }
+        return app.profile.scenarios.first { $0.id == pick.scenarioID }
+    }
 
-            if app.hasFormalTunnel, let connectedAt = app.engine.connectedAt {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(formatDuration(context.date.timeIntervalSince(connectedAt)))
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
+    /// 「已连上 Wi-Fi「Office」」「网络出口在日本」这样的一句话。
+    private var autoScenarioNote: String {
+        guard let pick = autoPilot.pick else {
+            if autoPilot.isSurveying || !autoPilot.hasSurveyed {
+                return app.tr("正在判断所在网络…", "Checking the current network…")
             }
+            return app.tr("没判断出来，保持当前选择", "Couldn't tell; keeping the current choice")
+        }
+        switch pick.reason {
+        case .wifi(let ssid):
+            return app.tr("已连上 Wi-Fi「\(ssid)」", "On Wi-Fi “\(ssid)”")
+        case .country(let code):
+            let locale = Locale(identifier: app.language == .zh ? "zh-Hans" : "en")
+            let name = locale.localizedString(forRegionCode: code) ?? code
+            return app.tr("网络出口在\(name)", "Network exits in \(name)")
+        }
+    }
 
-            if app.isConnected {
-                trafficRateCapsule
+    private func suggestionCard(_ scenario: Scenario) -> some View {
+        noticeCard(
+            symbol: "arrow.triangle.branch",
+            tint: XDialTheme.accent,
+            title: app.tr("建议切到「\(scenario.name)」", "Switch to “\(scenario.name)”?"),
+            message: app.tr(
+                "\(autoScenarioNote)，和现在用的上网方式不一样。",
+                "\(autoScenarioNote), which doesn't match the current routing."
+            ),
+            identifier: "home-auto-suggestion"
+        ) {
+            Button(app.tr("切换并重连", "Switch and Reconnect")) {
+                Task { await app.switchScenarioAndReconnect(to: scenario.id) }
+            }
+            .buttonStyle(XDialPillButtonStyle())
+            Button(app.tr("暂不", "Not Now")) { dismissedSuggestionID = scenario.id }
+                .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
+        }
+    }
+
+    /// 点连接时，如果刚换过网络还没来得及判断，先等这一下，免得用错场景。
+    private func connectAfterCheckingNetwork() {
+        guard autoScenario, !autoPilot.isFresh else {
+            app.connect()
+            return
+        }
+        isPreparingConnection = true
+        Task {
+            await refreshAutoScenario()
+            isPreparingConnection = false
+            if app.canConnect {
+                app.connect()
+            } else if app.activeScenarioNeedsSignIn, let line = app.accountLine {
+                presentSignIn(line.id)
             }
         }
+    }
+
+    // MARK: - 状态
+
+    private var status: String { app.engine.status }
+    private var isWorking: Bool {
+        ["connecting", "checking", "disconnecting", "reconnecting"].contains(status)
+    }
+    private var isIdle: Bool { !isWorking && !app.hasActiveTunnel }
+    private var isDegraded: Bool {
+        app.isConnected && (app.engine.dataPathSummary?.hasPrefix(dataPathDegradedPrefix) ?? false)
+    }
+    private var problem: ConnectionProblem? {
+        ConnectionProblem.classify(
+            app.engine.lastError.map(userFacingConnectionText),
+            isChinese: app.language == .zh
+        )
+    }
+    private var setupIssues: [String] {
+        let lines = app.incompleteActiveLineSummaries
+        return lines.isEmpty ? Array(app.activeConfigurationIssues.prefix(3)) : lines
+    }
+
+    private var phase: DialPhase {
+        if isWorking || isPreparingConnection { return .working }
+        if app.requiresUserAction || app.tailscaleSetupLineID != nil || isDegraded { return .attention }
+        if app.isConnected { return .connected }
+        return .idle
+    }
+
+    private var statusTitle: String {
+        if app.tailscaleSetupLineID != nil, !app.hasFormalTunnel {
+            return app.tr("正在设置 Tailscale", "Setting Up Tailscale")
+        }
+        switch status {
+        case "connecting": return app.tr("正在连接…", "Connecting…")
+        case "checking": return app.tr("正在检查线路…", "Checking the route…")
+        case "disconnecting": return app.tr("正在断开…", "Disconnecting…")
+        case "reconnecting": return app.tr("正在重连…", "Reconnecting…")
+        case "action-required": return app.tr("需要登录 Tailscale", "Tailscale Sign-in Required")
+        case "connected": return app.tr("已连接", "Connected")
+        default:
+            if isPreparingConnection { return app.tr("正在判断网络…", "Checking the Network…") }
+            if app.activeScenarioNeedsSignIn { return app.tr("还没登录", "Not Signed In") }
+            return app.tr("未连接", "Not Connected")
+        }
+    }
+
+    private var statusHint: String {
+        if app.tailscaleSetupLineID != nil, !app.hasFormalTunnel {
+            return app.tr("轻点拨盘取消", "Tap the dial to cancel")
+        }
+        if isWorking {
+            return status == "disconnecting"
+                ? ""
+                : app.tr("轻点拨盘取消", "Tap the dial to cancel")
+        }
+        if app.hasFormalTunnel {
+            return app.tr("轻点拨盘断开", "Tap the dial to disconnect")
+        }
+        if app.activeScenarioNeedsSignIn {
+            return app.tr("登录公司账号后就能连接", "Sign in with your company account to connect")
+        }
+        if !app.isConnectionConfigured {
+            return app.tr("当前场景还没设置好", "This scenario isn't ready yet")
+        }
+        return app.tr("轻点拨盘连接", "Tap the dial to connect")
+    }
+
+    // MARK: - 顶部与拨盘
+
+    private var header: some View {
+        HStack {
+            Text("XDial")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(XDialTheme.ink)
+            Spacer()
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(XDialTheme.accent)
+                    .frame(width: 44, height: 44)
+                    .xdialGlass(interactive: true, in: Circle(), fallback: XDialTheme.surface)
+            }
+            .accessibilityLabel(app.tr("设置", "Settings"))
+            .accessibilityIdentifier("home-settings")
+        }
+        .padding(.top, 8)
+    }
+
+    private func hero(dialDiameter: CGFloat) -> some View {
+        VStack(spacing: 18) {
+            DialControl(
+                phase: phase,
+                isDimmed: isIdle && !app.canConnect && !app.activeScenarioNeedsSignIn,
+                diameter: dialDiameter,
+                action: dialTapped
+            )
+            .disabled(status == "disconnecting")
+            .accessibilityLabel(dialAccessibilityLabel)
+            .accessibilityIdentifier("connection-toggle")
+            .padding(.top, dialDiameter < 200 ? 10 : 26)
+            .padding(.bottom, dialDiameter < 200 ? 4 : 14)
+
+            VStack(spacing: 6) {
+                Text(statusTitle)
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(XDialTheme.ink)
+                    .contentTransition(.opacity)
+                    .accessibilityIdentifier("home-status")
+
+                // 第二行固定一行高：已连接时是计时，其它时候是一句提示。
+                Group {
+                    if app.hasFormalTunnel, let connectedAt = app.engine.connectedAt {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(formatDuration(context.date.timeIntervalSince(connectedAt)))
+                                .font(.system(.body, design: .rounded).monospacedDigit())
+                                .foregroundStyle(XDialTheme.inkSecondary)
+                        }
+                    } else {
+                        Text(statusHint.isEmpty ? " " : statusHint)
+                            .font(.subheadline)
+                            .foregroundStyle(XDialTheme.inkTertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .frame(minHeight: 22)
+            }
+            .animation(.smooth(duration: 0.3), value: statusTitle)
+
+            // 这一格高度固定，连接前后下面的卡片不会跳。
+            ZStack {
+                if app.isConnected {
+                    trafficRow
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                } else if isIdle, app.activeScenarioNeedsSignIn, let line = app.accountLine {
+                    Button {
+                        presentSignIn(line.id)
+                    } label: {
+                        Text(app.tr("登录\(displayName(line))", "Sign in to \(displayName(line))"))
+                    }
+                    .buttonStyle(XDialPrimaryButtonStyle())
+                    .transition(.opacity)
+                    .accessibilityIdentifier("home-sign-in")
+                }
+            }
+            .frame(height: 54)
+        }
         .frame(maxWidth: .infinity)
-        .padding(.top, 12)
+        .animation(.smooth(duration: 0.35), value: app.isConnected)
         .task(id: samplesTraffic) {
             await sampleTraffic()
         }
     }
 
-    /// 只在首页可见、App 在前台且已连接时每秒采样；切页、退后台或断开即停。
+    private var dialAccessibilityLabel: String {
+        if app.tailscaleSetupLineID != nil, !app.hasFormalTunnel {
+            return app.tr("取消 Tailscale 设置", "Cancel Tailscale Setup")
+        }
+        if app.hasFormalTunnel { return app.tr("断开", "Disconnect") }
+        if isWorking { return app.tr("取消连接", "Cancel Connecting") }
+        return app.tr("连接", "Connect")
+    }
+
+    private func dialTapped() {
+        guard !isPreparingConnection else { return }
+        if app.hasFormalTunnel || status == "connecting" || status == "checking" || status == "reconnecting" {
+            app.disconnect()
+        } else if app.tailscaleSetupLineID != nil {
+            app.finishTailscaleSetup()
+        } else if app.canConnect {
+            connectAfterCheckingNetwork()
+        } else if app.activeScenarioNeedsSignIn, let line = app.accountLine {
+            presentSignIn(line.id)
+        } else if problem?.kind == .needsReset {
+            isConfirmingReset = true
+        } else {
+            showingAdvanced = true
+        }
+    }
+
+    private var background: some View {
+        ZStack(alignment: .top) {
+            XDialTheme.canvas
+            LinearGradient(
+                colors: [phaseTint.opacity(0.16), phaseTint.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 460)
+            .animation(.smooth(duration: 0.6), value: phase)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var phaseTint: Color {
+        switch phase {
+        case .idle, .working: return XDialTheme.accent
+        case .connected: return XDialTheme.success
+        case .attention: return XDialTheme.warning
+        }
+    }
+
+    // MARK: - 流量
+
+    /// 只在主屏可见、App 在前台且已连接时每秒采样；退后台或断开即停。
     private var samplesTraffic: Bool {
         app.isConnected && scenePhase == .active
     }
@@ -97,22 +476,16 @@ struct HomeView: View {
         }
     }
 
-    private var trafficRateCapsule: some View {
+    private var trafficRow: some View {
         let download = TrafficRate.format(trafficRate.downloadBytesPerSecond)
         let upload = TrafficRate.format(trafficRate.uploadBytesPerSecond)
-        return HStack(spacing: 0) {
+        return HStack(spacing: 18) {
             trafficMetric(symbol: "arrow.down", value: download)
-            Divider()
-                .frame(height: 14)
-                .padding(.horizontal, 10)
             trafficMetric(symbol: "arrow.up", value: upload)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 32)
-        .background(Color.primary.opacity(0.04), in: Capsule())
-        .overlay {
-            Capsule().stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
-        }
+        .padding(.horizontal, 18)
+        .frame(height: 38)
+        .xdialGlass(in: Capsule(), fallback: XDialTheme.surface.opacity(0.7))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(app.tr(
             "下载 \(download)，上传 \(upload)",
@@ -122,129 +495,356 @@ struct HomeView: View {
     }
 
     private func trafficMetric(symbol: String, value: String) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Image(systemName: symbol)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(XDialTheme.success)
             Text(value)
-                .font(.system(.footnote, design: .monospaced))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 88, alignment: .trailing)
+                .font(.system(.footnote, design: .rounded).monospacedDigit())
+                .foregroundStyle(XDialTheme.inkSecondary)
         }
     }
 
-    private var powerButton: some View {
-        Button {
-            if app.hasFormalTunnel {
-                app.disconnect()
-            } else if app.tailscaleSetupLineID != nil {
-                app.finishTailscaleSetup()
-            } else if app.canConnect {
-                app.connect()
-            } else {
-                showingConfigurationIssues = true
-            }
-        } label: {
-            Image(systemName: app.hasActiveTunnel ? "stop.fill" : "power")
-                .font(.system(size: 38, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 112, height: 112)
-                .background(app.hasActiveTunnel ? Color.red : Color.accentColor)
-                .clipShape(Circle())
-                .shadow(color: (app.hasActiveTunnel ? Color.red : Color.accentColor).opacity(0.28), radius: 16, y: 8)
-        }
-        .disabled(app.isBusy)
-        .alert(
-            app.tr("连接前请先补齐线路", "Complete Line Setup Before Connecting"),
-            isPresented: $showingConfigurationIssues
-        ) {
-            Button(app.tr("前往配置", "Open Configuration")) {
-                selectedTab = .configuration
-            }
-            Button(app.tr("取消", "Cancel"), role: .cancel) {}
-        } message: {
-            Text(app.activeConfigurationIssues.joined(separator: app.tr("；", "; ")))
-        }
-        .opacity(app.isBusy || (!app.hasActiveTunnel && !app.canConnect) ? 0.45 : 1)
-        .accessibilityLabel(
-            app.tailscaleSetupLineID != nil
-                && !app.hasFormalTunnel
-                    ? app.tr("取消 Tailscale 设置", "Cancel Tailscale Setup")
-                    : (app.hasFormalTunnel
-                        ? app.tr("断开", "Disconnect")
-                        : app.tr("连接", "Connect"))
-        )
-        .accessibilityIdentifier("connection-toggle")
-    }
+    // MARK: - 提示卡
 
-    private var scenarioList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(app.tr("场景", "Scenarios"))
-                    .font(.headline)
-                Spacer()
-                if app.hasActiveTunnel {
-                    Text(app.tr("断开后可切换", "Disconnect to switch"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private func noticeCard<Actions: View>(
+        symbol: String,
+        tint: Color,
+        title: String,
+        message: String,
+        identifier: String,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.title3)
+                    .foregroundStyle(tint)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(XDialTheme.ink)
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(XDialTheme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding()
+            HStack(spacing: 10) {
+                actions()
+            }
+            .padding(.leading, 40)
+        }
+        .xdialCard()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func problemCard(_ problem: ConnectionProblem) -> some View {
+        noticeCard(
+            symbol: problem.kind == .credentials ? "person.crop.circle.badge.exclamationmark" : "exclamationmark.triangle.fill",
+            tint: XDialTheme.danger,
+            title: problem.title,
+            message: problem.advice,
+            identifier: "home-problem"
+        ) {
+            switch problem.kind {
+            case .credentials:
+                if let line = app.accountLine {
+                    Button(app.tr("重新登录", "Sign In Again")) { presentSignIn(line.id) }
+                        .buttonStyle(XDialPillButtonStyle())
+                        .accessibilityIdentifier("home-problem-action")
+                }
+            case .server:
+                if app.canConnect {
+                    Button(app.tr("再试一次", "Try Again")) { app.connect() }
+                        .buttonStyle(XDialPillButtonStyle())
+                        .accessibilityIdentifier("home-problem-action")
+                }
+            case .needsReset:
+                Button(app.tr("恢复默认配置", "Restore Defaults")) { isConfirmingReset = true }
+                    .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.danger))
+                    .accessibilityIdentifier("home-problem-action")
+            case .network, .other:
+                if app.canConnect {
+                    Button(app.tr("再试一次", "Try Again")) { app.connect() }
+                        .buttonStyle(XDialPillButtonStyle())
+                        .accessibilityIdentifier("home-problem-action")
+                }
+            }
+            Button(app.tr("详情", "Details")) { showingProblemDetail = true }
+                .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
+            if problem.kind != .needsReset {
+                Button(app.tr("知道了", "Dismiss")) { app.engine.lastError = nil }
+                    .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
+            }
+        }
+    }
+
+    private var setupCard: some View {
+        noticeCard(
+            symbol: "wrench.and.screwdriver.fill",
+            tint: XDialTheme.warning,
+            title: app.tr("当前场景还差一步", "This scenario needs one more step"),
+            message: setupIssues.joined(separator: app.tr("；", "; ")),
+            identifier: "home-setup"
+        ) {
+            Button(app.tr("去设置", "Open Setup")) { showingAdvanced = true }
+                .buttonStyle(XDialPillButtonStyle())
+                .accessibilityIdentifier("home-setup-action")
+        }
+    }
+
+    private var degradedCard: some View {
+        noticeCard(
+            symbol: "wifi.exclamationmark",
+            tint: XDialTheme.warning,
+            title: app.tr("已连接，但线路自检没通过", "Connected, but the route check didn't pass"),
+            message: app.tr(
+                "网络可能比较慢。可以先用着；打不开公司网站的话，断开再连一次。",
+                "The network may be slow. Keep using it; if company sites don't open, reconnect."
+            ),
+            identifier: "home-degraded-note"
+        ) {
+            Button(app.tr("详情", "Details")) { showingProblemDetail = true }
+                .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
+        }
+    }
+
+    private var problemDetailText: String {
+        if let detail = problem?.detail { return detail }
+        return app.engine.dataPathSummary ?? ""
+    }
+
+    // MARK: - 场景
+
+    private var scenarioSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center) {
+                XDialSectionLabel(text: app.tr("上网方式", "Routing"))
+                Spacer()
+                if !app.profile.scenarios.isEmpty {
+                    Toggle(isOn: $autoScenario) {
+                        Text(app.tr("自动", "Auto"))
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                    }
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    .scaleEffect(0.82, anchor: .trailing)
+                    .accessibilityIdentifier("home-auto-scenario")
+                }
+            }
+            if autoScenario, !app.profile.scenarios.isEmpty {
+                Button {
+                    withAnimation(.smooth(duration: 0.25)) {
+                        showingAutoScenarios.toggle()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(app.tr("当前选择", "Current selection"))
+                            .font(.caption)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                        Text(app.activeScenario?.name ?? app.tr("未选择场景", "No scenario selected"))
+                            .font(.headline)
+                            .foregroundStyle(XDialTheme.ink)
+                        Label(autoScenarioNote, systemImage: "location.fill")
+                            .font(.footnote)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                            .contentTransition(.opacity)
+                            .accessibilityIdentifier("home-auto-note")
+                        HStack {
+                            Text(showingAutoScenarios
+                                 ? app.tr("收起场景", "Hide scenarios")
+                                 : app.tr("展开场景 · 手动调整", "Show scenarios · Adjust manually"))
+                            Spacer()
+                            Image(systemName: showingAutoScenarios ? "chevron.up" : "chevron.down")
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(XDialTheme.accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(XDialTheme.surface, in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home-scenario-disclosure")
+                .accessibilityValue(showingAutoScenarios
+                                    ? app.tr("已展开", "Expanded")
+                                    : app.tr("已收起", "Collapsed"))
+            }
 
             if app.profile.scenarios.isEmpty {
-                Divider()
-                Text(app.tr("暂无场景，请在「配置 › 场景」中新建。", "No scenarios yet. Create one in Configuration › Scenes."))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding()
-            }
-
-            ForEach(app.profile.scenarios) { scenario in
-                Divider()
-                    .padding(.leading)
-                scenarioRow(scenario)
-            }
-        }
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func scenarioRow(_ scenario: Scenario) -> some View {
-        let isActive = scenario.id == app.profile.activeScenarioID
-        let issueCount = app.configurationIssues(for: scenario).count
-        return Button {
-            guard app.canMutateConfiguration, !isActive else { return }
-            app.profile.activeScenarioID = scenario.id
-            app.save()
-        } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(scenario.name)
-                        .foregroundStyle(.primary)
-                    if issueCount > 0 {
-                        Text(app.tr("需补齐 \(issueCount) 项配置", "\(issueCount) setup item(s) required"))
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                noticeCard(
+                    symbol: "square.stack.3d.up.slash",
+                    tint: XDialTheme.inkSecondary,
+                    title: app.tr("还没有场景", "No scenarios yet"),
+                    message: app.tr(
+                        "场景决定哪些网站走公司 VPN。恢复默认配置就能直接用。",
+                        "A scenario decides which sites use the company VPN. Restore the defaults to get started."
+                    ),
+                    identifier: "home-no-scenarios"
+                ) {
+                    Button(app.tr("恢复默认配置", "Restore Defaults")) { isConfirmingReset = true }
+                        .buttonStyle(XDialPillButtonStyle())
+                }
+            } else if !autoScenario || showingAutoScenarios {
+                VStack(spacing: 10) {
+                    ForEach(app.profile.scenarios) { scenario in
+                        scenarioCard(scenario)
                     }
                 }
-                Spacer()
-                if isActive {
-                    Image(systemName: "checkmark")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+        }
+    }
+
+    private func scenarioCard(_ scenario: Scenario) -> some View {
+        let isActive = scenario.id == app.profile.activeScenarioID
+        return Button {
+            scenarioTapped(scenario)
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: ScenarioDescriber.symbol(for: scenario, in: app.profile))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(isActive ? XDialTheme.surface : XDialTheme.accent)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        isActive ? XDialTheme.accent : XDialTheme.accent.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(scenario.name)
+                        .font(.headline)
+                        .foregroundStyle(XDialTheme.ink)
+                    Text(ScenarioDescriber.summary(
+                        for: scenario,
+                        in: app.profile,
+                        isChinese: app.language == .zh
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(XDialTheme.inkSecondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isActive ? XDialTheme.accent : XDialTheme.hairline)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                XDialTheme.surface,
+                in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
+                    .strokeBorder(XDialTheme.accent.opacity(isActive ? 1 : 0), lineWidth: 1.5)
+            }
+            .shadow(color: .black.opacity(0.04), radius: 12, y: 4)
+            .contentShape(RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(app.hasActiveTunnel || app.isBusy)
-        .opacity((app.hasActiveTunnel || app.isBusy) && !isActive ? 0.45 : 1)
+        .disabled(status == "disconnecting")
+        .animation(.smooth(duration: 0.25), value: isActive)
+        .sensoryFeedback(.selection, trigger: isActive)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isActive ? .isSelected : [])
         .accessibilityIdentifier("home-scenario-\(scenario.id)")
     }
+
+    private func scenarioTapped(_ scenario: Scenario) {
+        guard scenario.id != app.profile.activeScenarioID else { return }
+        // 自己动手选了，就不再自动换。
+        autoScenario = false
+        if isIdle {
+            app.selectScenario(scenario.id)
+        } else {
+            pendingScenario = scenario
+        }
+    }
+
+    private var scenarioSwitchPresented: Binding<Bool> {
+        Binding(
+            get: { pendingScenario != nil },
+            set: { if !$0 { pendingScenario = nil } }
+        )
+    }
+
+    // MARK: - 账号
+
+    @ViewBuilder
+    private var accountSection: some View {
+        if let line = app.accountLine {
+            let username = line.vpnUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            VStack(alignment: .leading, spacing: 10) {
+                XDialSectionLabel(text: app.tr("账号", "Account"))
+                Button {
+                    presentSignIn(line.id)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: app.accountIsIncomplete ? "person.crop.circle.badge.plus" : "person.crop.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundStyle(XDialTheme.accent)
+                            .frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(displayName(line))
+                                .font(.headline)
+                                .foregroundStyle(XDialTheme.ink)
+                            Text(app.accountIsIncomplete
+                                 ? app.tr("未登录", "Not signed in")
+                                 : username)
+                                .font(.subheadline)
+                                .foregroundStyle(XDialTheme.inkSecondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(XDialTheme.inkTertiary)
+                    }
+                    .xdialCard(padding: 16)
+                    .contentShape(RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("home-account")
+            }
+        }
+    }
+
+    private func displayName(_ line: Line) -> String {
+        let name = line.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? app.tr("公司 VPN", "Company VPN") : name
+    }
+
+    private func presentSignIn(_ lineID: String) {
+        connectAfterSignIn = false
+        signInLineID = SignInTarget(id: lineID)
+    }
+
+    /// 登录弹层收起后再发起连接，让拨盘的转动动画完整可见。
+    private func connectIfRequested() {
+        guard connectAfterSignIn else { return }
+        connectAfterSignIn = false
+        if app.canConnect { app.connect() }
+    }
+
+    private func restoreDefaults() {
+        guard !app.hasActiveTunnel, !app.isBusy else { return }
+        let previous = app.profile
+        app.engine.lastError = nil
+        if !app.replaceProfileAndSave(app.defaultProfile) {
+            app.profile = previous
+        }
+    }
+
+    // MARK: - Tailscale 授权
 
     private var tailscaleSignInCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -253,14 +853,14 @@ struct HomeView: View {
                 systemImage: "person.crop.circle.badge.exclamationmark"
             )
             .font(.headline)
-            .foregroundStyle(.orange)
+            .foregroundStyle(XDialTheme.warning)
 
             Text(app.tr(
-                "这是 XDial 内置线路的独立授权，与手机上的 Tailscale App 登录状态不共享。完成一次授权后，XDial 会自动继续连接验收。",
-                "This authorizes XDial's built-in route separately from the Tailscale app. After the one-time sign-in, XDial automatically resumes connection checks."
+                "这是 XDial 内置线路的独立授权，和手机上的 Tailscale App 不共用。授权一次后会自动继续连接。",
+                "This authorizes XDial's built-in route separately from the Tailscale app. After a one-time sign-in, XDial continues connecting."
             ))
-            .font(.footnote)
-            .foregroundStyle(.secondary)
+            .font(.subheadline)
+            .foregroundStyle(XDialTheme.inkSecondary)
 
             ForEach(app.tailscaleAuthRequests) { request in
                 Button {
@@ -271,7 +871,6 @@ struct HomeView: View {
                             ProgressView()
                             Text(app.tr("正在准备登录…", "Preparing sign-in…"))
                         }
-                        .frame(maxWidth: .infinity)
                     } else {
                         Label(
                             app.tailscaleAuthRequests.count == 1
@@ -279,24 +878,19 @@ struct HomeView: View {
                                 : app.tr("登录 \(request.lineName)", "Sign In to \(request.lineName)"),
                             systemImage: "safari"
                         )
-                        .frame(maxWidth: .infinity)
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(XDialPrimaryButtonStyle(tint: XDialTheme.warning))
                 .disabled(tailscaleLoginLineID != nil)
             }
 
             if let tailscaleLoginError {
                 Label(tailscaleLoginError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(XDialTheme.danger)
             }
-
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .xdialCard()
     }
 
     private func startTailscaleLogin(_ request: TailscaleAuthRequest) {
@@ -337,82 +931,6 @@ struct HomeView: View {
         }
     }
 
-    private var activeLinesCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(
-                app.isConnected
-                    ? app.tr("本场景活动出口", "Active routes in this scenario")
-                    : app.tr("连接后使用的出口", "Routes used after connecting")
-            )
-                .font(.headline)
-
-            if activeTargets.isEmpty {
-                Text(app.tr("没有活动出口", "No active routes"))
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(activeTargets) { target in
-                    HStack {
-                        Image(systemName: target.isSubscription
-                              ? "antenna.radiowaves.left.and.right"
-                              : lineSymbol(target.type))
-                            .foregroundStyle(target.type == "tailscale" ? Color.orange : Color.accentColor)
-                            .frame(width: 24)
-                        VStack(alignment: .leading) {
-                            Text(target.name)
-                            Text(target.isSubscription
-                                 ? app.tr("订阅", "Subscription")
-                                 : mobileLineTypeLabel(target.type))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: app.isConnected ? "checkmark.circle.fill" : "circle.dashed")
-                            .foregroundStyle(app.isConnected ? Color.green : Color.secondary)
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func warningCard(title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.bold())
-                Text(detail).font(.footnote).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding()
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    private var activeTargets: [ActiveRouteTargetSummary] {
-        guard let scenario = app.activeScenario else { return [] }
-        return app.profile.activeRouteTargetSummaries(for: scenario)
-    }
-
-    private var statusIcon: String {
-        if app.tailscaleSetupLineID != nil { return "gearshape.2.fill" }
-        if app.isConnected { return "checkmark.shield.fill" }
-        if app.requiresUserAction { return "person.crop.circle.badge.exclamationmark" }
-        if app.isBusy { return "arrow.triangle.2.circlepath" }
-        return "shield.slash"
-    }
-
-    private var statusColor: Color {
-        if app.tailscaleSetupLineID != nil { return .orange }
-        if app.isConnected { return .green }
-        if app.requiresUserAction { return .orange }
-        if app.isBusy { return .orange }
-        return .secondary
-    }
-
     private func formatDuration(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval))
         let hours = total / 3_600
@@ -425,36 +943,89 @@ struct HomeView: View {
     }
 }
 
+/// 报错或自检结果的原文，可复制、可分享给管理员。
+private struct ProblemDetailSheet: View {
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    let detail: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(detail)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(XDialTheme.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .background(XDialTheme.canvas.ignoresSafeArea())
+            .navigationTitle(app.tr("详情", "Details"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    ShareLink(item: detail) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(app.tr("完成", "Done")) { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .tint(XDialTheme.accent)
+    }
+}
+
+/// 从主屏直接打开的高级配置。
+struct AdvancedConfigurationSheet: View {
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ConfigurationView()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(app.tr("完成", "Done")) { dismiss() }
+                    }
+                }
+        }
+        .tint(XDialTheme.accent)
+    }
+}
+
 struct PendingRuntimeChangesBanner: View {
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(
-                app.tr("配置已保存，等待重新连接后应用", "Configuration saved; reconnect to apply"),
-                systemImage: "arrow.triangle.2.circlepath"
-            )
-            .font(.subheadline.bold())
-
-            Text(app.tr(
-                "当前连接继续使用启动时的配置，不会在后台静默切换线路。",
-                "The current connection keeps its startup configuration and will not switch routes silently."
-            ))
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-
-            Button {
-                app.reconnectToApplyChanges()
-            } label: {
-                Label(app.tr("重新连接并应用", "Reconnect and Apply"), systemImage: "arrow.clockwise")
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.title3)
+                    .foregroundStyle(XDialTheme.warning)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(app.tr("改动要重新连接后才生效", "Reconnect to apply your changes"))
+                        .font(.headline)
+                        .foregroundStyle(XDialTheme.ink)
+                    Text(app.tr(
+                        "当前连接还在用改动前的配置。",
+                        "The current connection still uses the previous configuration."
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(XDialTheme.inkSecondary)
+                }
             }
-            .buttonStyle(.borderedProminent)
+            Button(app.tr("重新连接", "Reconnect")) {
+                app.reconnectToApplyChanges()
+            }
+            .buttonStyle(XDialPillButtonStyle())
             .disabled(!app.isConnected || app.isBusy)
+            .padding(.leading, 40)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .xdialCard()
     }
 }
 

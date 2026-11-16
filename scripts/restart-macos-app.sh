@@ -67,11 +67,11 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 source_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
     "${source_bundle}/Contents/Info.plist")"
 case "$source_identifier" in
-    com.kafeifei.xdial.debug)
+    com.xd.xdial.debug)
         destination_bundle="/Applications/XDial Debug.app"
         debug_port=19877
         ;;
-    com.kafeifei.xdial.app)
+    com.xd.xdial.app)
         destination_bundle="/Applications/XDial.app"
         debug_port=19876
         ;;

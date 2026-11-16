@@ -56,7 +56,7 @@ private final class TailscaleSetupInterfaceState: @unchecked Sendable {
 
 @MainActor
 final class LocalTailscaleSetupRuntime: TailscaleSetupRuntime {
-    private static let appGroupID = "group.com.kafeifei.xdial.ios"
+    private static let appGroupID = XDialIdentity.appGroup
     private static let workQueue = DispatchQueue(
         label: "com.kafeifei.xdial.tailscale-setup",
         qos: .userInitiated

@@ -362,6 +362,13 @@ struct TailscaleIdentity: Codable, Equatable, Hashable {
     }
 }
 
+/// 打包时带进 App 的预置配置。首次安装时直接用它；已有配置时把它加进去，每个 revision 只加一次。
+struct ProfileSeed: Equatable {
+    var profile: Profile
+    /// 预置内容有增删时加一；老用户升级后据此补上新内容。
+    var revision: Int
+}
+
 struct Profile: Codable, Equatable {
     var lines: [Line] = []
     var ruleSets: [RuleSet] = []
@@ -585,6 +592,59 @@ extension Profile {
             scenarios[index].bindings = acceptanceBindings + ordinaryBindings
         }
 
+        return self != before
+    }
+
+    /// 把一份预置配置加进已经在用的配置里。只添加缺的线路、规则和场景；用户自己建的、改过的
+    /// 和当前选中的场景都不动。预置里的线路如果和已有线路是同一类型、同一个服务器，就沿用已有的
+    /// 那条（账号密码还在上面），预置场景改绑到它。返回是否有改动。
+    @discardableResult
+    mutating func adding(seed: Profile) -> Bool {
+        let before = self
+
+        // 预置线路 ID → 实际使用的线路 ID。
+        var lineIDs: [String: String] = [:]
+        for seedLine in seed.lines {
+            if lines.contains(where: { $0.id == seedLine.id }) {
+                lineIDs[seedLine.id] = seedLine.id
+            } else if seedLine.type == "direct",
+                      let direct = lines.first(where: { $0.type == "direct" && $0.enabled }) {
+                lineIDs[seedLine.id] = direct.id
+            } else if seedLine.type == "vpn",
+                      !seedLine.vpnServer.isEmpty,
+                      let same = lines.first(where: {
+                          $0.type == "vpn" && $0.vpnServer.caseInsensitiveCompare(seedLine.vpnServer) == .orderedSame
+                      }) {
+                lineIDs[seedLine.id] = same.id
+            } else {
+                lines.append(seedLine)
+                lineIDs[seedLine.id] = seedLine.id
+            }
+        }
+
+        for ruleSet in seed.ruleSets
+        where !ruleSet.isConnectivityTestRule && !ruleSets.contains(where: { $0.id == ruleSet.id }) {
+            ruleSets.append(ruleSet)
+        }
+
+        let seedScenarioIDs = seed.scenarios.map(\.id)
+        for var scenario in seed.scenarios where !scenarios.contains(where: { $0.id == scenario.id }) {
+            scenario.defaultLineID = lineIDs[scenario.defaultLineID] ?? scenario.defaultLineID
+            scenario.bindings = scenario.bindings
+                .filter { !RuleSet.isConnectivityTestRuleID($0.ruleSetID) }
+                .map { binding in
+                    var bound = binding
+                    bound.lineID = lineIDs[binding.lineID] ?? binding.lineID
+                    return bound
+                }
+            scenarios.append(scenario)
+        }
+        // 预置场景按预置里的顺序排在前面，其余的保持原来的先后。
+        let leading = seedScenarioIDs.compactMap { id in scenarios.first(where: { $0.id == id }) }
+        scenarios = leading + scenarios.filter { !seedScenarioIDs.contains($0.id) }
+        if activeScenarioID.isEmpty { activeScenarioID = seed.activeScenarioID }
+
+        ensureConnectivityTestConfiguration()
         return self != before
     }
 

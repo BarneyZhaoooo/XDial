@@ -30,14 +30,14 @@ type runtimeIdentity struct {
 func runtimeIdentityForFlavor(flavor string) runtimeIdentity {
 	if flavor == "debug" {
 		return runtimeIdentity{
-			hostBundleIdentifier:   "com.kafeifei.xdial.debug",
-			helperBundleIdentifier: "com.kafeifei.xdial.debug.helper",
-			daemonLabel:            "com.kafeifei.xdial.debug.daemon",
+			hostBundleIdentifier:   "com.xd.xdial.debug",
+			helperBundleIdentifier: "com.xd.xdial.debug.helper",
+			daemonLabel:            "com.xd.xdial.debug.daemon",
 			socketPath:             "/tmp/xdial-debug.sock",
 			engineBasePath:         "/tmp/xdial-debug-engine",
 			rootStatePath:          "/Library/Application Support/XDial Debug",
 			userStateDirectoryName: ".xdial-debug",
-			sharedAppGroup:         "UVZM439VGU.com.kafeifei.xdial.debug.network",
+			sharedAppGroup:         "SX9RG894L5.com.xd.xdial.debug.network",
 			registrationIntentPath: "/tmp/xdial-debug-registration-maintenance",
 			logPath:                "/tmp/xdial-debug.log",
 			tailscaleDeviceChannel: "debug",
@@ -45,14 +45,14 @@ func runtimeIdentityForFlavor(flavor string) runtimeIdentity {
 	}
 
 	return runtimeIdentity{
-		hostBundleIdentifier:   "com.kafeifei.xdial.app",
-		helperBundleIdentifier: "com.kafeifei.xdial.app.helper",
-		daemonLabel:            "com.kafeifei.xdial.app.daemon",
+		hostBundleIdentifier:   "com.xd.xdial.app",
+		helperBundleIdentifier: "com.xd.xdial.app.helper",
+		daemonLabel:            "com.xd.xdial.app.daemon",
 		socketPath:             "/tmp/xdial.sock",
 		engineBasePath:         filepath.Join(os.TempDir(), "xdial-engine"),
 		rootStatePath:          "/Library/Application Support/XDial",
 		userStateDirectoryName: ".xdial",
-		sharedAppGroup:         "UVZM439VGU.com.kafeifei.xdial.network",
+		sharedAppGroup:         "SX9RG894L5.com.xd.xdial.network",
 		registrationIntentPath: "/tmp/xdial-registration-maintenance",
 		logPath:                "/tmp/xdial.log",
 		tailscaleDeviceChannel: "stable",

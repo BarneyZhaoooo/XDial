@@ -66,8 +66,8 @@ private final class StopCompletionGate: @unchecked Sendable {
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     #if os(iOS)
-    private static let appGroupID = "group.com.kafeifei.xdial.ios"
-    private static let subsystem = "com.kafeifei.xdial.ios.tunnel"
+    private static let appGroupID = XDialIdentity.appGroup
+    private static let subsystem = "com.xd.xdial.ios.tunnel"
     #else
     private static let appGroupID = "group.com.kafeifei.xdialtv"
     private static let subsystem = "com.kafeifei.xdialtv.tunnel"
@@ -197,6 +197,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             os_log("startTunnel: LibboxNew returned nil", log: log, type: .error)
             return
         }
+        // 连上后的「路由命中」自检要靠引擎记下两个测试地址各走了哪条线路。这个记录默认是关的，
+        // 不打开的话自检永远查不到记录，每次连接都会被判成「自检未通过」。
+        // 开销只是每条新连接多比较一次目标地址。
+        lb.setDebugRoutingProbeEnabled(true)
         guard installEngine(lb, generation: generation) else {
             // 当前就在全局会话串行队列上；必须先清掉这个尚未登记的实例，
             // 不能把 Stop 排到已经入队的新 prepare 后面。
@@ -332,6 +336,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         }
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
+                        self.startActivityUpdates()
                         os_log("startTunnel: engine and tunnel DNS ready",
                                log: self.log, type: .info)
                     }) else { return }
@@ -395,6 +400,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         try engine.startStandalone(bundle.configJSON)
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
+                        self.startActivityUpdates()
                         os_log("startTunnel: standalone engine ready",
                                log: self.log, type: .info)
                     } catch {
@@ -419,6 +425,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         cancelActiveAttempt(
             startError: providerError(7, "连接启动已取消"),
             afterCleanupQueued: { [weak self] in
+                self?.stopActivityUpdates()
                 self?.recordDiagnostic("stopping")
                 os_log("stopTunnel: reason=%d", log: self?.log ?? .default,
                        type: .info, reason.rawValue)
@@ -660,6 +667,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
     }
 
+    #if os(iOS)
+    private let activityUpdater = TunnelActivityUpdater()
+    #endif
+
+    /// 连上以后开始往实时活动（锁屏、灵动岛）里写网速。只有 iOS 有实时活动。
+    private func startActivityUpdates() {
+        #if os(iOS)
+        activityUpdater.start { [weak self] in
+            guard let engine = self?.currentEngine(), engine.isRunning() else { return nil }
+            return engine.trafficTotals()
+        }
+        #endif
+    }
+
+    private func stopActivityUpdates() {
+        #if os(iOS)
+        activityUpdater.stopAndEndActivities()
+        #endif
+    }
+
     private func currentEngine() -> LibboxLibbox? {
         lifecycleLock.lock()
         let engine = libbox
@@ -762,6 +789,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ///   {"cmd":"select-outbound","group_tag":"...","outbound_tag":"..."}
     ///   {"cmd":"test-outbound","outbound_tag":"...","test_url":"...","timeout_ms":"5000"}
     ///   {"cmd":"probe-outbound-address","outbound_tag":"...","timeout_ms":"7000"}
+    ///   {"cmd":"probe-exit-country","timeout_ms":"8000"}      // 经 Direct 线路查出口地区
     ///   {"cmd":"routing-probe-snapshot"}
     ///   {"cmd":"traffic-snapshot"}
     ///   {"cmd":"tailscale-status","endpoint_tag":"tailscale-..."}
@@ -870,6 +898,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         ok: false,
                         message: "无法确认所选线路的出口地址：\(error.localizedDescription)"
                     ))
+                }
+            }
+
+        case "probe-exit-country":
+            let timeoutMS = Int(obj["timeout_ms"] as? String ?? "") ?? 8_000
+            engineOperationQueue.async { [weak self] in
+                guard let self, let engine = self.currentEngine() else {
+                    completion.value(self?.encodeResponse(ok: false, message: "连接引擎未运行"))
+                    return
+                }
+                var probeError: NSError?
+                let code = engine.probeOutboundCountry("direct", timeoutMS: timeoutMS, error: &probeError)
+                if let probeError {
+                    completion.value(self.encodeResponse(ok: false, message: probeError.localizedDescription))
+                } else {
+                    completion.value(self.encodeResponse(ok: true, dataString: code))
                 }
             }
 
@@ -1421,7 +1465,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 /// 静态版错误构造:供 startTunnel 内 `[weak self]` 闭包在 self 已释放时使用。
 private func providerErrorStatic(_ code: Int, _ message: String) -> NSError {
     #if os(iOS)
-    let domain = "com.kafeifei.xdial.ios.tunnel"
+    let domain = "com.xd.xdial.ios.tunnel"
     #else
     let domain = "com.kafeifei.xdialtv.tunnel"
     #endif

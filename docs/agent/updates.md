@@ -1,7 +1,7 @@
 # 应用更新与发布
 
-正式元数据地址为 `https://saymiao.github.io/xdial-updates/stable.json`，beta 通道为同目录的
-`beta.json`；发布仓库为 `saymiao/xdial-updates`。应用归档来自 `kafeifei/XDial` 的 GitHub Releases。
+正式元数据地址为 `https://xindong.github.io/xdial-updates/stable.json`，beta 通道为同目录的
+`beta.json`；发布仓库为 `xindong/xdial-updates`。应用归档来自 `xindong/XDial` 的 GitHub Releases。
 客户端不请求 GitHub Releases API，不解析发布页面，也不携带 GitHub 凭据。
 安装与通道合同见 [ARCHITECTURE.md](../../ARCHITECTURE.md)。
 
@@ -17,7 +17,7 @@ canonical 地址不接受重定向。一份不超过 512 KiB 的 JSON 提供：
   `minimumSystemVersion`、`publishedAt`、非空 Markdown `releaseNotes`、`archiveURL`、
   `archiveSize`、小写 64 位 `archiveSHA256`。
 - 正式归档 URL 为
-  `https://github.com/kafeifei/XDial/releases/download/<tag>/XDial-<tag>.zip`。
+  `https://github.com/xindong/XDial/releases/download/<tag>/XDial-<tag>.zip`。
   归档上限 512 MiB，重定向仅限 GitHub 资产下载边界。
 
 HTTP ETag/304 验证持久缓存；成功检查时间与清单的 `generatedAt` 分离。客户端拒绝旧
@@ -94,6 +94,12 @@ provisioning profiles 与 Developer ID 签名，经公证、staple 和归档校�
 `NOTARY_KEY` / `NOTARY_KEY_ID` / `NOTARY_ISSUER`。`make release-app` 只生成待公证 App；
 tag workflow 将完整归档上传为 draft Release。
 
+tag workflow 只在 `release` environment 里拿到签名与公证凭据：它只接受 `v*` 标签，
+每次运行前需要维护者在 Actions 页面批准。凭据是 XD Entertainment 的 Developer ID
+Application `.p12` 及其密码、`XDial Developer ID App Host 2026` 与
+`XDial Developer ID App Transparent Proxy` 两份描述文件，以及公证用的 App Store Connect API Key；
+它们只存放在这个 environment 的 secrets 里，不进仓库，也不留在个人电脑上。
+
 `release-contract.sh verify-app` 是正式版、预置配置包和验收包共用的分发门禁：宿主、Settings UI、
 System Extension 与 helper 都须带 hardened runtime 和安全时间戳，且没有 `get-task-allow`；宿主
 `Contents/MacOS` 下的文件不得含 `DebugServer:`（Debug 配置把宿主代码放在 `*.debug.dylib`）；helper
@@ -119,7 +125,7 @@ Pages 发布器串行生成清单、历史与审计记录，拒绝旧版本覆�
 不让它会拒绝的包先公开：
 
 - 构建号：新包的构建号必须大于所有“X.Y.Z 不高于新包”的已公开包。数据是 GitHub
-  Releases 列表（含 prerelease，不含 draft），以及更新仓库 main 上两个通道的 ledger 与
+  Releases 列表（含 prerelease，不含 draft），以及更新仓库 `feed` 分支上两个通道的 ledger 与
   history（含已撤回的包，构建号取自首次发布该标签的 history 记录）；清单没有记录的公开
   Release 下载归档读取构建号。X.Y.Z 更高的包不构成约束，所以 beta 线开放期间发 X.Y.Z
   更低的 stable 热修复，不要求高于 beta 的构建号。
@@ -167,7 +173,7 @@ ledger，含已撤回的）；更新仓库必须已有 beta.json；再做上面�
 **与更新仓库的接口。**
 
 ```sh
-gh workflow run publish.yml -R saymiao/xdial-updates -f operation=<publish|withdraw|restore> \
+gh workflow run publish.yml -R xindong/xdial-updates -f operation=<publish|withdraw|restore> \
   -f channel=<stable|beta> -f release_tag=<tag> -f history_revision=<revision> -f request_id=<id>
 ```
 
@@ -199,7 +205,7 @@ gh workflow run publish.yml -R saymiao/xdial-updates -f operation=<publish|withd
 
 **撤回与 restore。**
 
-- 撤回 beta：`gh workflow run publish.yml -R saymiao/xdial-updates -f channel=beta
+- 撤回 beta：`gh workflow run publish.yml -R xindong/xdial-updates -f channel=beta
   -f operation=withdraw -f release_tag=<当前 beta 标签> -f request_id=<id>`。beta.json 变为
   `release: null`，Release 和资产保留，已装的 beta 不降级。撤回的标签不能再发，也不能被
   restore。坏 beta 只能往前修：先撤回，挡住新用户进入，再尽快发 beta.N+1；已经装上的用户
@@ -237,7 +243,7 @@ tailscale、sslcon 的全部本地补丁与组装它们的 `prepare-patched-go-m
 
 ## 正式身份更新验收
 
-> **验收包是正式身份（`com.kafeifei.xdial.app`）的公证包，安装会替换本机的正式 App
+> **验收包是正式身份（`com.xd.xdial.app`）的公证包，安装会替换本机的正式 App
 > `/Applications/XDial.app`，重启可能中断当前连接。构建、上传、安装和每一步核对都由作者执行。**
 > 验收包收不到正式更新，验收结束或中途放弃后都要按[结束验收](#结束验收)手动回到正式版。
 > 脚本只产出本地文件：不安装、不启动、不上传，也不改清单仓库。
@@ -262,8 +268,8 @@ worktree 也留下。这时 `pgrep -f 'make release RELEASE_TAG='` 列出的 PID
 worktree 执行 `git worktree remove --force`。
 
 所有包签名 Info.plist 的 `XDialUpdateAcceptanceID` 相同，客户端只读
-`https://saymiao.github.io/xdial-updates/acceptance/<ID>/<channel>.json`（清单仓库的
-`site/acceptance/<ID>/`），归档只接受 `saymiao/xdial-updates` 的 Release 资产
+`https://xindong.github.io/xdial-updates/acceptance/<ID>/<channel>.json`（清单仓库的
+`site/acceptance/<ID>/`），归档只接受 `xindong/xdial-updates` 的 Release 资产
 `releases/download/<tag>/XDial-<tag>.zip`。当前与传入 App 的 acceptance ID 必须相同。
 清单仓库已有的 Release 标签不能再用，每次验收选新的版本号和新的 ID。
 
@@ -293,6 +299,8 @@ schema 1 重启意图能否被新版本接受。要覆盖 schema 2 → schema 2�
 
 - ref 必须能解析为本地提交（先 fetch 标签），它的 Makefile 必须已有
   `RELEASE_UPDATE_ACCEPTANCE_ID` 和 `RELEASE_NOTES_FILE`；否则开始前报错。
+- ref 的客户端必须读 `https://xindong.github.io/xdial-updates/` 下的验收清单。更新源迁到
+  `xindong/xdial-updates` 之前的 ref 读上游地址，A 收不到这次的验收清单，开始前报错。
 - 只传该 ref 的 Makefile 声明过的变量：没有 `RELEASE_CHANNEL` 的旧 Makefile 只构建 stable，
   不传通道。旧 ref 不写 `XDialReleaseTag`，客户端把这样的包当作 `v<短版本>`。
 - 两边都只有已跟踪文件，本机被忽略的 `macos/PrivateConfig` 不进任何一个包，A 与高版本包
@@ -340,7 +348,7 @@ python3 scripts/build-update-acceptance.py --beta \
 
 作者执行：
 
-0. 在 `saymiao/xdial-updates` 为 A、B、C 各建一个以标签命名的 prerelease，上传
+0. 在 `xindong/xdial-updates` 为 A、B、C 各建一个以标签命名的 prerelease，上传
    `XDial-<tag>.zip` 与 `.sha256`；把 step-1 的两个文件放进清单仓库的 `site/acceptance/<ID>/`，
    按[部署验收清单](#部署验收清单)部署。从 A 的 zip 手动安装 A，保持 beta 关闭检查更新：只读
    stable.json，应显示已是最新。
@@ -355,12 +363,12 @@ python3 scripts/build-update-acceptance.py --beta \
 ```sh
 app=/Applications/XDial.app
 for bundle in "$app" "$app/Contents/Helpers/XDial Settings UI.app" \
-  "$app/Contents/Library/SystemExtensions/com.kafeifei.xdial.app.transparent-proxy.systemextension"; do
+  "$app/Contents/Library/SystemExtensions/com.xd.xdial.app.transparent-proxy.systemextension"; do
   echo "$bundle: $(plutil -extract CFBundleShortVersionString raw "$bundle/Contents/Info.plist")" \
     "$(plutil -extract CFBundleVersion raw "$bundle/Contents/Info.plist")"
 done
 plutil -extract XDialReleaseTag raw "$app/Contents/Info.plist"
-systemextensionsctl list | grep -F com.kafeifei.xdial.app.transparent-proxy
+systemextensionsctl list | grep -F com.xd.xdial.app.transparent-proxy
 python3 -c 'import json, socket
 s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect("/tmp/xdial.sock")
 s.sendall(b"{\"id\":\"acceptance\",\"cmd\":\"daemon-info\"}\n")
@@ -384,20 +392,20 @@ main 不会部署。每一步把清单文件提交并推送到清单仓库 main 
 ```sh
 id=<ID> step=step-1   # 第 3 步用 step-3；在验收输出目录里运行
 request="acceptance-$id-$step"
-tag=$(curl -fsS https://saymiao.github.io/xdial-updates/stable.json |
+tag=$(curl -fsS https://xindong.github.io/xdial-updates/stable.json |
   python3 -c 'import json, sys; print(json.load(sys.stdin)["release"]["tag"])')
-gh workflow run publish.yml -R saymiao/xdial-updates \
+gh workflow run publish.yml -R xindong/xdial-updates \
   -f operation=publish -f release_tag="$tag" -f request_id="$request"
 run=
 while [ -z "$run" ]; do
   sleep 3
-  run=$(gh run list -R saymiao/xdial-updates --workflow publish.yml --limit 20 \
+  run=$(gh run list -R xindong/xdial-updates --workflow publish.yml --limit 20 \
     --json databaseId,displayTitle \
     --jq "map(select(.displayTitle | contains(\"[$request]\")))[0].databaseId // empty")
 done
-gh run watch "$run" -R saymiao/xdial-updates --exit-status
+gh run watch "$run" -R xindong/xdial-updates --exit-status
 for channel in stable beta; do
-  curl -fsS "https://saymiao.github.io/xdial-updates/acceptance/$id/$channel.json" |
+  curl -fsS "https://xindong.github.io/xdial-updates/acceptance/$id/$channel.json" |
     cmp - "feeds/$step/acceptance/$id/$channel.json" && echo "$channel.json deployed"
 done
 ```

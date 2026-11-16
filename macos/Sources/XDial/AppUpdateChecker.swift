@@ -347,7 +347,7 @@ final class AppUpdateChecker: ObservableObject {
             publishedAt: Date(),
             archiveName: "XDial-\(tag).zip",
             archiveURL: URL(
-                string: "https://github.com/kafeifei/XDial/releases/download/\(tag)/XDial-\(tag).zip"
+                string: "https://github.com/xindong/XDial/releases/download/\(tag)/XDial-\(tag).zip"
             )!,
             archiveSize: 1,
             archiveSHA256: String(repeating: "0", count: 64),
