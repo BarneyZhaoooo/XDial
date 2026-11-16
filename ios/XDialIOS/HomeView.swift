@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 主屏：一个拨号盘管连接，下面选场景，最下面是账号。其它都收进右上角的设置。
+/// 主屏以拨盘和连接状态为主；自动模式收起场景，手动模式直接选择。
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.openURL) private var openURL
@@ -19,6 +19,7 @@ struct HomeView: View {
     /// 按当前网络自动选场景；手动点了别的场景就关掉。
     @AppStorage("xdial.auto-scenario") private var autoScenario = true
     @State private var autoPilot = ScenarioAutoPilot()
+    @State private var showingAutoScenarios = false
     @State private var dismissedSuggestionID: String?
     /// 点了连接、正在先看一眼当前网络的那一两秒。
     @State private var isPreparingConnection = false
@@ -143,6 +144,7 @@ struct HomeView: View {
             if phase == .active { Task { await refreshAutoScenario() } }
         }
         .onChange(of: autoScenario) { _, isOn in
+            showingAutoScenarios = false
             if isOn { Task { await refreshAutoScenario() } }
         }
         .onChange(of: isIdle) { _, idle in
@@ -628,12 +630,43 @@ struct HomeView: View {
                 }
             }
             if autoScenario, !app.profile.scenarios.isEmpty {
-                Label(autoScenarioNote, systemImage: "location.fill")
-                    .font(.footnote)
-                    .foregroundStyle(XDialTheme.inkSecondary)
-                    .padding(.horizontal, 6)
-                    .contentTransition(.opacity)
-                    .accessibilityIdentifier("home-auto-note")
+                Button {
+                    withAnimation(.smooth(duration: 0.25)) {
+                        showingAutoScenarios.toggle()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(app.tr("当前选择", "Current selection"))
+                            .font(.caption)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                        Text(app.activeScenario?.name ?? app.tr("未选择场景", "No scenario selected"))
+                            .font(.headline)
+                            .foregroundStyle(XDialTheme.ink)
+                        Label(autoScenarioNote, systemImage: "location.fill")
+                            .font(.footnote)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                            .contentTransition(.opacity)
+                            .accessibilityIdentifier("home-auto-note")
+                        HStack {
+                            Text(showingAutoScenarios
+                                 ? app.tr("收起场景", "Hide scenarios")
+                                 : app.tr("展开场景 · 手动调整", "Show scenarios · Adjust manually"))
+                            Spacer()
+                            Image(systemName: showingAutoScenarios ? "chevron.up" : "chevron.down")
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(XDialTheme.accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(XDialTheme.surface, in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home-scenario-disclosure")
+                .accessibilityValue(showingAutoScenarios
+                                    ? app.tr("已展开", "Expanded")
+                                    : app.tr("已收起", "Collapsed"))
             }
 
             if app.profile.scenarios.isEmpty {
@@ -650,7 +683,7 @@ struct HomeView: View {
                     Button(app.tr("恢复默认配置", "Restore Defaults")) { isConfirmingReset = true }
                         .buttonStyle(XDialPillButtonStyle())
                 }
-            } else {
+            } else if !autoScenario || showingAutoScenarios {
                 VStack(spacing: 10) {
                     ForEach(app.profile.scenarios) { scenario in
                         scenarioCard(scenario)
