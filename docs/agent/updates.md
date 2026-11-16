@@ -97,7 +97,7 @@ tag workflow 将完整归档上传为 draft Release。
 tag workflow 只在 `release` environment 里拿到签名与公证凭据：它只接受 `v*` 标签，
 每次运行前需要维护者在 Actions 页面批准。凭据是 XD Entertainment 的 Developer ID
 Application `.p12` 及其密码、`XDial Developer ID App Host 2026` 与
-`XDial Developer ID App Transparent Proxy` 两份描述文件，以及专用的公证 API Key；
+`XDial Developer ID App Transparent Proxy` 两份描述文件，以及公证用的 App Store Connect API Key；
 它们只存放在这个 environment 的 secrets 里，不进仓库，也不留在个人电脑上。
 
 `release-contract.sh verify-app` 是正式版、预置配置包和验收包共用的分发门禁：宿主、Settings UI、
