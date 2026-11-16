@@ -2,7 +2,7 @@
 
 2026-11-17，工作分支 cindy/proud-kalam，基线 ba959c3。
 
-## 已执行
+## 首个检查点执行记录
 
 - patched Go 核心以 with_gvisor,with_utls 实际 gomobile bind android/arm64 成功。
 - JDK 17、AGP 9.2.1、Gradle **9.4.1**、SDK 36、NDK 27.1.12297006 构建 APK 成功。
@@ -19,13 +19,13 @@
   待检查 TUN 计数、DNS/socket protection、Android 网络接口事实。
 - 未使用生产 Profile、企业 VPN 凭据，也未安装/重启宿主 Debug，未改变宿主 VPN。
 
-## 当前不能宣称
+## 首个检查点的限制（后续进展见下文）
 
 不能宣称端到端 VPN 可用、自动场景/登录完成、全平台完成或已发布。当前 App 是开发验收
 检查点，不是交付版。未完成 Apple 全量构建/回归；Go 在 Darwin 上的核心测试不等于 Apple
 App 验收。没有创建第二个 iOS uploader，没有修改既有自动化，没有推送/PR/合并。
 
-## 下一步
+## 首个检查点的待办（下文记录完成情况）
 
 1. 通过服务持有的 core.Diagnostics 观察 TUN 收发、socket保护调用计数；只展示计数与
    阶段错误，不记录配置、凭据或原始目标。修通隔离模拟器 DNS+TCP，再进行 UDP 验收。
@@ -57,3 +57,36 @@ App 验收。没有创建第二个 iOS uploader，没有修改既有自动化，
 
 这些证据验证的是模拟器 direct 场景的 DNS/UDP 与 HTTPS，不代表真实企业 VPN
 登录、AnyConnect/Tailscale、所有普通 UDP 应用或物理 Android 设备已经验收。
+
+
+## 2026-11-17 后续：共享场景、拨盘与断网恢复
+
+已实现和验证：
+
+- 共享 Go 场景选择器：SSID 优先、地区映射 fallback、无有效目标不切换；可绑定
+  控制器支持手动覆盖、过期观测作废、候选提交/中止、十分钟防反复和未知配置字段保留。
+- Android 手动 One → Two → 重启仍为 Two，再选择 One → 重启仍为 One；手动选择关闭
+  自动选择。配置与自动偏好一起保存在 Keystore 加密的 AtomicFile 中。
+- iOS 的 ScenarioAutoPicker 使用同一 Go picker；Android 不复制 Swift 的选择逻辑。
+  Android 连接前可读授权 SSID，地区观测和连接中的场景事务未接入。
+- Android 原生大拨盘点击连接、拖动断开通过系统触摸验收；按钮无障碍标签随状态变化，
+  深浅色已截图检查。振动调用与动画降级已实现，但模拟器不能证明物理触感效果。
+- 共享连接控制器 race 测试通过：重复启动租约、断网/恢复、主动停止优先、旧网络与
+  旧重试回调忽略、有限退避和终止错误不重试。
+- 隔离 Android 模拟器连接后，通过插件关闭 Wi-Fi/移动数据，读回“网络已断开，等待恢复”；
+  恢复系统网络后无需点击自动读回“已连接”。随后普通未 protect 的 App socket 再次
+  完成 UDP DNS 响应验证与 HTTPS 200/正文验证（XDialProbe 日志通过）。
+- 离线时点击连接进入等待，再主动断开，恢复网络后仍为“未连接”；没有自动复活。
+  本阶段验收结束时模拟器网络已恢复、VPN 已断开。
+- core/mobile race、core/config 与 core/libbox 完整测试通过；iOS/tvOS generic
+  Simulator App 构建通过；macOS Debug/Release App 与扩展的 ci-macos-build 通过。
+- make test-macos-transaction 通过，macOS XCTest 共 909 项、0 失败；该目标使用
+  独立测试产物和 fixture，未覆盖安装/重启宿主 XDial。
+- iOS build-for-testing 成功，但未执行 XCTest（插件没有 XCTest runner；独立设备不在
+  xcodebuild destination 列表）。iOS 启动只验到 UI 渲染，出现本地配置读取提示，不能
+  作为完整功能回归通过；未重置既有设备 Keychain。该设备已关机释放。
+
+尚未验收：Android 真机、Wi-Fi/蜂窝跨网络切换、进程死亡恢复、系统撤权、后台长时间
+运行、地区观测、离线规则、登录、AnyConnect/Tailscale 和连接中无缝场景切换。
+新网络恢复逻辑保持单个系统 TUN，但会重建数据核心，已有连接不保证续传。
+本节是新的阶段证据，不表示全部平台或 Android 产品闭环已完成。

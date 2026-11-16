@@ -9,8 +9,8 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
 | 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
-| 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 开发预览；正式拨盘待做 | 缺失 | 缺失 |
-| 自动场景 | 已有 | Swift 自动驾驶 | 需逐项核对 | 待共享状态机移植 | 缺失 | 缺失 |
+| 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘/拖动/无障碍；产品配置页待做 | 缺失 | 缺失 |
+| 自动场景 | 已有 | Swift 自动驾驶 | 需逐项核对 | 共享 Go 选择器；连接前 SSID 已接入 | 缺失 | 缺失 |
 | 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile，待测试 | 缺失 | 缺失 |
 | 发布 | 已有 | 既有事件驱动 TestFlight | 已有构建 | 本地 debug；签名/分发待核实 | 缺失 | 缺失 |
 
@@ -26,8 +26,9 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
   系统确认可能替换已有 VPN，验收只使用无现存 VPN 的隔离设备。
 - 当前 Android 开发检查点拒绝 AnyConnect/Tailscale，直到完成协议自建 socket
   的防环路审计；不以普通代理的保护测试冒充所有协议已支持。
-- 开发预览目前仅支持导入 runtime Profile、手动连接、撤权与清理；网络丢失断开并
-  提示，尚非目标要求的自动恢复。不得将此检查点称为 Android 完成交付。
+- 开发预览支持导入 runtime Profile、手动场景、连接前 SSID 匹配、撤权与清理；
+  网络丢失保留连接意图/TUN，恢复后重建唯一核心。地区判断、连接中场景事务、
+  登录和离线规则产品流程仍缺失，不得将此检查点称为 Android 完成交付。
 
 ## 阶段与验收门槛
 
@@ -69,3 +70,24 @@ cd android
 生成 release 签名方案前核实私有签名资产；本仓库没有可据以宣称已配置分发的证据。
 
 参考：[Android VPN 官方契约](https://developer.android.com/develop/connectivity/vpn)。
+
+## 2026-11-17 共享移动端控制面决策
+
+- `core/mobile` 不依赖 libbox 或平台系统调用；`core/libbox` 仅提供 gomobile facade。
+  iOS 的纯场景 picker 已调用同一 Go 实现；稳定的 Swift 界面、观测与现有事务逐步接入。
+- 场景控制器区分 selected/active/pending；候选必须由宿主准备并提交，失败不改变
+  正在承载的场景。手动选择作废未完成的自动观测；成功自动切换才计入十分钟防反复。
+- Android 目前只允许断开后手动选场景和连接前 SSID 匹配。不能将桌面候选 Box API
+  直接用于同一 TUN：需要独立的稳定移动入口，避免多个 gVisor 读者争抢包。
+- 连接控制器管理用户意图、网络/尝试 epoch 与 1/2/4/8 秒有限重试；过期回调被忽略。
+  系统网络不可用时等待，明确的配置/权限/认证错误不自动重试。
+- Android 使用系统 `requestNetwork(INTERNET, NOT_VPN)` 返回的最佳网络；没有自行
+  排序 Wi-Fi/蜂窝接口。使用回调提供的完整 LinkProperties，避免回调内同步查询竞态。
+  网络恢复保留系统 TUN、先关闭旧核心再启动唯一新核心；这不是无缝场景切换事务。
+- 用户主动停止/撤销授权取消网络请求与重试；前台通知提供断开按钮；不把进程重启
+  当作恢复用户连接意图的授权，当前仍使用 START_NOT_STICKY。
+
+依据：[Android NetworkCallback](https://developer.android.com/reference/android/net/ConnectivityManager.NetworkCallback)
+和 [ConnectivityManager](https://developer.android.com/reference/android/net/ConnectivityManager)。
+Windows/Linux 接入范围已向用户提出：优先原生窗口 + Wintun / Ubuntu TUN，或首版
+包含按应用透明接入与多发行版；这不阻塞 Android。
