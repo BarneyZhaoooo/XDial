@@ -20,7 +20,10 @@ enum MobileAppRuntime {
         let shouldResetUITesting = arguments.contains("-XDialUITestingReset")
         let isUITesting = shouldResetUITesting || arguments.contains("-XDialUITesting")
         let persistence: AppPersistenceContext = isUITesting ? .uiTesting : .production
-        if shouldResetUITesting { _ = persistence.clearForTesting() }
+        if shouldResetUITesting {
+            _ = persistence.clearForTesting()
+            UserDefaults.standard.removeObject(forKey: "xdial.auto-scenario")
+        }
         return AppState(
             engine: engine,
             tunnelManager: manager,

@@ -32,3 +32,16 @@
 忽略的 `build/` 下。最初禁用签名的包发生钥匙串配置错误，改用模拟器 ad-hoc 签名后恢复正常。
 
 本任务只安装模拟器 Debug；未覆盖 macOS Debug，未合并、推送或发布 TestFlight。
+
+
+## PR 审阅补充：场景 UI 测试
+
+同步更新 `testHomeListsScenariosAndSwitchesWithOneTap`，去掉旧版三 Tab 和连接时禁止选场景的断言，
+按现有单屏行为覆盖：默认收起、展开/收起不关闭自动、手动选择后保留列表与未连接状态、
+重启后保持手动选择、重新开启自动收起、直接关闭自动展开。其余直接查找首页场景的旧测试先展开列表。
+`-XDialUITestingReset` 同时清除自动开关偏好，避免测试结果取决于上一次手动选择；生产启动不受影响。
+
+`xcodebuild ... build-for-testing` 成功，测试目标编译通过。插件管理的独立设备集合未出现在
+`xcodebuild -showdestinations` 中，未在其他设备上替代执行 XCTest。已在同一插件 iPhone Air
+实测无预置演示配置下的默认收起、展开、手动选「国内」、冷启动保持、重新开启自动收起和关闭自动展开。
+完整旧测试套件仍包含 main 已有的三 Tab 导航假设，本次未全面迁移，也不宣称全套 XCTest 通过。
