@@ -1133,7 +1133,24 @@ func activeRouteRuleSetTags(configJSON []byte) ([]string, error) {
 	return tags, nil
 }
 
+// GenerateAndroidConfig accepts only network facts from the Android host.
+func GenerateAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
+	var servers []string
+	if err := json.Unmarshal([]byte(systemDNSJSON), &servers); err != nil {
+		return "", fmt.Errorf("invalid system DNS snapshot")
+	}
+	return generatePacketTunnelConfig(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxAndroid(profile, basePath, servers)
+	})
+}
+
 func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, platform config.Platform) (string, error) {
+	return generatePacketTunnelConfig(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	})
+}
+
+func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error)) (string, error) {
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", err
@@ -1147,7 +1164,7 @@ func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, p
 	}
 	// socksPort 在 NE 模式下不生效(vpn 出口固定用自研 type:"vpn",见
 	// generator.go 里的 NetworkExtension 分支),这里固定传 0。
-	data, err := config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	data, err := generate(profile)
 	if err != nil {
 		return "", err
 	}

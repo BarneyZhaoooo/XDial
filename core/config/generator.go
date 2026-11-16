@@ -142,6 +142,15 @@ func GenerateSingBoxFor(profile *Profile, socksPort int, vpnServerIP string, pla
 	return generateSingBox(profile, socksPort, vpnServerIP, platform, basePath, nil, nil, underlayInterface, nil)
 }
 
+// GenerateSingBoxAndroid uses the OS-provided Underlay DNS for the existing
+// mobile fallback transport. DNS dispatch remains entirely inside sing-box.
+func GenerateSingBoxAndroid(profile *Profile, basePath string, systemDNS []string) ([]byte, error) {
+	if _, err := validateTransparentProxySystemDNS(systemDNS); err != nil {
+		return nil, err
+	}
+	return generateSingBox(profile, 0, "", PlatformNE, basePath, nil, systemDNS, "", nil)
+}
+
 type transparentProxyIngress struct {
 	port          int
 	username      string
@@ -745,6 +754,20 @@ func generateSingBox(
 			collectProxyBoundDNSTargets(profile, scenario, subTagMap, validTags),
 			activeMagicDNSTags,
 		)
+	}
+
+	if platform == PlatformNE && systemDNS != nil {
+		primary, err := validateTransparentProxySystemDNS(systemDNS)
+		if err != nil {
+			return nil, err
+		}
+		// This is the OS snapshot in its original priority order, not an
+		// interface/product heuristic or platform-side DNS query.
+		for _, server := range dnsConfig["servers"].([]map[string]interface{}) {
+			if server["tag"] == mobilePublicDNSTag {
+				server["server"] = primary
+			}
+		}
 	}
 
 	inbound := buildTUNInbound(vpnServerIP, platform)

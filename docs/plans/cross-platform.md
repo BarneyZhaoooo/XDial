@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 开发验收实现，待设备验证 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 开发预览；正式拨盘待做 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶 | 需逐项核对 | 待共享状态机移植 | 缺失 | 缺失 |
 | 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile，待测试 | 缺失 | 缺失 |
@@ -57,7 +57,7 @@ JDK 17、Android platform 36、AGP 9.2.1、Gradle 9.4.1。
 ```sh
 export ANDROID_HOME=/path/to/Android/sdk
 export JAVA_HOME=/path/to/jdk17
-# go、gobind 须位于 PATH；gobind 使用 go.mod 同版本
+# go 须位于 PATH；脚本从 go.mod 固定版本构建 gobind
 scripts/build-android-core.sh
 cd android
 ./gradlew assembleDebug

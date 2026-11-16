@@ -35,3 +35,25 @@ App 验收。没有创建第二个 iOS uploader，没有修改既有自动化，
 
 构建日志位于 worktree 的 build/android（忽略目录）。APK：
 `android/app/build/outputs/apk/debug/app-debug.apk`。尚未分发，不提交二进制到源码。
+
+## 2026-11-17 后续：真实数据面通过
+
+- 不开 VPN 的浏览器基线可达；开启后保护调用为零。Android 拒绝 Go netlink
+  查询，原来的 name/index 快照无法补齐 flags/MTU/address，sing-box 没有可用接口。
+- 新增可选 `facts` 快照，由 Android NetworkInterface/LinkProperties 原样提供；
+  默认接口、切换候选、复用 Line 使用这些事实，Apple 未传 facts 时保留既有路径。
+- 补齐后保护调用增长、失败为零；Android 新配置入口以 LinkProperties 的系统 DNS
+  替代移动端硬编码公共 fallback，保持 sing-box 内 DNS dispatcher 与规则所有权。
+- VPN 开启时 Chrome 实际显示 `https://example.com/?xdial=verified` 正文；apple.com
+  一次出现 ERR_CONNECTION_CLOSED，未将该目标计为通过。
+- 独立开发验收探测通过：普通 app socket（未 protect、不绑定 Underlay），先确认
+  默认网络具备 TRANSPORT_VPN，再向 TUN 的合成 DNS 发送 UDP 查询并校验响应 ID、
+  response bit、NXDOMAIN；HTTPS 访问 Apple connectivity success 页面，校验 200
+  和非空正文。模拟器日志明确 `UDP DNS=通过；HTTPS=通过`。
+- Go config/libbox 完整测试再次通过，新增接口事实继承/无效快照原子拒绝，以及
+  Android DNS 快照与 Apple 旧行为隔离契约测试；public-content-gate 通过。
+- 注意旧 Diagnostics 的 TUN 包计数没有插桩，一直是零，不能据此判断无流量。
+  诊断改用共享 Router 的 TrafficTotals，加保护成功/失败计数，不记录目标或凭据。
+
+这些证据验证的是模拟器 direct 场景的 DNS/UDP 与 HTTPS，不代表真实企业 VPN
+登录、AnyConnect/Tailscale、所有普通 UDP 应用或物理 Android 设备已经验收。

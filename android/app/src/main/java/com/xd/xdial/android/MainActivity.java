@@ -11,7 +11,7 @@ import libbox.Libbox;
 public final class MainActivity extends Activity {
  private TextView status;
  private final Handler handler = new Handler();
- private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state); handler.postDelayed(this, 500); } };
+ private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.probeResult); handler.postDelayed(this, 500); } };
  @Override public void onCreate(Bundle saved) {
   super.onCreate(saved);
   LinearLayout layout = new LinearLayout(this); layout.setOrientation(1); layout.setPadding(32,64,32,32);
@@ -27,6 +27,10 @@ public final class MainActivity extends Activity {
   });
   Button config = new Button(this); config.setText("导入运行 Profile"); layout.addView(config);
   config.setOnClickListener(v -> edit());
+  Button diagnose = new Button(this); diagnose.setText("记录连接诊断"); layout.addView(diagnose);
+  diagnose.setOnClickListener(v -> { if(TunnelService.active) startService(new Intent(this,TunnelService.class).setAction("diagnose")); });
+  Button probe = new Button(this); probe.setText("验证 DNS 与 HTTPS"); layout.addView(probe);
+  probe.setOnClickListener(v -> { if(TunnelService.active) startService(new Intent(this,TunnelService.class).setAction("probe")); });
   TextView notice = new TextView(this); notice.setText("开发验收版：尚未提供自动场景及登录界面。仅使用隔离测试配置。"); layout.addView(notice);
   setContentView(layout);
  }

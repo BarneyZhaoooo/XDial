@@ -377,11 +377,17 @@ func (p *xdPlatformInterface) setDefaultInterface(name string, index int) {
 			updated = p.firstUsableInterfaceLocked()
 		} else {
 			resolved := resolvePlatformInterface(name, index)
+			for _, snapshot := range p.networkInterfaces {
+				if snapshot.Name == name && snapshot.Index == index {
+					resolved = snapshot.Interface
+					break
+				}
+			}
 			updated = &resolved
 		}
 	}
 	old := p.defaultInterface
-	if old != nil && updated != nil && old.Name == updated.Name && old.Index == updated.Index {
+	if old != nil && updated != nil && old.Equals(*updated) {
 		p.mu.Unlock()
 		return
 	}
@@ -571,7 +577,7 @@ func samePlatformDefaultInterface(left, right *control.Interface) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	return left.Name == right.Name && left.Index == right.Index
+	return left.Equals(*right)
 }
 
 func samePlatformNetworkInterfaces(
@@ -582,8 +588,7 @@ func samePlatformNetworkInterfaces(
 		return false
 	}
 	for index := range left {
-		if left[index].Name != right[index].Name ||
-			left[index].Index != right[index].Index ||
+		if !left[index].Interface.Equals(right[index].Interface) ||
 			left[index].Type != right[index].Type ||
 			left[index].Expensive != right[index].Expensive ||
 			left[index].Constrained != right[index].Constrained {
@@ -594,9 +599,18 @@ func samePlatformNetworkInterfaces(
 }
 
 type platformNetworkInterfaceSnapshot struct {
-	Name  string `json:"name"`
-	Index int    `json:"index"`
-	Type  string `json:"type"`
+	Name  string                  `json:"name"`
+	Index int                     `json:"index"`
+	Type  string                  `json:"type"`
+	Facts *platformInterfaceFacts `json:"facts,omitempty"`
+}
+
+// Android cannot query interface facts through Go's netlink path. The host
+// may supply an atomic OS snapshot; omitted facts preserve Apple behavior.
+type platformInterfaceFacts struct {
+	MTU       int            `json:"mtu"`
+	Flags     uint32         `json:"flags"`
+	Addresses []netip.Prefix `json:"addresses"`
 }
 
 func (p *xdPlatformInterface) setNetworkInterfaces(snapshots []platformNetworkInterfaceSnapshot) error {
@@ -614,8 +628,22 @@ func (p *xdPlatformInterface) setNetworkInterfaces(snapshots []platformNetworkIn
 		if !loaded {
 			return E.New("platform: unsupported network interface type: ", snapshot.Type)
 		}
+		resolved := resolvePlatformInterface(snapshot.Name, snapshot.Index)
+		if snapshot.Facts != nil {
+			if snapshot.Facts.MTU <= 0 {
+				return E.New("platform: invalid interface MTU")
+			}
+			for _, address := range snapshot.Facts.Addresses {
+				if !address.IsValid() {
+					return E.New("platform: invalid interface address")
+				}
+			}
+			resolved.MTU = snapshot.Facts.MTU
+			resolved.Flags = net.Flags(snapshot.Facts.Flags)
+			resolved.Addresses = append([]netip.Prefix(nil), snapshot.Facts.Addresses...)
+		}
 		interfaces = append(interfaces, adapter.NetworkInterface{
-			Interface: resolvePlatformInterface(snapshot.Name, snapshot.Index),
+			Interface: resolved,
 			Type:      interfaceType,
 		})
 	}

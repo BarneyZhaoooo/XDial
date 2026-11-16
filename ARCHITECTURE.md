@@ -427,3 +427,21 @@ UI 显示权限状态，手动切换仍可用。
 
 历史路径入口：[DNS 接入与自愈](core/engine/dns_takeover.go)、
 [Underlay](core/engine/underlay.go)、[Transparent Proxy 证据](docs/incidents/d35-transparent-proxy-evidence.md)。
+
+## Android 接入（开发验收阶段）
+
+Android 原生 VpnService 持有系统建立的 TUN fd，Go dup 后交给 sing-tun；
+宿主和核心分别关闭自己持有的 fd。PlatformInterface 在 Android 不声明自身为
+NetworkExtension。SocketProtector 在拨号前同步 protect 并绑定系统选定的
+Underlay Network；失败返回错误，候选 Box 与复用 Line 继承相同保护契约。
+
+Android 沙箱限制 Go 的 netlink 接口查询，宿主通过 NetworkInterface 与
+LinkProperties 提供 name/index/type 与可选 facts（MTU/flags/addresses）。
+有 facts 时采用系统快照，缺失时沿用 Apple 原有补齐路径；无效快照原子拒绝。
+Android 同时将 LinkProperties 的 DNS 顺序传给 Go 编译器，Go 用它生成移动
+DNS fallback transport，平台不自行解析或裁决。禁止把固定公共 DNS 的可达性
+当作所有 Underlay 的前提。
+
+当前仅完成隔离模拟器 Direct 的 DNS/HTTPS 接入验收；协议自建 socket、登录、
+自动场景、网络恢复与 Apple 控制面迁移尚未交付，详见
+[全平台计划](docs/plans/cross-platform.md)与[Android 验收](docs/verification/android-checkpoint.md)。
