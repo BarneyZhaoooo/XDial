@@ -1422,6 +1422,17 @@ final class AppState: ObservableObject {
             return
         }
         guard canConnect else { return }
+        // An app-side source download opens sockets the takeover would capture
+        // and route by Scenario. Connecting wins: stop it, wait until it has
+        // exited, then begin with whatever the user still wants.
+        if ProfileSourceLineFetcher.hasApplicationSession {
+            Task { [weak self] in
+                await ProfileSourceLineFetcher.cancelApplicationSessions()
+                guard let self, self.connectionDesired.wantsConnection else { return }
+                self.beginConnection(automaticRetryTrigger: automaticRetryTrigger)
+            }
+            return
+        }
         blockedConnectionScenarioID = nil
         _ = connectionAttempts.begin()
         clearLineObservations()

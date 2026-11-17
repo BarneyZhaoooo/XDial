@@ -262,9 +262,11 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
 - 下载请求、URL、预览仅在内存协调器中流转，Intent 只含随机请求 ID；离开页面、
   系统撤权、断开、超时和网络快照变化会取消。取消/失败不保存，下载成功也必须预览确认。
   Android 仅手动刷新，本阶段不增加定时订阅拉取。
-- Apple Codable 保留新获取线路字段；旧 URLSession 导入器不能履行显式 Line，遇到
-  此类来源明确拒绝刷新，原来源字段缺失时保持既有行为。后续应接共享精确 Line 获取
-  能力，而不是删除保护或把这项跨端缺口当永久产品范围。专项 XCTest 已通过。
+- Apple Codable 保留新获取线路字段。2026-11-18 起 macOS 订阅可选择获取线路：Direct 仍走
+  URLSession；其他 Line 由共享 Go `FetchProfileSourceViaLine` 精确承载 DNS、HTTPS、
+  重定向与响应体，失败不回落 Direct。未连接时在 App 内运行；系统接管已提交时交给
+  Provider（其 socket 不被 XDial 捕获）；连接或切换进行中拒绝。Tailscale、AnyConnect 与
+  线路组暂不可选，核心同样拒绝。iOS 尚无在线来源功能。
 - 独立模拟器已从本仓库公开示例下载、保存和原链接更新，socket 保护 2 次、失败 0、
   TUN 0；断网等待取消后恢复不复活；最终更新后 One 的普通 UDP DNS/HTTPS 通过。
   非 Direct 真正成功的在线导入、设备上的响应体中途取消仍待补验。

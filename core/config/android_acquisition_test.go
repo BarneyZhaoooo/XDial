@@ -66,3 +66,37 @@ func TestAndroidAcquisitionProtocolRequiresLease(t *testing.T) {
 		}
 	}
 }
+
+func TestAppleResourceAcquisitionKeepsOSUnderlayRouting(t *testing.T) {
+	profile := &Profile{Lines: []Line{{ID: "source", Type: LineTypeShadowsocks, Enabled: true, SSServer: "198.51.100.7", SSPort: 8388, SSMethod: "aes-128-gcm", SSPass: "fixture"}}}
+	apple, err := GenerateAppleResourceAcquisition(profile, "source", t.TempDir(), []string{"192.0.2.53"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Route    map[string]any `json:"route"`
+		Inbounds []any          `json:"inbounds"`
+	}
+	if err := json.Unmarshal(apple, &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := document.Route["auto_detect_interface"]; ok {
+		t.Fatal("Apple resource session would skip a gateway-less utun Underlay")
+	}
+	if _, ok := document.Route["default_interface"]; ok {
+		t.Fatal("Apple resource session pinned one interface instead of OS routing")
+	}
+	if len(document.Inbounds) != 0 {
+		t.Fatal("resource session gained an ingress")
+	}
+	android, err := GenerateAndroidAcquisition(profile, "source", t.TempDir(), []string{"192.0.2.53"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(android, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Route["auto_detect_interface"] != true {
+		t.Fatal("Android resource session lost its callback-selected network")
+	}
+}

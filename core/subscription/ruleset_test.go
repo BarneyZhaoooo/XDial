@@ -229,3 +229,30 @@ func TestExpandRulesetsStrictRejectsUnknownEntryAtomically(t *testing.T) {
 		t.Fatal("failed expansion changed the original")
 	}
 }
+
+func TestExpandRulesetsStrictWithFetchUsesCallerPath(t *testing.T) {
+	result := &ParseResult{Rules: []config.SubscriptionRule{
+		{Type: "RULE-SET", Value: "https://rules.example.com/list", Group: "Proxy"},
+		{Type: "FINAL", Value: "", Group: "Proxy"},
+	}}
+	var fetched []string
+	err := ExpandRulesetsStrictWithFetch(context.Background(), result, func(_ context.Context, url string, limit int64) ([]byte, error) {
+		fetched = append(fetched, url)
+		if limit <= 0 {
+			t.Fatalf("unbounded rule fetch: %d", limit)
+		}
+		return []byte("DOMAIN-SUFFIX,example.org\n"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched) != 1 || fetched[0] != "https://rules.example.com/list" {
+		t.Fatalf("rule source bypassed the caller path: %v", fetched)
+	}
+	if len(result.Rules) != 2 || result.Rules[0].Type != "DOMAIN-SUFFIX" || result.Rules[0].Group != "Proxy" {
+		t.Fatalf("rule set not expanded in place: %+v", result.Rules)
+	}
+	if ExpandRulesetsStrictWithFetch(context.Background(), &ParseResult{}, nil) == nil {
+		t.Fatal("missing fetch path accepted")
+	}
+}

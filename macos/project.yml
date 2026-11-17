@@ -150,6 +150,7 @@ targets:
     platform: macOS
     sources:
       - Sources/XDial
+      - ../ios/XDialShared/DialGlyph.swift
       - Shared
       - path: AppIcon.icns
         buildPhase: resources
@@ -350,6 +351,7 @@ targets:
       - Tests
       - Shared
       - Sources/XDial/AppIcon.swift
+      - ../ios/XDialShared/DialGlyph.swift
       - Sources/XDial/AppDefaults.swift
       - Sources/XDial/ApplicationLaunchPolicy.swift
       - Sources/XDial/AppVersion.swift
@@ -367,6 +369,7 @@ targets:
       - Sources/XDial/ProfileLibraryMigration.swift
       - Sources/XDial/ProfileVaultProjection.swift
       - Sources/XDial/ProfileLibrary.swift
+      - Sources/XDial/ProfileSourceLineRoute.swift
       - Sources/XDial/GlobalConfiguration.swift
       - Sources/XDial/ConfigurationEditorState.swift
       - Sources/XDial/ConnectionConfigurationReadiness.swift
