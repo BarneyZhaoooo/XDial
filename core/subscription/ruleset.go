@@ -36,6 +36,19 @@ func ExpandRulesetsStrict(result *ParseResult) error {
 	return expandRulesets(ctx, result, true)
 }
 
+// ExpandRulesetsStrictWithFetch applies ExpandRulesetsStrict's bounds but
+// downloads every referenced rule source through fetch, so a source fetched
+// over an explicit Line also resolves its rule sets over that Line.
+func ExpandRulesetsStrictWithFetch(ctx context.Context, result *ParseResult, fetch func(context.Context, string, int64) ([]byte, error)) error {
+	if fetch == nil {
+		return fmt.Errorf("rule set fetch path is unavailable")
+	}
+	return expandRulesetsWithFetcher(ctx, result, true, func(ctx context.Context, url string, _ bool, maxBytes int64) (string, error) {
+		content, err := fetch(ctx, url, maxBytes)
+		return string(content), err
+	})
+}
+
 func expandRulesets(ctx context.Context, result *ParseResult, strict bool) error {
 	return expandRulesetsWithFetcher(ctx, result, strict, fetchRuleSetContent)
 }

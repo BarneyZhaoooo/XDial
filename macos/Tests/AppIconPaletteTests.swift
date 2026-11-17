@@ -52,14 +52,17 @@ final class AppIconPaletteTests: XCTestCase {
 
     func testPrimaryIconIsRoundedSlateTileWithSurfaceDial() throws {
         let bitmap = try render(AppIcon.primary(size: 128, connected: true))
-        // macOS 圆角底块：四角透明，底块内是石板蓝灰，盘心是冷灰表面。
+        // macOS 圆角底块：四角透明，底块内是石板蓝灰，盘面是冷灰表面，盘心嵌有浅色圆盖。
         XCTAssertLessThan(bitmap.colorAt(x: 1, y: 1)?.alphaComponent ?? 1, 0.05)
         XCTAssertLessThan(bitmap.colorAt(x: 126, y: 126)?.alphaComponent ?? 1, 0.05)
         let tile = try XCTUnwrap(bitmap.colorAt(x: 20, y: 20)?.usingColorSpace(.sRGB))
         XCTAssertGreaterThan(tile.alphaComponent, 0.99)
         XCTAssertLessThan(tile.brightnessComponent, 0.45)
-        let dial = try XCTUnwrap(bitmap.colorAt(x: 64, y: 64)?.usingColorSpace(.sRGB))
+        let dial = try XCTUnwrap(bitmap.colorAt(x: 87, y: 64)?.usingColorSpace(.sRGB))
         XCTAssertGreaterThan(dial.brightnessComponent, 0.9)
+        let hub = try XCTUnwrap(bitmap.colorAt(x: 72, y: 64)?.usingColorSpace(.sRGB))
+        XCTAssertLessThan(hub.brightnessComponent, dial.brightnessComponent - 0.03)
+        XCTAssertGreaterThan(hub.brightnessComponent, tile.brightnessComponent + 0.3)
     }
 
     func testDockIconStaysInsideTheRoundedTile() throws {

@@ -141,7 +141,10 @@ struct HomeView: View {
     /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就交给 VPN 扩展判断，
     /// 由它在不断开 VPN 的情况下切换（App 被挂起时它也照样判断）。
     private func refreshAutoScenario(afterNetworkChange: Bool = false) async {
-        guard autoScenario, !app.profile.scenarios.isEmpty else { return }
+        // 所有入口（首次显示、回到前台、换网络、开关、断开与点连接）都先读系统状态。
+        // 冷启动时扩展可能已经在跑，不能把 App 的初始 disconnected 当成真实状态。
+        await app.refreshTunnelProfileStatusAndWait()
+        guard !Task.isCancelled, autoScenario, !app.profile.scenarios.isEmpty else { return }
         if app.isConnected {
             // 网络变化时扩展自己已经在判断，这里只同步它的结论。
             if afterNetworkChange, app.tunnelScenarioState != nil {
@@ -155,6 +158,10 @@ struct HomeView: View {
                 // 扩展是旧版本：沿用 App 判断、断开重连。
                 break
             }
+        } else if isWorking || app.hasActiveTunnel {
+            // 隧道正在连接或自检：本机直接查出口会被隧道挡住，这时也不能改选场景。
+            // 连上以后由 VPN 扩展判断（见 AppState.refreshScenarioCatalog）。
+            return
         }
         // 已连接时只有 VPN 扩展查得到本地网络的出口，见 ScenarioAutoPilot.survey。
         var exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)?
