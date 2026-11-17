@@ -80,3 +80,10 @@ func SelectTailscaleExit(profileJSON, lineID, statusJSON, nodeID string) (string
 	return mobile.SelectTailscaleExit(profileJSON, lineID, statusJSON, nodeID)
 }
 func ValidateTailscaleAuthURL(raw string) bool { return mobile.ValidateTailscaleAuthURL(raw) }
+
+func ScenarioEditor(profileJSON, scenarioID string) (string, error) {
+	return mobile.ScenarioEditor(profileJSON, scenarioID)
+}
+func EditScenario(profileJSON, commandJSON string) (string, error) {
+	return mobile.EditScenario(profileJSON, commandJSON)
+}

@@ -769,3 +769,9 @@ func ResolveProfileLibraryIdentityNamespace(raw, basePath, namespace string) (st
 	}
 	return namespace, nil
 }
+
+// ValidateProfileLibraryRuntime validates an offline editor projection while
+// allowing the same temporarily empty global groups as the library itself.
+func ValidateProfileLibraryRuntime(profile *Profile) error {
+	return validateDocumentProfileWithEmptyGroups(profile, true)
+}

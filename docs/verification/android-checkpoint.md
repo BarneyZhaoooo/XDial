@@ -406,3 +406,46 @@ Android 宿主只处理网络事实、资源生命周期和加密存储；候选
 显示已无连接；该改动后重新打包、覆盖安装，One 同场景手动选择、One→Travel→One
 及普通 UDP DNS/HTTPS 再通过。最终 APK 与前一次失败/取消分支测试包核心相同；
 失败/取消设备证据来自前一包 `0ef63d2de4e3`，不将未重跑分支改写为最终包全量验收。
+
+## 2026-11-17 场景编辑产品闭环
+
+实现：`core/mobile/scenario_editor.go` 及 gomobile facade 提供共享编辑命令和安全展示
+模型；`ScenariosActivity` 使用原生对话框与列表编辑内存草稿，复用共享条件编辑器。
+配置库保存仍校验修订号，线路/规则归属来源，场景归全局。移动出口不改变部分匹配；
+交错顺序转换和完整规则扩展是两项明确操作。当前/自动条件引用场景不能删除。
+
+验证证据：
+
+- `build/android/editor-mobile-tests-final.log`：mobile 全量 race 通过。覆盖部分引用、
+  交错顺序保护、绑定移动/移除、显式完整范围、默认出口、创建/删除、源资源保留、库
+  CAS、未知字段、不含资源内容的展示、禁用出口、命令尾随内容及空闲线路组。
+  补充测试最初误把空线路组写成空规则组，按真实 schema 修正 fixture 后通过；没有
+  为通过测试放宽空规则组的约束。
+- `build/android/editor-core-tests.log`：config/libbox/mobile/subscription 常规全量通过。
+  不声称全量 libbox race 通过，前述基线时限问题仍保留。
+- `build/android/editor-apple.log`：iOS/tvOS generic 模拟器以及 macOS Debug/Release
+  App/扩展六项构建通过。无新增 XCTest；没有安装或重启宿主客户端。
+- 打包入口执行 public-content-gate、双 ABI AAR、Gradle 和 APK 身份检查；最终结果
+  `build/android/editor-package-final.log`。最终 Java 仅进一步串行化场景控制器替换。
+- 插件设备 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B` 上新建非秘密 Direct 场景，
+  重命名、添加 Public cache fixture/Local 两条绑定并上移 Local；保存并重启后顺序
+  保留。移除绑定后按系统返回键，选择放弃，重新打开仍是两条。连接期间尝试新建被
+  拒绝；断开后删除当前场景仍被拒绝，切回 One 后可删除并保存。输入插件的清空/粘贴
+  未产生预期英文名，实际保存名为 `Editor tripEdi`；以上验收按实际读回名称执行，
+  没有把输入请求当成输入结果。
+- 上述完整交互来自 `7d4c9d96e714` 包；最终 `db424e8cb6cf` 包再次创建保存
+  `Editor final`，选择并连接，普通未 protect App socket 的 UDP DNS 响应 ID/NXDOMAIN
+  与 HTTPS 200/正文检查均通过。刷新计数 0/0/0。最后手动断开、选 One、自动关闭，
+  日志 `phase=released tun_descriptors=0`。网络未修改。最终非秘密新场景留在该隔离
+  设备内；真实企业和已登录 tailnet 联调仍未验证。
+- 完整插件收据：`build/android/editor-device.log`。设备安装指纹确认 `matchesLocal=true`。
+
+最终可安装 Debug APK：
+`build/android/artifacts/xdial-1-debug-db424e8cb6cf-4426e1b299a9/xdial-1-debug-db424e8cb6cf.apk`
+
+SHA-256：`db424e8cb6cf386375ea8046c5387de140fc09dff4ccb74b49b93ec98a67355b`。
+manifest 保留真实 `aaebca5 + dirty=true`，不改写为后续提交。AAR 包含 arm64-v8a 与
+x86_64，仅 arm64 设备运行。尚未推送，GitHub CI/长期签名/受限渠道未验证。
+
+此阶段补齐场景编辑入口，不代表完整平台交付。在线来源、连接中自动选择、协议冷资源
+租约、取消延迟、系统撤权与存储故障分支、Windows/Linux 按应用透明和多发行版仍需继续。

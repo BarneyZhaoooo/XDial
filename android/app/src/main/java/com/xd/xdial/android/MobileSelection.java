@@ -23,6 +23,11 @@ final class MobileSelection {
   if(instance==null) instance=new MobileSelection(context); return instance;
  }
  static synchronized void invalidate() {instance=null;}
+ // Admission takes ProfileStore.class; keep controller replacement serialized
+ // with get(), so a newly admitted connection cannot borrow the old editor view.
+ static synchronized void saveIdleScenario(Context context,String draft)throws Exception {
+  new ProfileStore(context).saveIdleScenario(draft);instance=null;
+ }
  synchronized JSONObject snapshot() throws Exception {return new JSONObject(controller.snapshot());}
  synchronized void connected(boolean value) throws Exception {controller.setConnected(value);}
  synchronized void automatic(boolean enabled) throws Exception {

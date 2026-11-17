@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
      requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},2);
    } catch(Exception e){Toast.makeText(this,"请先导入配置，连接期间不能改变选择",Toast.LENGTH_SHORT).show();refreshSelection();}
   });
+  Button editor=new Button(this);editor.setText("编辑场景");layout.addView(editor);editor.setOnClickListener(v->startActivity(new Intent(this,ScenariosActivity.class)));
   Button conditions=new Button(this);conditions.setText("自动场景条件");layout.addView(conditions);
   conditions.setOnClickListener(v->editConditions());
   Button login=new Button(this);login.setText("添加 AnyConnect 账号与场景");layout.addView(login);login.setOnClickListener(v->addVPN());

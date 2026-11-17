@@ -37,6 +37,9 @@ final class ProfileStore {
  void save(String text) throws Exception {
   synchronized(ProfileStore.class){writeLibrary(Libbox.applyProfileLibraryRuntime(readLibrary(),text));}
  }
+ void saveIdleScenario(String text)throws Exception{
+  synchronized(ProfileStore.class){if(TunnelService.active)throw new IOException("Connection is active");writeLibrary(Libbox.applyProfileLibraryRuntime(readLibrary(),text));}
+ }
  void saveSelection(String text)throws Exception{
   synchronized(ProfileStore.class){writeLibrary(Libbox.applyProfileLibrarySelection(readLibrary(),text));}
  }

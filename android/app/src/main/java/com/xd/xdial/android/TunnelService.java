@@ -112,7 +112,7 @@ public final class TunnelService extends VpnService {
    if(active)return;
    if(stopRequested){state="未连接";finish();return;}
    settingUp="tailscale-setup".equals(action);setupLine=settingUp?intent.getStringExtra("line"):"";tailscaleStatus="";setupMessage="";
-   active=true;probeResult="";surveyResult="";lifecycle.requestConnection(true);state="等待可用网络";
+   synchronized(ProfileStore.class){active=true;}probeResult="";surveyResult="";lifecycle.requestConnection(true);state="等待可用网络";
    acquireSystemNetwork();
   });
   return START_NOT_STICKY;
