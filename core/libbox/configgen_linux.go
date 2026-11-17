@@ -47,10 +47,10 @@ func validateLinuxProfileFiles(profileJSON string) error {
 			}
 		case map[string]any:
 			for k, c := range x {
-				if k == "native_options" && c != nil {
+				if strings.EqualFold(k, "native_options") && c != nil {
 					return fmt.Errorf("native options require privileged admission")
 				}
-				if k == "url" || k == "geoip_rule_set_url_template" {
+				if strings.EqualFold(k, "url") || strings.EqualFold(k, "geoip_rule_set_url_template") {
 					if text, ok := c.(string); ok && strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "file:") {
 						return fmt.Errorf("client local rule files are not service capabilities")
 					}

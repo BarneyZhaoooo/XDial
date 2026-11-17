@@ -114,3 +114,14 @@ func TestSurveyTicketsAndUnknownTargets(t *testing.T) {
 		t.Fatal("consumed survey accepted")
 	}
 }
+
+func TestIncompleteSelectedScenarioDoesNotBlockPicker(t *testing.T) {
+	raw := `{"lines":[{"id":"direct","type":"direct","enabled":true},{"id":"empty","type":"selector","enabled":true}],"scenarios":[{"id":"bad","default_line_id":"empty"},{"id":"good","default_line_id":"direct"}],"active_scenario_id":"bad"}`
+	c, err := NewScenarioController(raw, "{}", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.SelectScenario("good"); err != nil {
+		t.Fatal(err)
+	}
+}

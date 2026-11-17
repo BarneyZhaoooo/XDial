@@ -23,6 +23,10 @@ func TestAndroidSetupHasProtectedCompilerDNSAndNoIngress(t *testing.T) {
 	if strings.Contains(string(dns), `"local"`) || !strings.Contains(string(dns), "192.0.2.53") {
 		t.Fatal("setup bypasses captured DNS")
 	}
+	route := doc["route"].(map[string]any)
+	if route["auto_detect_interface"] != true || route["final"] != "direct" || route["default_domain_resolver"] != "xdial-public-dns" {
+		t.Fatal("setup lost protected compiler route", route)
+	}
 	endpoint := doc["endpoints"].([]any)[0].(map[string]any)
 	if endpoint["exit_node"] != nil || endpoint["accept_routes"] != false || endpoint["system_interface"] != false {
 		t.Fatal("setup enables forwarding")

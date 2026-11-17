@@ -14,6 +14,7 @@ public final class MainActivity extends Activity {
  private Switch automatic;
  private Button scenarios;
  private boolean refreshingSelection;
+ private boolean connectAfterLocation;
  private String pendingSetupLine="";
  private boolean lastActive;
  private long lastSelectionRevision;
@@ -42,7 +43,7 @@ public final class MainActivity extends Activity {
    if(refreshingSelection)return;
    try {MobileSelection.get(this).automatic(enabled);
     if(enabled && checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
-     requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},2);
+     requestLocation();
    } catch(Exception e){Toast.makeText(this,"请先导入配置，连接期间不能改变选择",Toast.LENGTH_SHORT).show();refreshSelection();}
   });
   Button editor=new Button(this);editor.setText("编辑场景");layout.addView(editor);editor.setOnClickListener(v->startActivity(new Intent(this,ScenariosActivity.class)));
@@ -86,7 +87,22 @@ public final class MainActivity extends Activity {
  private String join(org.json.JSONArray values,String separator)throws Exception{
   StringBuilder result=new StringBuilder();for(int i=0;i<values.length();i++){if(i>0)result.append(separator);result.append(values.getString(i));}return result.toString();
  }
- private void connect() { startForegroundService(new Intent(this,TunnelService.class)); }
+ private void requestLocation() { requestPermissions(new String[]{android.Manifest.permission.ACCESS_COARSE_LOCATION,android.Manifest.permission.ACCESS_FINE_LOCATION},2); }
+ private boolean locationAvailable(){return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED && (Build.VERSION.SDK_INT>=28?((android.location.LocationManager)getSystemService(LOCATION_SERVICE)).isLocationEnabled():android.provider.Settings.Secure.getInt(getContentResolver(),android.provider.Settings.Secure.LOCATION_MODE,0)!=0);}
+ private void startConnection(){startForegroundService(new Intent(this,TunnelService.class));}
+ private void connect() {
+  try {
+   if(MobileSelection.get(this).snapshot().getBoolean("automatic") && !locationAvailable()) {
+    if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED){connectAfterLocation=true;requestLocation();}
+    else confirmWithoutWifi();
+    return;
+   }
+   startConnection();
+  }catch(Exception error){Toast.makeText(this,"请先选择有效配置",Toast.LENGTH_LONG).show();}
+ }
+ private void confirmWithoutWifi(){new AlertDialog.Builder(this).setTitle("Wi-Fi 自动选择不可用").setMessage("读取 Wi-Fi 名称需要精确位置权限和系统定位开关。继续后只能按地区判断；也可以返回设置权限或手动选择场景。")
+  .setNegativeButton("返回",null).setPositiveButton("仅按地区继续",(d,w)->startConnection()).show();}
+ @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);if(request==2){refreshSelection();if(connectAfterLocation){connectAfterLocation=false;if(locationAvailable())startConnection();else confirmWithoutWifi();}}}
  @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(request==1 && result==RESULT_OK) connect();if(request==3 && result==RESULT_OK)startTailscale(); }
  private void chooseScenario() {
   if(TunnelService.settingUp){Toast.makeText(this,"请先结束账号设置",Toast.LENGTH_SHORT).show();return;}
@@ -182,7 +198,7 @@ public final class MainActivity extends Activity {
  private void refreshSelection() {
   refreshingSelection=true;
   try {
-   org.json.JSONObject state=MobileSelection.get(this).snapshot();automatic.setEnabled(true);automatic.setChecked(state.getBoolean("automatic"));
+   org.json.JSONObject state=MobileSelection.get(this).snapshot();automatic.setEnabled(true);automatic.setChecked(state.getBoolean("automatic"));automatic.setText(locationAvailable()?"连接前按 Wi-Fi 或地区自动选择":"连接前自动选择（Wi-Fi 不可用：需精确位置权限和定位开关）");
    org.json.JSONArray choices=state.getJSONArray("choices");
    for(int i=0;i<choices.length();i++){org.json.JSONObject c=choices.getJSONObject(i);if(c.getString("id").equals(state.getString("selected")))scenarios.setText("场景 · "+c.getString("name"));}
   } catch(Exception ignored){scenarios.setText("选择场景");automatic.setEnabled(false);}

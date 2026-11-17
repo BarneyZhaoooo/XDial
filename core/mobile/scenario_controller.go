@@ -99,7 +99,10 @@ func NewScenarioController(profileJSON, regionsJSON string, automatic bool) (*Sc
 	if err != nil {
 		return nil, fmt.Errorf("invalid runtime profile")
 	}
-	if _, err = config.BuildConnectionPlan(profile); err != nil {
+	if profile.ActiveScenario() == nil {
+		return nil, fmt.Errorf("missing selected scenario")
+	}
+	if err = config.ValidateProfileLibraryRuntime(profile); err != nil {
 		return nil, err
 	}
 	c := &ScenarioController{scenarios: profile.Scenarios, state: scenarioState{Selected: profile.ActiveScenarioID, Automatic: automatic}}

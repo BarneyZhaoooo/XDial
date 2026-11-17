@@ -1205,7 +1205,7 @@ func GenerateAndroidTailscaleSetupConfig(profileJSON, lineID, systemDNSJSON, bas
 		return "", err
 	}
 	target["dns"] = source["dns"]
-	target["route"], _ = json.Marshal(map[string]string{"final": "direct", "default_domain_resolver": config.MobilePublicDNSTag})
+	target["route"] = source["route"]
 	data, err = json.Marshal(target)
 	return string(data), err
 }
@@ -1520,14 +1520,19 @@ func readValidatedNERuleSet(
 	format string,
 	limit int64,
 ) ([]byte, config.RuleSetMatchKind, os.FileInfo, error) {
-	info, err := os.Stat(localPath)
+	file, err := openRuleSetFile(localPath)
+	if err != nil {
+		return nil, config.RuleSetMatchUnknown, nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return nil, config.RuleSetMatchUnknown, nil, err
 	}
 	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > limit {
 		return nil, config.RuleSetMatchUnknown, nil, fmt.Errorf("cached rule set is invalid")
 	}
-	content, err := os.ReadFile(localPath)
+	content, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, config.RuleSetMatchUnknown, nil, err
 	}

@@ -241,11 +241,13 @@ func unitState() (active bool, enabled string, e error) {
 	if err = reviewDropIns(drop, func(path string) error { _, e := read(path, 65536, false); return e }); err != nil {
 		return false, "", err
 	}
-	enabled, err = systemctl("is-enabled", "xdial-service")
+	// disabled/inactive are documented nonzero systemctl statuses; the exact
+	// output allowlist below distinguishes them from command failures.
+	enabled, _ = systemctl("is-enabled", "xdial-service")
 	if enabled != "enabled" && enabled != "disabled" {
 		return false, "", errors.New("unsupported unit enablement state")
 	}
-	status, err := systemctl("is-active", "xdial-service")
+	status, _ := systemctl("is-active", "xdial-service")
 	if status != "active" && status != "inactive" && status != "failed" {
 		return false, "", errors.New("unit transition in progress")
 	}
