@@ -209,6 +209,7 @@ func systemctl(args ...string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
 // vendorServiceDropIns is the distribution's type-wide service.d directory.
 // Such files apply to every service equally before and after the upgrade
 // (Fedora ships 10-timeout-abort.conf there). Unit-specific or prefix drop-ins

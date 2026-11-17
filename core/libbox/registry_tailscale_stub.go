@@ -1,4 +1,4 @@
-//go:build (!with_gvisor || mobile_no_tailscale)
+//go:build !with_gvisor || mobile_no_tailscale
 
 package libbox
 
