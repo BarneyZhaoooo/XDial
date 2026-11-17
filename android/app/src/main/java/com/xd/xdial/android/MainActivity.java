@@ -16,8 +16,9 @@ public final class MainActivity extends Activity {
  private boolean refreshingSelection;
  private String pendingSetupLine="";
  private boolean lastActive;
+ private String lastConnectionState="";
  private final Handler handler = new Handler();
- private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);if(lastActive!=TunnelService.active){lastActive=TunnelService.active;refreshSelection();}handler.postDelayed(this, 500); } };
+ private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.surveyResult+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);if(lastActive!=TunnelService.active||!lastConnectionState.equals(TunnelService.state)){lastActive=TunnelService.active;lastConnectionState=TunnelService.state;refreshSelection();}handler.postDelayed(this, 500); } };
  @Override public void onCreate(Bundle saved) {
   super.onCreate(saved);
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
@@ -34,7 +35,7 @@ public final class MainActivity extends Activity {
   });
   scenarios = new Button(this);scenarios.setAllCaps(false); scenarios.setText("选择场景"); layout.addView(scenarios);
   scenarios.setOnClickListener(v -> chooseScenario());
-  automatic = new Switch(this); automatic.setText("连接前按 Wi-Fi 自动选择");
+  automatic = new Switch(this); automatic.setText("连接前按 Wi-Fi 或地区自动选择");
   automatic.setChecked(true); layout.addView(automatic);
   automatic.setOnCheckedChangeListener((button,enabled)->{
    if(refreshingSelection)return;
@@ -43,6 +44,8 @@ public final class MainActivity extends Activity {
      requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},2);
    } catch(Exception e){Toast.makeText(this,"请先导入配置，连接期间不能改变选择",Toast.LENGTH_SHORT).show();refreshSelection();}
   });
+  Button conditions=new Button(this);conditions.setText("自动场景条件");layout.addView(conditions);
+  conditions.setOnClickListener(v->editConditions());
   Button login=new Button(this);login.setText("添加 AnyConnect 账号与场景");layout.addView(login);login.setOnClickListener(v->addVPN());
   Button tailscale=new Button(this);tailscale.setText("Tailscale 账号与出口节点");layout.addView(tailscale);tailscale.setOnClickListener(v->tailscale());
   Button config = new Button(this); config.setText("配置来源"); layout.addView(config);
@@ -51,10 +54,36 @@ public final class MainActivity extends Activity {
   rules.setOnClickListener(v->startActivity(new Intent(this,OfflineRulesActivity.class)));
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
   details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS","验证安全存储"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":index==1?"probe":"identity-test"));}).show());
-  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；AnyConnect 支持账号密码，支持 Tailscale 浏览器登录与出口选择；真实企业网络联调、地区判断和连接中切换仍待完成。"); layout.addView(notice);
+  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景、连接前 Wi-Fi 优先与地区判断。手动选择关闭自动选择。AnyConnect 支持账号密码，Tailscale 支持浏览器登录与出口选择；真实企业网络联调和连接中切换仍待完成。"); layout.addView(notice);
   setContentView(scroll);
  }
  private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+ private void editConditions(){
+  if(TunnelService.active){Toast.makeText(this,"请先断开再编辑条件",Toast.LENGTH_SHORT).show();return;}
+  try{
+   String original=new ProfileStore(this).load();org.json.JSONObject profile=new org.json.JSONObject(original);
+   String id=profile.getString("active_scenario_id");
+   org.json.JSONObject value=new org.json.JSONObject(Libbox.scenarioConditions(original,id));
+   LinearLayout fields=new LinearLayout(this);fields.setOrientation(1);fields.setPadding(dp(24),0,dp(24),0);
+   TextView help=new TextView(this);help.setText("编辑当前场景的条件。Wi-Fi 名称优先；没有匹配时，才查询网络出口地区。地区代码用逗号分开，例如 CN, JP；* 表示其它地区。查询失败保留原场景，清空字段可移除条件。");fields.addView(help);
+   EditText ssids=new EditText(this);ssids.setHint("Wi-Fi 名称，每行一个");ssids.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);ssids.setText(join(value.getJSONArray("ssids"),"\n"));fields.addView(ssids);
+   EditText countries=new EditText(this);countries.setHint("地区代码，例如 CN, JP 或 *");countries.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);countries.setText(join(value.getJSONArray("countries"),", "));fields.addView(countries);
+   ssids.setSaveEnabled(false);countries.setSaveEnabled(false);ssids.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);countries.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+   TextView error=new TextView(this);fields.addView(error);
+   AlertDialog dialog=new AlertDialog.Builder(this).setTitle("自动场景条件").setView(fields).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+   dialog.setOnShowListener(d->{dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+    if(TunnelService.active){error.setText("连接期间不能编辑，请先断开。");return;}
+    try{
+     String updated=Libbox.updateScenarioConditions(original,id,ssids.getText().toString(),countries.getText().toString());
+     new ProfileStore(this).save(updated);MobileSelection.invalidate();refreshSelection();dialog.dismiss();
+     Toast.makeText(this,"条件已保存；启用自动选择后，下次连接使用",Toast.LENGTH_LONG).show();
+    }catch(Exception failure){error.setText("请检查地区代码、Wi-Fi 名称长度，以及是否与其它场景重复；配置变化时请重新打开。");}
+   });});dialog.show();
+  }catch(Exception failure){Toast.makeText(this,"无法读取场景条件",Toast.LENGTH_LONG).show();}
+ }
+ private String join(org.json.JSONArray values,String separator)throws Exception{
+  StringBuilder result=new StringBuilder();for(int i=0;i<values.length();i++){if(i>0)result.append(separator);result.append(values.getString(i));}return result.toString();
+ }
  private void connect() { startForegroundService(new Intent(this,TunnelService.class)); }
  @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(request==1 && result==RESULT_OK) connect();if(request==3 && result==RESULT_OK)startTailscale(); }
  private void chooseScenario() {

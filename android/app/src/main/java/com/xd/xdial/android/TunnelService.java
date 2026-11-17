@@ -11,7 +11,7 @@ import libbox.*;
 
 /** Android owns OS resources; the shared controller owns intent/epoch/retries. */
 public final class TunnelService extends VpnService {
- public static volatile String state="未连接", probeResult="";
+ public static volatile String state="未连接", probeResult="", surveyResult="";
  public static volatile boolean active, settingUp;
  public static volatile String tailscaleStatus="", setupMessage="";
  private String setupLine="";
@@ -29,19 +29,27 @@ public final class TunnelService extends VpnService {
  private volatile boolean destroyed,stopRequested;
  private long coreEpoch, preparationSockets;
  private ScheduledFuture<?> retry;
+ private ScheduledFuture<?> vpnReleaseTimeout;
+ private boolean waitingVpnRelease;
  private String stage="配置读取";
  private final java.util.concurrent.atomic.AtomicLong protectedSockets=new java.util.concurrent.atomic.AtomicLong();
  private final java.util.concurrent.atomic.AtomicLong protectionFailures=new java.util.concurrent.atomic.AtomicLong();
+ private final java.util.concurrent.atomic.AtomicLong observedNetworkRevision=new java.util.concurrent.atomic.AtomicLong();
  private void enqueue(Runnable action) {
   if(destroyed)return;
   try {worker.execute(()->{if(!destroyed)action.run();});}catch(RejectedExecutionException ignored){}
  }
  private final ConnectivityManager.NetworkCallback networks=new ConnectivityManager.NetworkCallback() {
-  @Override public void onAvailable(Network network) {enqueue(()->{underlay=network;links=null;capabilities=null;blocked=false;});}
+  @Override public void onAvailable(Network network) {observedNetworkRevision.incrementAndGet();enqueue(()->{underlay=network;links=null;capabilities=null;blocked=false;});}
   @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities value) {enqueue(()->{if(network.equals(underlay)){capabilities=value;observe();}});}
-  @Override public void onLinkPropertiesChanged(Network network,LinkProperties value) {enqueue(()->{if(network.equals(underlay)){links=value;observe();}});}
-  @Override public void onBlockedStatusChanged(Network network,boolean value) {enqueue(()->{if(network.equals(underlay)){blocked=value;observe();}});}
-  @Override public void onLost(Network network) {enqueue(()->{if(network.equals(underlay)){underlay=null;links=null;capabilities=null;lifecycle.observeUnderlay("");reconcile();}});}
+  @Override public void onLinkPropertiesChanged(Network network,LinkProperties value) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){links=value;observe();}});}
+  @Override public void onBlockedStatusChanged(Network network,boolean value) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){blocked=value;observe();}});}
+  @Override public void onLost(Network network) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){underlay=null;links=null;capabilities=null;lifecycle.observeUnderlay("");reconcile();}});}
+ };
+ private final ConnectivityManager.NetworkCallback defaultNetwork=new ConnectivityManager.NetworkCallback(){
+  @Override public void onAvailable(Network network){enqueue(TunnelService.this::acquireSystemNetwork);}
+  @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities value){enqueue(TunnelService.this::acquireSystemNetwork);}
+  @Override public void onLost(Network network){enqueue(TunnelService.this::acquireSystemNetwork);}
  };
  @Override public void onCreate(){super.onCreate();connectivity=getSystemService(ConnectivityManager.class);}
  @Override public int onStartCommand(Intent intent,int flags,int id) {
@@ -92,17 +100,35 @@ public final class TunnelService extends VpnService {
    if(active)return;
    if(stopRequested){state="未连接";finish();return;}
    settingUp="tailscale-setup".equals(action);setupLine=settingUp?intent.getStringExtra("line"):"";tailscaleStatus="";setupMessage="";
-   active=true;probeResult="";lifecycle.requestConnection(true);state="等待可用网络";
-   try {
+   active=true;probeResult="";surveyResult="";lifecycle.requestConnection(true);state="等待可用网络";
+   acquireSystemNetwork();
+  });
+  return START_NOT_STICKY;
+ }
+ private void acquireSystemNetwork(){
+  if(destroyed||!active||stopRequested||watching)return;
+  try {
     Network current=connectivity.getActiveNetwork();NetworkCapabilities caps=current==null?null:connectivity.getNetworkCapabilities(current);
-    if(caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))throw new IllegalStateException("Existing VPN");
+    if(caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)){
+     // Closing our last fd and Android withdrawing its VPN Network are separate
+     // events. Never bypass a still-visible VPN or rank interfaces to get out.
+     if(!waitingVpnRelease){
+      logTunnelOwnership("waiting-vpn-release");state="等待系统释放 VPN";
+      connectivity.registerDefaultNetworkCallback(defaultNetwork);waitingVpnRelease=true;
+      vpnReleaseTimeout=worker.schedule(()->{if(waitingVpnRelease){state="系统仍有 VPN 连接，请先断开后重试";finish();}},20,TimeUnit.SECONDS);
+     }
+     return;
+    }
+    stopWaitingForVpnRelease();
     // Android selects its best matching network. No interface/transport ranking.
     connectivity.requestNetwork(new NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
      .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(),networks);
     watching=true;
-   }catch(Exception error){state="无法取得系统网络，请检查 VPN 状态";finish();}
-  });
-  return START_NOT_STICKY;
+  }catch(Exception error){state="无法取得系统网络，请检查 VPN 状态";finish();}
+ }
+ private void stopWaitingForVpnRelease(){
+  if(vpnReleaseTimeout!=null){vpnReleaseTimeout.cancel(false);vpnReleaseTimeout=null;}
+  if(waitingVpnRelease){try{connectivity.unregisterNetworkCallback(defaultNetwork);}catch(Exception ignored){}waitingVpnRelease=false;}
  }
  private void observe(){
   if(underlay==null || links==null || capabilities==null)return;
@@ -136,7 +162,6 @@ public final class TunnelService extends VpnService {
      ssid=info.getSSID();if(ssid.startsWith("\"") && ssid.endsWith("\"")) ssid=ssid.substring(1,ssid.length()-1);
     }
    }
-   if(tunnel==null&&!settingUp)MobileSelection.get(this).observeBeforeConnect(ssid);
    String profile=new ProfileStore(this).load();
    stage="系统网络";
    final Network captured=underlay;
@@ -177,6 +202,25 @@ public final class TunnelService extends VpnService {
    snapshot.put("facts", facts); snapshots.put(snapshot);
    core.setNetworkInterfaces(snapshots.toString());
    core.setDefaultInterface(nic.getName(),nic.getIndex());
+   if(!settingUp){
+    final long observationRevision=observedNetworkRevision.get();
+    MobileSelection selection=MobileSelection.get(this);long survey=selection.beginSurvey();String country="";
+    boolean queried=selection.needsCountry(ssid);long beforeSurvey=protectedSockets.get();
+    if(queried){
+     stage="观察网络地区";state="正在判断网络地区";
+     try{country=core.probeAndroidUnderlayCountry(systemDNS.toString(),6000);}
+     catch(Exception unavailable){/* Unknown observation preserves the selection. */}
+    }
+    if(stopRequested)throw new java.io.InterruptedIOException("Stopped");
+    // Callbacks queue behind preparation: read current OS facts before using an
+    // observation, so a result from a departed network cannot select a scene.
+    if(observationRevision!=observedNetworkRevision.get()||!links.equals(connectivity.getLinkProperties(captured)))throw new java.io.IOException("Underlay changed during survey");
+    selection.observeBeforeConnect(survey,ssid,country);
+    profile=new ProfileStore(this).load();
+    surveyResult=queried?(country.isEmpty()?"网络地区未查到，保留场景":"网络地区："+country):"";
+    android.util.Log.i("XDialSurvey","queried="+queried+" found="+!country.isEmpty()+" protected="+(protectedSockets.get()-beforeSurvey));
+    state="正在连接";
+   }
    stage="准备离线规则";
    long beforePreparation=protectedSockets.get();
    String config=settingUp?Libbox.generateAndroidTailscaleSetupConfig(profile,setupLine,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath()):core.prepareAndroidConfig(profile,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath());
@@ -255,11 +299,23 @@ public final class TunnelService extends VpnService {
   try{MobileSelection.get(this).connected(false);}catch(Exception ignored){}
  }
  private void cleanup(){
+  stopWaitingForVpnRelease();
   lifecycle.requestConnection(false);if(retry!=null){retry.cancel(false);retry=null;}
   if(watching){try{connectivity.unregisterNetworkCallback(networks);}catch(Exception ignored){}watching=false;}
   stopCore();
   if(tunnel!=null){try{tunnel.close();}catch(Exception ignored){}tunnel=null;}
+  logTunnelOwnership("released");
   underlay=null;links=null;capabilities=null;active=false;settingUp=false;setupLine="";tailscaleStatus="";setupMessage="";probeResult="";
+ }
+ private void logTunnelOwnership(String phase){
+  if((getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
+  int count=0;String[] descriptors=new java.io.File("/proc/self/fd").list();
+  if(descriptors==null)return;
+  for(String descriptor:descriptors)try{
+   String target=android.system.Os.readlink("/proc/self/fd/"+descriptor);
+   if(target.equals("/dev/tun")||target.equals("/dev/net/tun"))count++;
+  }catch(Exception ignored){}
+  android.util.Log.i("XDialLifecycle","phase="+phase+" tun_descriptors="+count);
  }
  private void finish(){cleanup();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
  private void cancelPreparation(){stopRequested=true;Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}

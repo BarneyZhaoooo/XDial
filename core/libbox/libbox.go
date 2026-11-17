@@ -1842,6 +1842,22 @@ func (l *Libbox) prepareSwitch(
 	defaultInterfaceIndex int,
 	networkGenerations ...*lineNetworkGeneration,
 ) error {
+	// A candidate must not acquire a second packet reader for a live OS TUN.
+	// Mobile switching needs a separately owned stable ingress first; callers
+	// cannot use the flow/relay transaction as an implicit packet-TUN switch.
+	var ingressCheck struct {
+		Inbounds []struct {
+			Type string `json:"type"`
+		} `json:"inbounds"`
+	}
+	if err := stdjson.Unmarshal([]byte(configJSON), &ingressCheck); err != nil {
+		return fmt.Errorf("invalid switch configuration")
+	}
+	for _, inbound := range ingressCheck.Inbounds {
+		if inbound.Type == "tun" {
+			return fmt.Errorf("switch candidate requires an independently owned flow ingress")
+		}
+	}
 	l.mu.Lock()
 	if !l.running || l.box == nil || l.runtimeCtx == nil {
 		l.mu.Unlock()

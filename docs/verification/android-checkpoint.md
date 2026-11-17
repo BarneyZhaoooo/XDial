@@ -302,3 +302,42 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
 - 按用户要求核查 Cindy/火炬 2 既有签名方式，结论与接入边界见 android-release.md。
   不把公开仓库 artifact、Cindy 的空渠道模板或火炬 2 的 Play 上传密钥当作 XDial
   已完成的受限测试分发；不要求用户再提供 Tailscale 测试环境。
+
+## 2026-11-17 地区观察、自动条件编辑与连续重连
+
+- 新共享条件编辑器保留来源库/全局场景/未知字段，验证 SSID 长度、跨场景冲突与地区
+  条件冲突；真实库修订号提交拒绝过期编辑。手动再次选择当前场景也关闭自动选择，
+  使迟到调查失效。SSID 优先、无地区映射或手动覆盖不发起地区查询。
+- `ProbeAndroidUnderlayCountry` 使用独立 sing-box Direct 查询已有固定地区服务，
+  系统 DNS 来自捕获快照，所有 socket 必须 protect/bind。没有 TUN、用户流量规则或
+  任意 URL 参数；最多 6 秒，未知结果保留场景，不作为 Direct 就绪的必要条件。
+  阻塞保护回调/Stop/取消、重复调查及保护失败拒绝均有定向 race 测试。
+- 连接前与网络恢复准备期间读取地区；网络回调的事实代数或 LinkProperties 变化使
+  旧调查失效。尚未把已连接时地区变化接到无缝 Switch，不能称实时自动切换完成。
+  核心也开始拒绝含 TUN 的 `PrepareSwitch` 候选，测试确认拒绝前没有打开第二个 TUN，
+  当前 Box 不变。后续需独立稳定入口承接 generation，不能复用 fd 启动两个 gVisor。
+- 隔离模拟器 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B`：原生条件对话框给 Travel
+  保存 `*`，覆盖安装/重启后重新打开仍为 `*`。从 One 开启自动后连接，实际查询返回 NZ，
+  UI 与运行选择为 Travel；日志 queried=true/found=true/protected=2。普通未保护 App
+  socket 的 UDP DNS ID/NXDOMAIN 与 HTTPS 200/正文通过，后台规则刷新 0/0/0。
+- 断开后再次手动点选当前 Travel，随后连接仍为 Travel，日志
+  queried=false/found=false/protected=0。原先手动切回 One 也验证不查询。条件冲突、
+  过期编辑和 SSID 优先覆盖在核心测试；没有声称模拟器已切换真实 Wi-Fi SSID。
+- 连续重连暴露旧入口问题：应用 TUN 描述符已经归零，系统仍短暂返回旧默认 VPN，
+  入口立即失败。修复为订阅默认网络回调后重新读取事实，无 VPN 才申请 Underlay；
+  20 秒上限与手动停止清理回调/计时器，不轮询或覆盖其它 VPN。最终包实测
+  released(fd=0) → waiting-vpn-release(fd=0) → 新连接成功；一次等待约 2.48 秒，
+  同代码另一轮重连后真实 UDP DNS/HTTPS 再通过。持续其它 VPN 的超时与等待中取消
+  尚无单独设备证据。最终断开两次清理均 fd=0，UI 未连接、选 One，自动已关闭。
+- 最终 APK SHA-256：`c3754ac22c953858f09bef1a8713594892f0f73f23f00248e61933e7eb8da2ce`，
+  插件 matchesLocal=true。不可变目录
+  `build/android/artifacts/xdial-1-debug-c3754ac22c95-771b8d423e8a/` 含 APK/清单；
+  源码清单如实为 `8a961e8` + dirty=true，不回写未来提交。双 ABI 均构建并检验，设备运行
+  仅 arm64；仍是开发签名，未发布到内部渠道。
+- `country-tests-final.log` 的 mobile/Android country/TUN guard 定向 race 和
+  `country-core-tests-final.log` 的 config/libbox/mobile/subscription 常规全量通过；
+  `country-apple-final.log` 为最终 Go 变更后的 iOS/tvOS generic 模拟器及 macOS
+  Debug/Release App/扩展六次构建通过。之后只改 Android 的系统释放等待和诊断日志。
+  本轮未执行 XCTest，也未解决此前全量 libbox race 的基线时限问题。
+  Android 构建日志 `country-build-release-wait.log`，设备收据 `country-device.log`，
+  public-content-gate 与 diff 检查通过。无宿主安装/VPN 改动、push/PR 或 iOS 自动化修改。

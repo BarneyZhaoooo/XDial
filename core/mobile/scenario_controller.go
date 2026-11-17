@@ -150,6 +150,15 @@ func (c *ScenarioController) BeginSurvey() int64 {
 	c.survey++
 	return c.survey
 }
+
+// NeedsCountrySurvey keeps the observation policy shared: an explicit manual
+// choice, an absent region map, or an SSID match must not trigger network IO.
+func (c *ScenarioController) NeedsCountrySurvey(ssid string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state.Automatic && c.state.Pending == nil && len(c.regions) != 0 &&
+		pickScenario(c.scenarios, nil, ssid, "") == nil
+}
 func (c *ScenarioController) CompleteSurvey(ticket int64, ssid, country string, nowMS int64) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -181,7 +190,10 @@ func (c *ScenarioController) CompleteSurvey(ticket int64, ssid, country string, 
 func (c *ScenarioController) SelectScenario(target string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if target == c.state.Selected {
+	if target == c.state.Selected && c.state.Pending == nil {
+		// Reaffirming the visible scenario is still an explicit manual intent.
+		c.state.Automatic = false
+		c.survey++
 		return c.snapshot(), nil
 	}
 	return c.propose(target, false)

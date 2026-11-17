@@ -26,6 +26,16 @@ func (c *ScenarioController) SetConnected(connected bool) error {
 	return c.controller.SetConnected(connected)
 }
 func (c *ScenarioController) BeginSurvey() int64 { return c.controller.BeginSurvey() }
+func (c *ScenarioController) NeedsCountrySurvey(ssid string) bool {
+	return c.controller.NeedsCountrySurvey(ssid)
+}
+
+func ScenarioConditions(profileJSON, scenarioID string) (string, error) {
+	return mobile.ScenarioConditions(profileJSON, scenarioID)
+}
+func UpdateScenarioConditions(profileJSON, scenarioID, ssids, countries string) (string, error) {
+	return mobile.UpdateScenarioConditions(profileJSON, scenarioID, ssids, countries)
+}
 func (c *ScenarioController) CompleteSurvey(ticket int64, ssid, country string, nowMS int64) (string, error) {
 	return c.controller.CompleteSurvey(ticket, ssid, country, nowMS)
 }

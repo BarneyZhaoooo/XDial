@@ -37,11 +37,14 @@ final class MobileSelection {
   // Never let two independently started gVisor stacks read one TUN. Until the
   // stable mobile ingress transaction exists, running switches are unavailable.
   if(TunnelService.active) throw new IllegalStateException("connected");
-  persistProposal(new JSONObject(controller.selectScenario(id)));
+  JSONObject result=new JSONObject(controller.selectScenario(id));
+  if(result.optJSONObject("pending")==null)automatic(result.getBoolean("automatic"));
+  else persistProposal(result);
  }
- synchronized void observeBeforeConnect(String ssid) throws Exception {
-  long ticket=controller.beginSurvey();
-  persistProposal(new JSONObject(controller.completeSurvey(ticket,ssid,"",SystemClock.elapsedRealtime())));
+ synchronized long beginSurvey() {return controller.beginSurvey();}
+ synchronized boolean needsCountry(String ssid) {return controller.needsCountrySurvey(ssid);}
+ synchronized void observeBeforeConnect(long ticket,String ssid,String country) throws Exception {
+  persistProposal(new JSONObject(controller.completeSurvey(ticket,ssid,country,SystemClock.elapsedRealtime())));
  }
  private void persistProposal(JSONObject result) throws Exception {
   JSONObject pending=result.optJSONObject("pending");if(pending==null)return;
