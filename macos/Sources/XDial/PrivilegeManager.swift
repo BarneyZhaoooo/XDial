@@ -536,6 +536,33 @@ enum PrivilegeManager {
     /// Wait until the outgoing helper has fully left launchd and the process
     /// table. Updaters can pass the installed bundle they are about to replace;
     /// normal uninstall uses the currently running bundle.
+    /// Reads launchd's system domain directly: `true` when a job with this
+    /// label is loaded, `false` only on launchctl's explicit not-found exit,
+    /// `nil` for any other outcome. Read-only; needs no privilege.
+    static func systemLaunchdJobPresent(label: String, timeout: TimeInterval = 5) -> Bool? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "system/\(label)"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        do { try process.run() } catch { return nil }
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return nil
+        }
+        switch process.terminationStatus {
+        case 0: return true
+        case launchctlServiceNotFoundStatus: return false
+        default: return nil
+        }
+    }
+
+    /// `launchctl print` exits with ESRCH-derived 113 when the service is absent.
+    static let launchctlServiceNotFoundStatus: Int32 = 113
+
     static func teardownRegisteredHelper(outgoingBundleURL: URL? = nil) async throws {
         var ownerBundles = [Bundle.main.bundleURL]
         if let outgoingBundleURL,
@@ -593,7 +620,8 @@ enum PrivilegeManager {
                 now: { ProcessInfo.processInfo.systemUptime },
                 sleep: { interval in
                     try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-                }
+                },
+                systemJobPresent: { systemLaunchdJobPresent(label: label) }
             )
         )
         try await coordinator.run()
