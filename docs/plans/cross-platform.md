@@ -20,6 +20,10 @@ nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。
 IPv6、多发行版和原生 UI；下一阶段进入安装/崩溃恢复及 Windows 原生命名管道/WFP
 边界，不以本轮测试来宾替代完整桌面交付。
 
+Windows 已新增独立的 [命名管道鉴权层](../verification/windows-control-pipe.md)，
+按内核账号/登录会话授权并校验服务端身份，原机跨进程通信与拒绝路径已验；尚未接
+SCM 安装、业务控制器或 WFP 系统拦截，不代表 Windows 权限服务已完整交付。
+
 ## 边界决策
 
 - 保留稳定 Swift 界面；Android 原生界面。业务决策逐步提取到 Go，禁止复制
