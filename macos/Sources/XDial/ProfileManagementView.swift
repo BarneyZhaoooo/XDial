@@ -157,6 +157,29 @@ private struct ProfilePickerRow: View {
 }
 
 /// Manages the requested record without changing which Profile is selected or connected.
+/// Chooses how a subscription is downloaded. Direct keeps the system
+/// importer; any other Line carries DNS, HTTPS and the body exactly.
+struct ProfileSourceLinePicker: View {
+    @Binding var lineID: String
+    let lines: [Line]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("获取线路", selection: $lineID) {
+                Text("直连").tag("direct")
+                ForEach(ProfileSourceLineFetch.selectableLines(lines)) { line in
+                    Text(line.name).tag(line.id)
+                }
+                if lineID != "direct", !ProfileSourceLineFetch.selectableLines(lines).contains(where: { $0.id == lineID }) {
+                    Text("已不可用的线路").tag(lineID)
+                }
+            }
+            Text("下载订阅时的出口。Tailscale、AnyConnect 和线路组暂不能用于下载。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct ProfileDetailSheet: View {
     let record: ProfileRecord
     @EnvironmentObject var state: AppState
@@ -164,6 +187,7 @@ struct ProfileDetailSheet: View {
     @State private var name = ""
     @State private var url = ""
     @State private var interval: Double = 86400
+    @State private var fetchLineID = "direct"
     @State private var error: String?
     @State private var action: ProfileManagementAction?
     @State private var closesAfterAction = false
@@ -175,6 +199,11 @@ struct ProfileDetailSheet: View {
     private var refreshing: Bool { state.refreshingProfileIDs.contains(record.id) }
     private var sourceChanged: Bool {
         url != (current.source?.url ?? "") || interval != (current.source?.refreshInterval ?? 86400)
+            || fetchLineID != Self.lineID(of: current.source)
+    }
+
+    static func lineID(of source: ProfileSource?) -> String {
+        source?.usesDirectAcquisition == false ? (source?.fetchLineID ?? "direct") : "direct"
     }
 
     var body: some View {
@@ -193,6 +222,7 @@ struct ProfileDetailSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("订阅链接").font(.caption).foregroundStyle(.secondary)
                     TextField("HTTPS 订阅链接", text: $url).textFieldStyle(.roundedBorder)
+                    ProfileSourceLinePicker(lineID: $fetchLineID, lines: state.profileLibrary.snapshot().lines)
                     HStack {
                         Picker("自动更新", selection: $interval) {
                             Text("手动更新").tag(0.0)
@@ -261,6 +291,7 @@ struct ProfileDetailSheet: View {
             name = current.name
             url = current.source?.url ?? ""
             interval = current.source?.refreshInterval ?? 86400
+            fetchLineID = Self.lineID(of: current.source)
         }
         .sheet(item: $action, onDismiss: {
             if closesAfterAction { dismiss() }
@@ -278,9 +309,11 @@ struct ProfileDetailSheet: View {
             guard let parsed = URL(string: trimmed), parsed.scheme == "https", parsed.host != nil else {
                 error = "请填写完整的 HTTPS 订阅链接"; return
             }
-            if source?.url != trimmed { source?.updatedAt = nil }
+            let lineID: String? = fetchLineID == "direct" ? nil : fetchLineID
+            if source?.url != trimmed || source?.fetchLineID != lineID { source?.updatedAt = nil }
             source?.url = trimmed
             source?.refreshInterval = interval
+            source?.fetchLineID = lineID
         }
         guard state.updateProfileMetadata(record.id, name: name, source: source) else {
             error = state.profilePersistenceError ?? "配置已不存在，无法保存修改"; return
@@ -304,11 +337,18 @@ struct ProfileManagementSheet: View {
     @State private var error: String?
     @State private var busy = false
     @State private var nodesOnly = false
+    @State private var fetchLineID = "direct"
     @State private var acknowledgedWarnings = false
     @State private var task: Task<Void, Never>?
     @State private var newID = UUID().uuidString.lowercased()
 
     private var imports: Bool { action == .file || action == .subscription }
+
+    private var pendingSource: ProfileSource {
+        ProfileSource(url: url.trimmingCharacters(in: .whitespacesAndNewlines),
+                      fetchLineID: fetchLineID == "direct" ? nil : fetchLineID,
+                      nodesOnly: nodesOnly, refreshInterval: interval, updatedAt: Date())
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -326,6 +366,7 @@ struct ProfileManagementSheet: View {
                 TextField("配置名称", text: $name).textFieldStyle(.roundedBorder)
                 if action == .subscription {
                     TextField("订阅链接", text: $url).textFieldStyle(.roundedBorder)
+                    ProfileSourceLinePicker(lineID: $fetchLineID, lines: state.profileLibrary.snapshot().lines)
                     Picker("自动更新", selection: $interval) {
                         Text("手动更新").tag(0.0)
                         Text("每 6 小时").tag(21600.0)
@@ -371,6 +412,7 @@ struct ProfileManagementSheet: View {
         }
         .onChange(of: url) { preview = nil }
         .onChange(of: nodesOnly) { preview = nil }
+        .onChange(of: fetchLineID) { preview = nil }
         .onDisappear { task?.cancel() }
     }
 
@@ -443,8 +485,14 @@ struct ProfileManagementSheet: View {
             task = Task {
                 defer { busy = false }
                 do {
-                    let parsed = try await ProfileDocumentService.read(content: fileContents,
-                        url: action == .subscription ? url : "", profileID: newID, nodesOnly: nodesOnly)
+                    let parsed: Profile
+                    if action == .subscription {
+                        parsed = try await ProfileDocumentService.read(
+                            source: pendingSource, profileID: newID, state: state)
+                    } else {
+                        parsed = try await ProfileDocumentService.read(content: fileContents,
+                            url: "", profileID: newID, nodesOnly: nodesOnly)
+                    }
                     try Task.checkCancellation()
                     acknowledgedWarnings = false
                     preview = parsed
@@ -470,7 +518,7 @@ struct ProfileManagementSheet: View {
             if !state.insertProfile(copied) { error = state.profileOperationError ?? state.profilePersistenceError; return }
         case .file, .subscription:
             guard let preview else { return }
-            let source = action == .subscription ? ProfileSource(url: url, nodesOnly: nodesOnly, refreshInterval: interval, updatedAt: Date()) : nil
+            let source = action == .subscription ? pendingSource : nil
             let imported = ProfileRecord(id: newID, name: name, profile: preview, source: source, baseline: source == nil ? nil : preview)
             if !state.insertProfile(imported) { error = state.profileOperationError ?? state.profilePersistenceError; return }
         case .export:

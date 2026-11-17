@@ -16,6 +16,17 @@ var ErrAndroidAcquisitionProtocolNeedsLease = errors.New("resource protocol requ
 // Native local DNS transports are replaced with captured OS facts before any
 // runtime is created; a platform callback still owns protection/binding sockets.
 func GenerateAndroidAcquisition(profile *Profile, lineID, basePath string, systemDNS []string) ([]byte, error) {
+	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, false)
+}
+
+// GenerateAppleResourceAcquisition is the same exact-Line capability for Apple
+// callers whose sockets XDial never captures. It keeps the OS Underlay routing
+// instead of Android's callback-selected network.
+func GenerateAppleResourceAcquisition(profile *Profile, lineID, basePath string, systemDNS []string) ([]byte, error) {
+	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, true)
+}
+
+func generateResourceAcquisition(profile *Profile, lineID, basePath string, systemDNS []string, osRouted bool) ([]byte, error) {
 	server, err := validateTransparentProxySystemDNS(systemDNS)
 	if err != nil {
 		return nil, err
@@ -43,7 +54,7 @@ func GenerateAndroidAcquisition(profile *Profile, lineID, basePath string, syste
 	isolated.Subscriptions = nil
 	// Reuse exact-Line DNS compilation through a capability that cannot create
 	// ingress. No temporary listener, credentials or synthetic interface is used.
-	data, err := generateSingBox(&isolated, 0, "", PlatformTransparentProxy, basePath, nil, systemDNS, "", &transparentProxyIngress{androidResource: true})
+	data, err := generateSingBox(&isolated, 0, "", PlatformTransparentProxy, basePath, nil, systemDNS, "", &transparentProxyIngress{androidResource: true, osRoutedResource: osRouted})
 	if err != nil {
 		return nil, err
 	}

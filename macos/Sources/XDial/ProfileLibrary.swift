@@ -8,13 +8,9 @@ struct ProfileSource: Codable, Hashable {
     var refreshInterval: TimeInterval = 86400
     var updatedAt: Date?
 
-    // The legacy URLSession importer cannot honor a selected Line. Preserve the
-    // new declaration and refuse refresh until the explicit transport is wired.
-    func validateLegacyAcquisition() throws {
-        guard fetchLineID == nil || fetchLineID?.isEmpty == true else {
-            throw ProfileLibraryError.invalid("此来源指定了获取线路，请在支持该线路下载的客户端更新；原配置保留")
-        }
-    }
+    /// Absent, empty or `direct` keeps the URLSession importer. Any other value
+    /// is an explicit Line and is fetched only through that Line.
+    var usesDirectAcquisition: Bool { ProfileSourceLineFetch.isDirect(fetchLineID) }
 }
 
 struct ProfileRecord: Codable, Identifiable, Hashable {
