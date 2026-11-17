@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | TProxy IPv4 TCP/UDP/DNS、真实进程规则与事务已在隔离内核通过；权限安装/多发行版缺失 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | TProxy IPv4 流量及捕获安装/回滚/强杀恢复已在隔离内核通过；授权服务/多发行版缺失 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
@@ -16,8 +16,9 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 发布 | 已有 | 既有事件驱动 TestFlight | 已有构建 | 双 ABI 本地测试包与事件 CI 已实现；稳定签名/受限分发待接入 | 缺失 | 缺失 |
 
 Linux 最新系统证据见 [隔离来宾验收](../verification/linux-transparent-guest.md)：真实
-nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。仍需生产权限事务、
-IPv6、多发行版和原生 UI；下一阶段进入安装/崩溃恢复及 Windows 原生命名管道/WFP
+nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。已新增
+[捕获安装/恢复组件](../verification/linux-capture-transaction.md)，仍需正式授权服务、
+IPv6、多发行版和原生 UI；继续接入服务生命周期及 Windows WFP
 边界，不以本轮测试来宾替代完整桌面交付。
 
 Windows 已新增独立的 [命名管道鉴权层](../verification/windows-control-pipe.md)，
@@ -310,3 +311,15 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
 - 下一阶段接真实系统透明入口和防环路：以任务隔离环境验证 Linux 原始目标/UDP
   回包/应用归属与撤销，再补多发行版安装；Windows 完成原生服务/驱动边界与签名
   方案后再请求确需的系统操作。此阶段不安装驱动、不改共享测试机网络。
+
+## 2026-11-17 Linux 捕获连接事务
+
+- 新增独立 `core/linuxcapture`，通过结构化 netlink 安装精确预留的专用路由、规则和
+  socket-owned nft 表；先就绪 listener 后接管，先撤销捕获再停核心。私有状态目录、
+  独占锁与 fsync 日志支撑失败回滚和崩溃恢复，归属变化保留现场，不清他人配置。
+- 隔离 QEMU 的七项权限测试与两项 libbox 内核测试通过，包含实际子进程强杀、
+  真实 TCP/UDP/DNS、OS 应用身份和场景事务。详见
+  [安装恢复证据](../verification/linux-capture-transaction.md)。
+- 正式 systemd/polkit 授权服务、共享业务控制器生命周期、IPv6、多发行版与原生 UI
+  仍需接入。复杂 nft/legacy iptables mark 策略暂明确拒绝，后续补保留/共存协议；
+  不能把该拒绝作为永久缩减目标。Windows 继续服务进程/SCM 与 WFP 接入。

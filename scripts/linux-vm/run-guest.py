@@ -25,6 +25,8 @@ def run(args):
     guest = work / "guest"
     for d in ("bin", "sbin", "proc", "sys", "dev", "tmp", "run", "etc", "lib/modules"):
         (guest / d).mkdir(parents=True, exist_ok=True)
+        (guest / d).chmod(0o755)
+    guest.chmod(0o755)
     env = dict(os.environ, LD_LIBRARY_PATH=f"{root}/usr/lib/x86_64-linux-gnu:{root}/lib/x86_64-linux-gnu",
                QEMU_MODULE_DIR=str(root / "usr/lib/x86_64-linux-gnu/qemu"))
     for name in ("busybox", "ip", "nft", "kmod"):
@@ -55,6 +57,9 @@ def run(args):
     (guest / "app-core").chmod(0o755)
     for app in ("app-block", "app-allow"):
         os.link(guest / "app-core", guest / app)
+    if args.capture_binary:
+        shutil.copy2(args.capture_binary, guest / "app-capture")
+        (guest / "app-capture").chmod(0o755)
     init = '''#!/bin/sh
 set -eu
 export PATH=/bin:/sbin
@@ -73,6 +78,11 @@ export XDIAL_ISOLATED_VM=1
 echo XDIAL_GUEST_BEGIN
 uname -r
 set +e
+if [ -x /app-capture ]; then
+  /app-capture -test.v -test.timeout=60s
+  result=$?
+  if [ "$result" != 0 ]; then echo XDIAL_CAPTURE_TEST_EXIT=$result; poweroff -f; exit "$result"; fi
+fi
 /app-core -test.v -test.run='TestLinux(TProxyProtectionContract|TransparentKernelTraffic)$' -test.timeout=90s
 result=$?
 echo XDIAL_GUEST_TEST_EXIT=$result
@@ -85,7 +95,7 @@ poweroff -f
     # children, and failure from either side is propagated.
     names = b"\0".join(str(p.relative_to(guest)).encode() for p in [guest] + list(guest.rglob("*"))) + b"\0"
     with (work / "cpio.log").open("wb") as error_log, (work / "guest.cpio.gz").open("wb") as archive:
-        cpio = subprocess.Popen(["cpio", "--null", "-o", "--format=newc"], cwd=guest,
+        cpio = subprocess.Popen(["cpio", "--null", "-o", "--format=newc", "--owner=0:0"], cwd=guest,
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=error_log)
         zipper = subprocess.Popen(["gzip", "-1"], stdin=cpio.stdout, stdout=archive)
         cpio.stdout.close()
@@ -121,5 +131,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tools", required=True, type=Path)
     parser.add_argument("--binary", required=True, type=Path)
+    parser.add_argument("--capture-binary", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     run(parser.parse_args())

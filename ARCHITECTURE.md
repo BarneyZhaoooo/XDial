@@ -302,7 +302,14 @@ generation Router；进程事实由 sing-box 从 OS 查询。捕获 mark 与核�
 绕过 mark 必须由权限事务独立预留，配置和候选均验证完整保护；协议自建 socket
 未具备受保护租约时拒绝，不回退其他线路。监听器 API 不自动改系统规则；撤销捕获
 必须先于关闭入口。隔离来宾已证明 IPv4 TCP/UDP/DNS 与真实进程规则，生产权限
-事务和多发行版验收仍缺。见 [Linux 透明入口验收](docs/verification/linux-transparent-guest.md)。
+服务和多发行版验收仍缺。见 [Linux 透明入口验收](docs/verification/linux-transparent-guest.md)。
+
+Linux 捕获安装组件由可信服务持有：先就绪核心/listener，再以显式预留的 mark、table、
+priority 安装系统接管；拒绝冲突，不改 Underlay 的已有顺序。捕获 nft 表绑定持久
+netlink socket 的内核所有权，进程死亡自动撤销；路由/规则用私有持久记录恢复，核对
+boot/netns 与完整对象身份，不按表号或优先级批量清理。正常断开先撤销捕获再停核心。
+该组件没有 DNS/出口策略，也未接入正式授权服务；详见
+[安装恢复边界](docs/verification/linux-capture-transaction.md)。
 
 
 ### 5.4 网络变化与恢复

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kafeifei/xdial/core/linuxcapture"
 	mDNS "github.com/miekg/dns"
 	"golang.org/x/sys/unix"
 )
@@ -180,8 +181,8 @@ func TestLinuxTransparentApplication(t *testing.T) {
 
 func TestLinuxTransparentKernelTraffic(t *testing.T) {
 	requireTransparentGuest(t)
-	// Every command below runs only after the guest guard. No host installer is
-	// invoked. The production installation/permission transaction remains separate.
+	// Kernel mutations occur only after the guest guard. Capture now uses the
+	// same journaled netlink transaction as the service adapter.
 	lc := net.ListenConfig{Control: markedSocket}
 	tcp, err := lc.Listen(context.Background(), "tcp4", "127.0.0.2:0")
 	if err != nil {
@@ -238,25 +239,16 @@ func TestLinuxTransparentKernelTraffic(t *testing.T) {
 	}
 	guestCommand(t, "", "ip", "route", "add", "192.0.2.0/24", "dev", "lo")
 	defer guestCommand(t, "", "ip", "route", "del", "192.0.2.0/24", "dev", "lo")
-	guestCommand(t, "", "ip", "route", "add", "local", "0.0.0.0/0", "dev", "lo", "table", "50000")
-	defer guestCommand(t, "", "ip", "route", "del", "local", "0.0.0.0/0", "dev", "lo", "table", "50000")
-	guestCommand(t, "", "ip", "rule", "add", "priority", "32000", "fwmark", "0x10000/0x10000", "lookup", "50000")
-	defer guestCommand(t, "", "ip", "rule", "del", "priority", "32000", "fwmark", "0x10000/0x10000", "lookup", "50000")
-	rules := `add table ip xdial_guest
-add chain ip xdial_guest output { type route hook output priority mangle; policy accept; }
-add rule ip xdial_guest output meta mark & 0x20000 != 0 counter return
-add rule ip xdial_guest output meta l4proto { tcp, udp } meta mark set meta mark | 0x10000 counter
-add chain ip xdial_guest input { type filter hook prerouting priority mangle; policy accept; }
-add rule ip xdial_guest input meta mark & 0x20000 != 0 counter return
-add rule ip xdial_guest input meta mark & 0x10000 != 0 meta l4proto { tcp, udp } tproxy to 127.0.0.1:15080 counter accept
-`
-	guestCommand(t, rules, "nft", "-f", "-")
-	captureInstalled := true
-	defer func() {
-		if captureInstalled {
-			guestCommand(t, "", "nft", "delete", "table", "ip", "xdial_guest")
-		}
-	}()
+	stateDir, err := os.MkdirTemp("/run", "xdial-traffic-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(stateDir)
+	capture, err := linuxcapture.Install(context.Background(), stateDir, linuxcapture.Plan{CaptureMark: 0x10000, BypassMark: linuxTestBypass, Table: 50000, Priority: 32000, Listener: "127.0.0.1:15080"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Close()
 	old, err := net.DialTimeout("tcp4", tcp.Addr().String(), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -332,15 +324,16 @@ add rule ip xdial_guest input meta mark & 0x10000 != 0 meta l4proto { tcp, udp }
 	}
 	guestDNS(t, "192.0.2.20")
 	app("/app-allow", false)
-	t.Log(guestCommand(t, "", "nft", "list", "table", "ip", "xdial_guest"))
+
 	current, err := net.DialTimeout("tcp4", tcp.Addr().String(), 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer current.Close()
 	echoNative(t, current)
-	guestCommand(t, "", "nft", "delete", "table", "ip", "xdial_guest")
-	captureInstalled = false
+	if err = capture.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err = l.Stop(); err != nil {
 		t.Fatal(err)
 	}
