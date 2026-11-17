@@ -79,6 +79,8 @@ protocol TunnelEngine: AnyObject {
     var status: String { get }
     var lastError: String? { get set }
     var dataPathSummary: String? { get set }
+    /// 自检没通过、连接保留期间正在补测。只有真实隧道会补测，其余实现恒为 false。
+    var dataPathRechecking: Bool { get }
     var connectedAt: Date? { get }
     var isConnected: Bool { get }
     var isBusy: Bool { get }
@@ -125,6 +127,7 @@ protocol TunnelEngine: AnyObject {
 }
 
 extension TunnelEngine {
+    var dataPathRechecking: Bool { false }
     var connectedAt: Date? { nil }
     var statusPublisher: AnyPublisher<String, Never> {
         Just(status).eraseToAnyPublisher()
@@ -264,6 +267,9 @@ protocol TunnelManaging: AnyObject {
     /// 经 Direct 线路查到的网络出口地区（两位代码）。只在隧道运行时有意义：
     /// 连着时 App 自己的请求按场景分流、域名解析也归隧道，查不到本地网络的出口。
     func directExitCountry() async -> ExitCountryProbeResult
+
+    /// 连接保留但自检没通过时，立即从头再测一次；其余状态下什么也不做。
+    func recheckDataPath()
 }
 
 /// 一次出口地区查询的结果；查到时 code 非空，否则 failure 说明原因。
@@ -280,6 +286,7 @@ extension TunnelManaging {
     }
 
     func setSystemOnDemandEnabled(_ enabled: Bool) {}
+    func recheckDataPath() {}
     func setSystemOnDemandSuspendedForSetup(
         _ suspended: Bool,
         completion: @escaping () -> Void
@@ -511,6 +518,12 @@ final class AppState: ObservableObject {
     func trafficTotals() async -> TrafficTotals? {
         guard isConnected, let tunnelManager else { return nil }
         return await tunnelManager.trafficTotals()
+    }
+
+    /// 首页「重新检测」：自检没通过但连接保留时，马上再测一次。
+    func recheckConnection() {
+        guard isConnected else { return }
+        tunnelManager?.recheckDataPath()
     }
 
     /// 已连接时经 Direct 线路查网络出口地区；没连着时不唤醒隧道。
