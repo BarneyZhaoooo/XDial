@@ -148,8 +148,8 @@ struct DialControl: View {
     private func position(angle: Double, radius: CGFloat) -> CGPoint {
         let radians = angle * .pi / 180
         return CGPoint(
-            x: outerDiameter / 2 + cos(radians) * radius * scale,
-            y: outerDiameter / 2 + sin(radians) * radius * scale
+            x: outerDiameter / 2 + CGFloat(cos(radians)) * radius * scale,
+            y: outerDiameter / 2 + CGFloat(sin(radians)) * radius * scale
         )
     }
 
@@ -190,6 +190,7 @@ struct DialControl: View {
 
     @ViewBuilder
     private var disc: some View {
+        #if compiler(>=6.2)
         if #available(iOS 26.0, macOS 26.0, *) {
             // 液态玻璃盘面：未连接时是透明玻璃，连上后染成状态色。
             Circle()
@@ -200,12 +201,19 @@ struct DialControl: View {
                     in: Circle()
                 )
         } else {
-            Circle()
-                .fill(isLit ? stateColor : XDialTheme.dialFace)
-                .frame(width: diameter, height: diameter)
-                .shadow(color: .black.opacity(0.10), radius: 22, y: 12)
-                .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
+            opaqueDisc
         }
+        #else
+        opaqueDisc
+        #endif
+    }
+
+    private var opaqueDisc: some View {
+        Circle()
+            .fill(isLit ? stateColor : XDialTheme.dialFace)
+            .frame(width: diameter, height: diameter)
+            .shadow(color: .black.opacity(0.10), radius: 22, y: 12)
+            .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
     }
 
     private var fingerStop: some View {
@@ -310,8 +318,8 @@ private struct DialHoles: View {
     private func center(angle: Double) -> CGPoint {
         let radians = angle * .pi / 180
         return CGPoint(
-            x: side / 2 + cos(radians) * layout.holeOrbit * scale,
-            y: side / 2 + sin(radians) * layout.holeOrbit * scale
+            x: side / 2 + CGFloat(cos(radians)) * layout.holeOrbit * scale,
+            y: side / 2 + CGFloat(sin(radians)) * layout.holeOrbit * scale
         )
     }
 }

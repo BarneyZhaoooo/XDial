@@ -392,6 +392,7 @@ targets:
       - Sources/XDial/LineLatencyStore.swift
       - Sources/XDial/RotaryDial.swift
       - Sources/XDial/ScenarioIconCatalog.swift
+      - ../apple/Home/ScenarioDescriber.swift
       - Sources/XDial/WiFiSSIDAccessPolicy.swift
       - Sources/XDial/WiFiLinkState.swift
       - Sources/XDial/XDialBrandPalette.swift

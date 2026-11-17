@@ -1500,7 +1500,8 @@ final class AppState: ObservableObject {
             connectScenario(id)
         } else {
             ssidScenarioSelection.noteManualSelection()
-            cancelNetworkEpochQuietWindow()
+            // An idle selection supersedes any parked recovery and its old target.
+            disconnect()
             _ = persistActiveScenario(id)
         }
     }
