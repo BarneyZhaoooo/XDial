@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin
 
 package engine
 
@@ -10,7 +10,7 @@ import (
 )
 
 // startSingBoxCmd launches sing-box with a pipe sentinel that kills it if the parent dies.
-func startSingBoxCmd(singboxBin, configPath, workDir string, output io.Writer) (*exec.Cmd, *os.File, error) {
+func startSingBoxCmd(singboxBin, configPath, workDir string, output io.Writer) (*singBoxCommand, io.Closer, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("create pipe: %w", err)
@@ -38,5 +38,5 @@ func startSingBoxCmd(singboxBin, configPath, workDir string, output io.Writer) (
 	}
 
 	r.Close()
-	return cmd, w, nil
+	return wrapSingBoxCommand(cmd), w, nil
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -20,15 +21,35 @@ const singBoxStopTimeout = 2 * time.Second
 // （如 "initial rule-set: ..."）就在最后几行，够定位又不至于把整段日志塞进 UI。
 const singBoxLogTailBytes = 2048
 
+// Small process contract shared by os/exec and Windows atomic Job creation.
+type singBoxCommand struct {
+	Process *os.Process
+	wait    func() error
+}
+
+func (c *singBoxCommand) Wait() error { return c.wait() }
+func wrapSingBoxCommand(cmd *exec.Cmd) *singBoxCommand {
+	return &singBoxCommand{Process: cmd.Process, wait: cmd.Wait}
+}
+
 type SingBoxProcess struct {
 	mu         sync.Mutex
-	cmd        *exec.Cmd
-	pipeW      *os.File
+	cmd        *singBoxCommand
+	pipeW      io.Closer
 	exited     chan struct{}
 	stopping   bool
 	configPath string
 	statePath  string
 	onExit     func(error)
+}
+
+func (s *SingBoxProcess) leaseFor(cmd *singBoxCommand) io.Closer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cmd == cmd {
+		return s.pipeW
+	}
+	return nil
 }
 
 // onExit 在 sing-box 子进程非正常退出（不是我们主动 Stop）时被调用。
@@ -100,6 +121,7 @@ func (s *SingBoxProcess) startConfig(cfgData []byte) error {
 	exited := make(chan struct{})
 	s.mu.Lock()
 	s.cmd = cmd
+	s.stopping = false
 	s.pipeW = pipeW
 	s.exited = exited
 	s.mu.Unlock()
@@ -112,8 +134,13 @@ func (s *SingBoxProcess) startConfig(cfgData []byte) error {
 
 // watch 独占 cmd.Wait()：先关 exited 让 stop() 能同步等到回收，再判断这次退出
 // 是不是我们主动要的，不是就把 sing-box 自己打印的错误尾部交给 onExit。
-func (s *SingBoxProcess) watch(cmd *exec.Cmd, exited chan struct{}, logWriter *singBoxLogWriter) {
+func (s *SingBoxProcess) watch(cmd *singBoxCommand, exited chan struct{}, logWriter *singBoxLogWriter) {
 	waitErr := cmd.Wait()
+	// Owned platform leases release their OS handles/thread after natural exit.
+	// The stable Darwin pipe sentinel retains its existing cleanup contract.
+	if lease, ok := s.leaseFor(cmd).(interface{ ProcessExited() }); ok {
+		lease.ProcessExited()
+	}
 	close(exited)
 
 	s.mu.Lock()

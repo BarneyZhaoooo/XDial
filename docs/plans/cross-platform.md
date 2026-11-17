@@ -9,6 +9,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
 | 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
+| 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
 | 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile；身份持久化/篡改拒绝已验 | 缺失 | 缺失 |
@@ -262,3 +263,16 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
   拒绝，未发现 QEMU/Docker/Podman，当前账号无 /dev/kvm 访问；不改宿主策略、不提权。
   先用隔离任务目录验证进程所有权/回收及共享控制面，再安排真正隔离的透明流量环境。
   这些预检不是桌面 VPN 或多发行版验收。
+
+## 2026-11-17 Windows/Linux 原机进程生命周期
+
+- Windows 已实现创建时原子加入 Job 的核心启动；Linux 使用随创建线程存活的
+  父死亡信号租约。删除两平台按进程名/模式清理所有实例的旧逻辑。
+- 已在 Windows 10.0.26300 和 Ubuntu 24.04 原机执行回环进程测试：独立实例、
+  父进程崩溃回收、错误退出；Windows 另验所属 Job 与子孙回收。源码在本机交叉
+  构建后原生执行，不称远端源码构建或透明流量验收。
+- Apple 六构建、核心/CLI race、Android 双 ABI 构建通过；没有宿主安装或网络变化。
+  详见 [桌面进程证据](../verification/desktop-process-ownership.md)。
+- 后续必须补本地服务对端鉴权（当前非 macOS `peerAllowed` 直接放行），再接入
+  Windows WFP/应用识别与 Linux 透明入口和多发行版安装。Ubuntu 当前禁止用户
+  网络命名空间，不绕过权限改变测试机网络。进程生命周期已实做，桌面产品仍未完成。
