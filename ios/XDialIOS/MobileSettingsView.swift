@@ -263,9 +263,34 @@ struct MobileSettingsView: View {
             profile: app.profile,
             lastError: app.engine.lastError,
             dataPathSummary: app.engine.dataPathSummary,
-            autoScenarioSummary: ScenarioAutoPilot.lastRecord?.summary(isChinese: app.language == .zh),
+            autoScenarioSummary: autoScenarioSummary,
             isChinese: app.language == .zh
         )
+    }
+
+    /// 已连接时以 VPN 扩展的最近一次判断为准，并带上最近一次场景切换的结果。
+    private var autoScenarioSummary: String? {
+        let isChinese = app.language == .zh
+        let tunnelState = app.isConnected ? app.tunnelScenarioState : nil
+        let survey = [tunnelState?.lastSurvey, ScenarioAutoPilot.lastRecord]
+            .compactMap { $0 }
+            .max { $0.at < $1.at }
+        var parts = survey.map { [$0.summary(isChinese: isChinese)] } ?? []
+        if let lastSwitch = tunnelState?.lastSwitch {
+            let mode: String
+            switch lastSwitch.mode {
+            case .staged?: mode = isChinese ? "旁路准备后接手" : "staged"
+            case .restart?: mode = isChinese ? "换引擎" : "engine restart"
+            case nil: mode = isChinese ? "未切换" : "not switched"
+            }
+            let outcome = lastSwitch.succeeded
+                ? (isChinese ? "成功" : "succeeded")
+                : (isChinese ? "失败" : "failed") + (lastSwitch.failure.map { isChinese ? "：\($0)" : ": \($0)" } ?? "")
+            parts.append(isChinese
+                ? "最近一次切换（\(mode)）\(outcome)"
+                : "Last switch (\(mode)) \(outcome)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: isChinese ? "；" : "; ")
     }
 
     private func prepareExport() {

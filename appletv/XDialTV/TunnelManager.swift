@@ -2360,18 +2360,16 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         engine?.lastError = nil
         engine?.applySystemStatus("connecting")
         let owner = UncheckedBox(value: self)
+        let scenarioID = profile.activeScenarioID
+        let scenarioName = profile.scenarios.first { $0.id == scenarioID }?.name ?? ""
         Self.configGenerationQueue.submit {
-            var genError: NSError?
-            let configJSON = LibboxGenerateNEConfig(profileJSON, server, basePath, &genError)
-            let outcome: Result<String, NSError>
-            if let genError {
-                outcome = .failure(genError)
-            } else if configJSON.utf8.count > kMaxNEConfigBytes {
-                outcome = .failure(NSError(domain: "XDial", code: -5,
-                    userInfo: [NSLocalizedDescriptionKey: "连接配置过大，无法安全启动"]))
-            } else {
-                outcome = .success(configJSON)
-            }
+            let outcome = Self.generateStartSession(
+                profileJSON: profileJSON,
+                server: server,
+                basePath: basePath,
+                scenarioID: scenarioID,
+                scenarioName: scenarioName
+            )
             let outcomeBox = UncheckedBox(value: outcome)
             Task { @MainActor in
                 let manager = owner.value
@@ -2380,10 +2378,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 case .failure(let error):
                     manager.engine?.applySystemStatus("disconnected")
                     manager.finishStartOperation(operationID, result: .failure(error))
-                case .success(let configJSON):
+                case .success(let session):
                     manager.startPreparedTunnel(
                         operationID: operationID,
-                        configJSON: configJSON,
+                        configJSON: session.configJSON,
+                        switchParameters: session.parameters,
                         allowInsecure: allowInsecure,
                         anyConnect: anyConnect,
                         allowSystemOnDemand: allowSystemOnDemand
@@ -2393,9 +2392,58 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
     }
 
+    /// 一次启动所需的 sing-box 配置，以及启动包里额外带上的场景切换参数（iOS）。
+    struct StartSession: Sendable {
+        let configJSON: String
+        let parameters: [String: String]
+    }
+
+    /// 生成启动配置。iOS 另外取回线路运行身份，连接中的场景切换据此借用已连上的线路。
+    nonisolated static func generateStartSession(
+        profileJSON: String,
+        server: String,
+        basePath: String,
+        scenarioID: String,
+        scenarioName: String
+    ) -> Result<StartSession, NSError> {
+        var genError: NSError?
+        #if os(iOS)
+        let raw = LibboxGenerateNESession(profileJSON, server, basePath, &genError)
+        if let genError { return .failure(genError) }
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let configJSON = object["config_json"] as? String else {
+            return .failure(NSError(domain: "XDial", code: -5,
+                userInfo: [NSLocalizedDescriptionKey: "连接配置无效"]))
+        }
+        var parameters = [
+            ScenarioStartParameter.scenarioID: scenarioID,
+            ScenarioStartParameter.scenarioName: scenarioName,
+        ]
+        if let line = object["anyconnect"] as? [String: Any],
+           let lineID = line["line_id"] as? String,
+           let identity = line["runtime_identity"] as? String {
+            parameters[ScenarioStartParameter.anyConnectLineID] = lineID
+            parameters[ScenarioStartParameter.anyConnectRuntimeIdentity] = identity
+        }
+        // Tailscale 仍放在各代 Box 里：iOS 配置会带上所有启用的 Tailscale 线路，而由进程持有的
+        // Tailscale 只支持一条。两边都用到 Tailscale 的切换由扩展换引擎完成。
+        #else
+        let configJSON = LibboxGenerateNEConfig(profileJSON, server, basePath, &genError)
+        if let genError { return .failure(genError) }
+        let parameters: [String: String] = [:]
+        #endif
+        guard configJSON.utf8.count <= kMaxNEConfigBytes else {
+            return .failure(NSError(domain: "XDial", code: -5,
+                userInfo: [NSLocalizedDescriptionKey: "连接配置过大，无法安全启动"]))
+        }
+        return .success(StartSession(configJSON: configJSON, parameters: parameters))
+    }
+
     private func startPreparedTunnel(
         operationID: UUID,
         configJSON: String,
+        switchParameters: [String: String],
         allowInsecure: Bool,
         anyConnect: AnyConnectCredentials?,
         allowSystemOnDemand: Bool
@@ -2405,6 +2453,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 self?.startPreparedTunnelAfterOnDemandSuspended(
                     operationID: operationID,
                     configJSON: configJSON,
+                    switchParameters: switchParameters,
                     allowInsecure: allowInsecure,
                     anyConnect: anyConnect,
                     allowSystemOnDemand: false
@@ -2415,6 +2464,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         startPreparedTunnelAfterOnDemandSuspended(
             operationID: operationID,
             configJSON: configJSON,
+            switchParameters: switchParameters,
             allowInsecure: allowInsecure,
             anyConnect: anyConnect,
             allowSystemOnDemand: true
@@ -2424,6 +2474,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private func startPreparedTunnelAfterOnDemandSuspended(
         operationID: UUID,
         configJSON: String,
+        switchParameters: [String: String],
         allowInsecure: Bool,
         anyConnect: AnyConnectCredentials?,
         allowSystemOnDemand: Bool
@@ -2451,6 +2502,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 parameters["username"] = anyConnect.username
                 parameters["password"] = anyConnect.password
             }
+            parameters.merge(switchParameters) { current, _ in current }
             pendingOnDemandEnvelope = OnDemandStartEnvelope(
                 transport: anyConnect == nil ? "standalone" : "anyconnect",
                 parameters: parameters,
@@ -2490,6 +2542,15 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             options["server"] = anyConnect.server as NSString
                             options["username"] = anyConnect.username as NSString
                             options["password"] = anyConnect.password as NSString
+                        }
+                        for (key, value) in switchParameters {
+                            options[key] = value as NSString
+                        }
+                        if !switchParameters.isEmpty,
+                           let activeAcceptancePlan = self.activeAcceptancePlan,
+                           let planData = try? JSONEncoder().encode(activeAcceptancePlan),
+                           let planJSON = String(data: planData, encoding: .utf8) {
+                            options["acceptance_plan"] = planJSON as NSString
                         }
                         let attemptID = UUID().uuidString
                         self.dataPathProbeTask?.cancel()
@@ -2574,6 +2635,192 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         return line
     }
 
+    #if os(iOS)
+    // MARK: - 场景目录与隧道内切换（iOS）
+
+    func rebuildScenarioCatalog(
+        inputs: [ScenarioCatalogInput],
+        policy: ScenarioAutoPolicy,
+        keepingOthers: Bool
+    ) async -> String? {
+        let basePath = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: kAppGroupIdentifier)?.path ?? ""
+        guard !basePath.isEmpty, !inputs.isEmpty else { return nil }
+        let entries: [String: Data] = await withCheckedContinuation { continuation in
+            Self.configGenerationQueue.submit {
+                var entries: [String: Data] = [:]
+                for input in inputs.prefix(ScenarioSwitchCatalog.maxEntries) {
+                    guard case .success(let session) = Self.generateStartSession(
+                        profileJSON: input.profileJSON,
+                        server: input.anyConnect?.server ?? "",
+                        basePath: basePath,
+                        scenarioID: input.scenarioID,
+                        scenarioName: input.scenarioName
+                    ) else {
+                        appLog("scenario catalog: skipped \(input.scenarioID), config generation failed")
+                        continue
+                    }
+                    var parameters = session.parameters
+                    parameters["acceptance_plan"] = input.acceptancePlanJSON
+                    parameters["allow_insecure"] = input.allowInsecure ? "true" : "false"
+                    if let anyConnect = input.anyConnect {
+                        parameters["server"] = anyConnect.server
+                        parameters["username"] = anyConnect.username
+                        parameters["password"] = anyConnect.password
+                    }
+                    let envelope = OnDemandStartEnvelope(
+                        transport: input.anyConnect == nil ? "standalone" : "anyconnect",
+                        parameters: parameters,
+                        configJSON: session.configJSON
+                    )
+                    guard envelope.isValid, let data = try? JSONEncoder().encode(envelope) else { continue }
+                    entries[input.scenarioID] = data
+                }
+                continuation.resume(returning: entries)
+            }
+        }
+        guard !entries.isEmpty else { return nil }
+        var merged = entries
+        if keepingOthers, case .available(let existing) = ScenarioSwitchCatalogStore.load() {
+            for (scenarioID, entry) in existing.entries
+            where merged[scenarioID] == nil
+                && policy.scenarioIDs.contains(scenarioID)
+                && merged.count < ScenarioSwitchCatalog.maxEntries {
+                merged[scenarioID] = entry
+            }
+        }
+        let catalog = ScenarioSwitchCatalog(policy: policy, entries: merged)
+        let status = ScenarioSwitchCatalogStore.save(catalog)
+        guard status == errSecSuccess else {
+            appLog("scenario catalog: save failed status=\(status)")
+            return nil
+        }
+        appLog("scenario catalog: saved \(entries.count) scenario(s)")
+        return catalog.revision
+    }
+
+    func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool {
+        guard case .available(var catalog) = ScenarioSwitchCatalogStore.load() else { return false }
+        guard catalog.policy != policy else { return true }
+        catalog.policy = policy
+        return ScenarioSwitchCatalogStore.save(catalog) == errSecSuccess
+    }
+
+    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply {
+        guard let session = providerSession,
+              let request = try? JSONSerialization.data(withJSONObject: [
+                  "cmd": "scenario-switch",
+                  "scenario_id": scenarioID,
+                  "catalog_revision": revision,
+              ]) else {
+            return .failed("VPN 扩展不可用", nil)
+        }
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<ScenarioSwitchReply>(continuation)
+            // 准备新场景可能要连 AnyConnect 并逐条确认出口；扩展侧每一步都有自己的时限。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 90) {
+                oneShot.finish(.failed("VPN 扩展没有及时回应", nil))
+            }
+            do {
+                try session.sendProviderMessage(request) { responseData in
+                    guard let responseData,
+                          let response = try? JSONDecoder().decode(DaemonResponse.self, from: responseData) else {
+                        oneShot.finish(.failed("VPN 扩展回应无效", nil))
+                        return
+                    }
+                    let state = response.data
+                        .flatMap { $0.data(using: .utf8) }
+                        .flatMap(TunnelScenarioState.decode)
+                    if response.ok == true, let state {
+                        oneShot.finish(.switched(state))
+                    } else if response.message?.hasPrefix("未知命令") == true {
+                        oneShot.finish(.unsupported)
+                    } else {
+                        oneShot.finish(.failed(response.message ?? "切换场景失败", state))
+                    }
+                }
+            } catch {
+                oneShot.finish(.failed(error.localizedDescription, nil))
+            }
+        }
+    }
+
+    func requestScenarioEvaluation() async -> ScenarioEvaluationReply {
+        guard let session = providerSession else { return .unavailable }
+        let request = Data("{\"cmd\":\"scenario-evaluate\"}".utf8)
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<ScenarioEvaluationReply>(continuation)
+            // 读 Wi-Fi 名称最多 3 秒、查出口最多 8 秒，判断出要切换时还要等切换结束。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 90) {
+                oneShot.finish(.unavailable)
+            }
+            do {
+                try session.sendProviderMessage(request) { responseData in
+                    guard let responseData,
+                          let response = try? JSONDecoder().decode(DaemonResponse.self, from: responseData) else {
+                        oneShot.finish(.unavailable)
+                        return
+                    }
+                    if response.ok != true, response.message?.hasPrefix("未知命令") == true {
+                        oneShot.finish(.unsupported)
+                        return
+                    }
+                    let state = response.data
+                        .flatMap { $0.data(using: .utf8) }
+                        .flatMap(TunnelScenarioState.decode)
+                    oneShot.finish(state.map(ScenarioEvaluationReply.evaluated) ?? .unavailable)
+                }
+            } catch {
+                oneShot.finish(.unavailable)
+            }
+        }
+    }
+
+    func requestScenarioState() async -> TunnelScenarioState? {
+        guard let session = providerSession else { return nil }
+        let request = Data("{\"cmd\":\"scenario-state\"}".utf8)
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<TunnelScenarioState?>(continuation)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
+                oneShot.finish(nil)
+            }
+            do {
+                try session.sendProviderMessage(request) { responseData in
+                    let state = responseData
+                        .flatMap { try? JSONDecoder().decode(DaemonResponse.self, from: $0) }
+                        .flatMap { $0.ok == true ? $0.data : nil }
+                        .flatMap { $0.data(using: .utf8) }
+                        .flatMap(TunnelScenarioState.decode)
+                    oneShot.finish(state)
+                }
+            } catch {
+                oneShot.finish(nil)
+            }
+        }
+    }
+
+    func adoptSwitchedScenario(_ scenarioID: String) {
+        guard case .available(let catalog) = ScenarioSwitchCatalogStore.load(),
+              let data = catalog.entries[scenarioID],
+              let envelope = try? JSONDecoder().decode(OnDemandStartEnvelope.self, from: data),
+              let planJSON = envelope.parameters["acceptance_plan"],
+              let planData = planJSON.data(using: .utf8),
+              let plan = try? JSONDecoder().decode(TunnelAcceptancePlan.self, from: planData) else {
+            appLog("scenario switch: acceptance plan for the new scenario is unavailable")
+            return
+        }
+        // 按需连接还没开启时，待开启的启动包也换成新场景，免得开启时写回旧场景。
+        if pendingOnDemandEnvelope != nil {
+            pendingOnDemandEnvelope = envelope
+        }
+        guard plan != activeAcceptancePlan else { return }
+        activeAcceptancePlan = plan
+        guard let connection = manager?.connection, connection.status == .connected else { return }
+        // 切换不断开连接：自检没通过时保留连接并提示，不按首次连接的规则断开。
+        verifyDataPath(for: connection, isRecheck: true)
+    }
+    #endif
+
     /// 停止系统级隧道。manager/connection 不可用时静默返回(语义等价「本来就没在跑」)。
     func stopTunnel() {
         let cancelledCompletion = startOperationState.cancel()
@@ -2585,6 +2832,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         dataPathProbeID = nil
         engine?.applySystemStatus("disconnecting")
         let connection = manager?.connection
+        #if os(iOS)
+        // 用户断开后不再有扩展使用场景目录；下次连接会重建。
+        ScenarioSwitchCatalogStore.clear()
+        #endif
         suspendSystemOnDemand(clearEnvelope: true) {
             connection?.stopVPNTunnel()
         }

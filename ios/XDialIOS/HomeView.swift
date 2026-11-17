@@ -109,14 +109,14 @@ struct HomeView: View {
             isPresented: scenarioSwitchPresented,
             presenting: pendingScenario
         ) { scenario in
-            Button(app.tr("切换并重新连接", "Switch and Reconnect")) {
-                Task { await app.switchScenarioAndReconnect(to: scenario.id) }
+            Button(app.tr("切换", "Switch")) {
+                Task { await switchWhileConnected(to: scenario.id) }
             }
             Button(app.tr("取消", "Cancel"), role: .cancel) {}
         } message: { _ in
             Text(app.tr(
-                "会先断开，再用新的方式连上，大约几秒钟。",
-                "XDial disconnects, then reconnects with the new routing. It takes a few seconds."
+                "新的方式在后台准备好后接手，VPN 不会断开；正在进行的下载或通话可能会中断一下。",
+                "The new routing takes over once it's ready, without turning the VPN off. Downloads or calls in progress may be interrupted briefly."
             ))
         }
         .alert(
@@ -136,7 +136,7 @@ struct HomeView: View {
         .sensoryFeedback(.error, trigger: problem?.detail) { _, new in new != nil }
         .tint(XDialTheme.accent)
         .task {
-            autoPilot.onNetworkChange = { Task { await refreshAutoScenario() } }
+            autoPilot.onNetworkChange = { Task { await refreshAutoScenario(afterNetworkChange: true) } }
             autoPilot.start()
             await refreshAutoScenario()
         }
@@ -145,6 +145,7 @@ struct HomeView: View {
         }
         .onChange(of: autoScenario) { _, isOn in
             showingAutoScenarios = false
+            app.updateScenarioAutoPolicy()
             if isOn { Task { await refreshAutoScenario() } }
         }
         .onChange(of: isIdle) { _, idle in
@@ -155,9 +156,24 @@ struct HomeView: View {
 
     // MARK: - 自动选场景
 
-    /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就自动断开、切换、重连。
-    private func refreshAutoScenario() async {
+    /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就交给 VPN 扩展判断，
+    /// 由它在不断开 VPN 的情况下切换（App 被挂起时它也照样判断）。
+    private func refreshAutoScenario(afterNetworkChange: Bool = false) async {
         guard autoScenario, !app.profile.scenarios.isEmpty else { return }
+        if app.isConnected {
+            // 网络变化时扩展自己已经在判断，这里只同步它的结论。
+            if afterNetworkChange, app.tunnelScenarioState != nil {
+                await app.refreshTunnelScenarioState()
+                return
+            }
+            switch await app.requestTunnelScenarioEvaluation() {
+            case .handled, .unavailable:
+                return
+            case .unsupported:
+                // 扩展是旧版本：沿用 App 判断、断开重连。
+                break
+            }
+        }
         // 已连接时只有 VPN 扩展查得到本地网络的出口，见 ScenarioAutoPilot.survey。
         var exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)?
         if app.isConnected {
@@ -188,21 +204,40 @@ struct HomeView: View {
 
     /// 已连接、当前网络该用另一个场景、但又不适合自动换（刚刚才换过）时，给出的建议。
     private var suggestedScenario: Scenario? {
-        guard autoScenario, app.isConnected, !isAutoSwitching, let pick = autoPilot.pick,
-              pick.scenarioID != app.profile.activeScenarioID,
-              pick.scenarioID != dismissedSuggestionID else { return nil }
-        return app.profile.scenarios.first { $0.id == pick.scenarioID }
+        guard autoScenario, app.isConnected, !isAutoSwitching, !app.isSwitchingScenarioInTunnel else { return nil }
+        let suggestedID: String?
+        if let tunnelState = app.tunnelScenarioState {
+            suggestedID = tunnelState.suggestedScenarioID
+        } else {
+            suggestedID = autoPilot.pick?.scenarioID
+        }
+        guard let suggestedID, suggestedID != app.profile.activeScenarioID,
+              suggestedID != dismissedSuggestionID else { return nil }
+        return app.profile.scenarios.first { $0.id == suggestedID }
+    }
+
+    /// 已连接时以 VPN 扩展的判断为准；没连接时是 App 自己的判断。
+    private var currentPick: ScenarioAutoPicker.Pick? {
+        if app.isConnected, let tunnelPick = app.tunnelScenarioState?.lastPick {
+            return tunnelPick
+        }
+        return autoPilot.pick
     }
 
     /// 「已连上 Wi-Fi「Office」」「网络出口在日本」这样的一句话。
     private var autoScenarioNote: String {
-        guard let pick = autoPilot.pick else {
+        if app.isSwitchingScenarioInTunnel || (app.isConnected && app.tunnelScenarioState?.switchingTo != nil) {
+            return app.tr("正在切换上网方式…", "Switching routing…")
+        }
+        guard let pick = currentPick else {
             if autoPilot.isSurveying || !autoPilot.hasSurveyed {
                 return app.tr("正在判断所在网络…", "Checking the current network…")
             }
             return app.tr("没判断出来，保持当前选择", "Couldn't tell; keeping the current choice")
         }
         switch pick.reason {
+        case .wifi(let ssid) where ssid.isEmpty:
+            return app.tr("已连上场景登记的 Wi-Fi", "On a Wi-Fi registered for this scenario")
         case .wifi(let ssid):
             return app.tr("已连上 Wi-Fi「\(ssid)」", "On Wi-Fi “\(ssid)”")
         case .country(let code):
@@ -223,12 +258,22 @@ struct HomeView: View {
             ),
             identifier: "home-auto-suggestion"
         ) {
-            Button(app.tr("切换并重连", "Switch and Reconnect")) {
-                Task { await app.switchScenarioAndReconnect(to: scenario.id) }
+            Button(app.tr("切换", "Switch")) {
+                Task { await switchWhileConnected(to: scenario.id) }
             }
             .buttonStyle(XDialPillButtonStyle())
             Button(app.tr("暂不", "Not Now")) { dismissedSuggestionID = scenario.id }
                 .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
+        }
+    }
+
+    /// 已连接时切换场景：优先在隧道内切换，VPN 不断开；扩展是旧版本时才断开重连。
+    private func switchWhileConnected(to id: String) async {
+        switch await app.switchScenarioInTunnel(to: id) {
+        case .switched, .failed:
+            return
+        case .unavailable:
+            await app.switchScenarioAndReconnect(to: id)
         }
     }
 
@@ -771,8 +816,9 @@ struct HomeView: View {
 
     private func scenarioTapped(_ scenario: Scenario) {
         guard scenario.id != app.profile.activeScenarioID else { return }
-        // 自己动手选了，就不再自动换。
+        // 自己动手选了，就不再自动换；先告诉 VPN 扩展，免得它在后台又换回去。
         autoScenario = false
+        app.updateScenarioAutoPolicy()
         if isIdle {
             app.selectScenario(scenario.id)
         } else {
