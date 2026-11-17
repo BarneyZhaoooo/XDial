@@ -1,0 +1,203 @@
+diff --git a/derp/derphttp/derphttp_client.go b/derp/derphttp/derphttp_client.go
+index 14b0489..bc87bfa 100644
+--- a/derp/derphttp/derphttp_client.go
++++ b/derp/derphttp/derphttp_client.go
+@@ -918,13 +918,19 @@ func firstStr(a, b string) string {
+ func (c *Client) dialNodeUsingProxy(ctx context.Context, n *tailcfg.DERPNode, proxyURL *url.URL) (_ net.Conn, err error) {
+ 	pu := proxyURL
+ 	var proxyConn net.Conn
++	dialer := netns.NewDialerAlwaysDirect(c.logf, c.netMon)
++	port := "80"
+ 	if pu.Scheme == "https" {
+-		var d tls.Dialer
+-		proxyConn, err = d.DialContext(ctx, "tcp", net.JoinHostPort(pu.Hostname(), firstStr(pu.Port(), "443")))
+-	} else {
+-		var d net.Dialer
+-		proxyConn, err = d.DialContext(ctx, "tcp", net.JoinHostPort(pu.Hostname(), firstStr(pu.Port(), "80")))
++		port = "443"
++	}
++	proxyConn, err = dialer.DialContext(ctx, "tcp", net.JoinHostPort(pu.Hostname(), firstStr(pu.Port(), port)))
++	if err == nil && pu.Scheme == "https" {
++		secured := tls.Client(proxyConn, &tls.Config{ServerName: pu.Hostname()})
++		if err = secured.HandshakeContext(ctx); err == nil {
++			proxyConn = secured
++		}
+ 	}
++
+ 	defer func() {
+ 		if err != nil && proxyConn != nil {
+ 			// In a goroutine in case it's a *tls.Conn (that can block on Close)
+diff --git a/derp/derphttp/xdial_proxy_test.go b/derp/derphttp/xdial_proxy_test.go
+new file mode 100644
+index 0000000..190e68b
+--- /dev/null
++++ b/derp/derphttp/xdial_proxy_test.go
+@@ -0,0 +1,52 @@
++package derphttp
++
++import (
++	"context"
++	"errors"
++	M "github.com/sagernet/sing/common/metadata"
++	"github.com/sagernet/tailscale/net/netmon"
++	"github.com/sagernet/tailscale/tailcfg"
++	"github.com/sagernet/tailscale/util/eventbus"
++	"net"
++	"net/url"
++	"syscall"
++	"testing"
++)
++
++type scopedProxyDialer struct {
++	calls  int
++	denied error
++}
++
++func (d *scopedProxyDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	d.calls++
++	return nil, d.denied
++}
++func (d *scopedProxyDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, d.denied
++}
++func (d *scopedProxyDialer) XDialSocketControl(string, string, syscall.RawConn) error {
++	return d.denied
++}
++func (d *scopedProxyDialer) XDialInterfaceState() (*netmon.State, error) { return &netmon.State{}, nil }
++func TestXDialDERPProxyUsesScopedTransport(t *testing.T) {
++	bus := eventbus.New()
++	defer bus.Close()
++	logf := func(string, ...any) {}
++	dialer := &scopedProxyDialer{denied: errors.New("protected refusal")}
++	monitor, err := netmon.New(bus, logf, dialer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer monitor.Close()
++	client := &Client{logf: logf, netMon: monitor}
++	for _, scheme := range []string{"http", "https"} {
++		proxy, _ := url.Parse(scheme + "://proxy.invalid:1")
++		if _, err = client.dialNodeUsingProxy(context.Background(), &tailcfg.DERPNode{HostName: "derp.invalid"}, proxy); !errors.Is(err, dialer.denied) {
++			t.Fatalf("%s bypassed protection: %v", scheme, err)
++		}
++	}
++	if dialer.calls != 2 {
++		t.Fatal("proxy paths did not use owning Line")
++	}
++}
+diff --git a/net/netmon/netmon.go b/net/netmon/netmon.go
+index 07f5696..82f2584 100644
+--- a/net/netmon/netmon.go
++++ b/net/netmon/netmon.go
+@@ -168,6 +168,9 @@ func (m *Monitor) InterfaceState() *State {
+ }
+ 
+ func (m *Monitor) interfaceStateUncached() (*State, error) {
++	if scoped, ok := m.dialer.(interface{ XDialInterfaceState() (*State, error) }); ok {
++		return scoped.XDialInterfaceState()
++	}
+ 	return getState(m.tsIfName)
+ }
+ 
+diff --git a/net/netns/netns.go b/net/netns/netns.go
+index 23c05a9..3f9db89 100644
+--- a/net/netns/netns.go
++++ b/net/netns/netns.go
+@@ -113,6 +113,11 @@ func Listener(logf logger.Logf, netMon *netmon.Monitor) *net.ListenConfig {
+ 	if netMon == nil {
+ 		panic("netns.Listener called with nil netMon")
+ 	}
++	if scoped, ok := netMon.Dialer().(interface {
++		XDialSocketControl(string, string, syscall.RawConn) error
++	}); ok {
++		return &net.ListenConfig{Control: scoped.XDialSocketControl}
++	}
+ 	if disabled.Load() {
+ 		return new(net.ListenConfig)
+ 	}
+@@ -155,6 +160,12 @@ func FromDialer(logf logger.Logf, netMon *netmon.Monitor, d *net.Dialer, ad bool
+ 	if dialer := netMon.Dialer(); dialer != nil && !ad {
+ 		return dialerWrapper{dialer}
+ 	}
++	if scoped, ok := netMon.Dialer().(interface {
++		XDialSocketControl(string, string, syscall.RawConn) error
++	}); ok {
++		_ = scoped
++		return dialerWrapper{netMon.Dialer()}
++	}
+ 	if disabled.Load() {
+ 		return d
+ 	}
+diff --git a/net/netns/xdial_scoped_test.go b/net/netns/xdial_scoped_test.go
+new file mode 100644
+index 0000000..beefdcd
+--- /dev/null
++++ b/net/netns/xdial_scoped_test.go
+@@ -0,0 +1,67 @@
++package netns
++
++import (
++	"context"
++	"errors"
++	M "github.com/sagernet/sing/common/metadata"
++	"github.com/sagernet/tailscale/net/netmon"
++	"github.com/sagernet/tailscale/util/eventbus"
++	"net"
++	"syscall"
++	"testing"
++)
++
++type scopedTestDialer struct {
++	name            string
++	denied          error
++	controls, dials int
++}
++
++func (d *scopedTestDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	d.dials++
++	return nil, d.denied
++}
++func (d *scopedTestDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, d.denied
++}
++func (d *scopedTestDialer) XDialSocketControl(_, _ string, raw syscall.RawConn) error {
++	if err := raw.Control(func(uintptr) { d.controls++ }); err != nil {
++		return err
++	}
++	return d.denied
++}
++func (d *scopedTestDialer) XDialInterfaceState() (*netmon.State, error) {
++	return &netmon.State{DefaultRouteInterface: d.name, Interface: map[string]netmon.Interface{}}, nil
++}
++func TestXDialEndpointScopedHooksSurviveOtherMonitorRetirement(t *testing.T) {
++	bus := eventbus.New()
++	defer bus.Close()
++	logf := func(string, ...any) {}
++	a := &scopedTestDialer{name: "a", denied: errors.New("a protected refusal")}
++	b := &scopedTestDialer{name: "b", denied: errors.New("b protected refusal")}
++	first, err := netmon.New(bus, logf, a)
++	if err != nil {
++		t.Fatal(err)
++	}
++	second, err := netmon.New(bus, logf, b)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer second.Close()
++	SetControlFunc(func(string, string, syscall.RawConn) error { return errors.New("wrong global hook") })
++	defer SetControlFunc(nil)
++	if first.InterfaceState().DefaultRouteInterface != "a" || second.InterfaceState().DefaultRouteInterface != "b" {
++		t.Fatal("endpoint network facts crossed")
++	}
++	first.Close()
++	SetControlFunc(nil)
++	if _, err = Listener(logf, second).ListenPacket(context.Background(), "udp4", "127.0.0.1:0"); !errors.Is(err, b.denied) {
++		t.Fatalf("protection bypassed after close: %v", err)
++	}
++	if b.controls != 1 || a.controls != 0 {
++		t.Fatal("wrong owner received socket")
++	}
++	if _, err = NewDialerAlwaysDirect(logf, second).DialContext(context.Background(), "tcp", "invalid.example:443"); !errors.Is(err, b.denied) || b.dials != 1 {
++		t.Fatal("raw direct dialer bypassed the scoped Line")
++	}
++}

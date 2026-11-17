@@ -2,6 +2,7 @@ import Foundation
 import Network
 import NetworkExtension
 import Observation
+@preconcurrency import Libbox
 
 /// 当前网络的两条线索：连着哪个 Wi-Fi，流量从哪个国家或地区出去。
 struct NetworkSurroundings: Equatable, Sendable {
@@ -10,19 +11,9 @@ struct NetworkSurroundings: Equatable, Sendable {
     var countryCode: String?
 }
 
-/// 按当前网络挑场景。纯逻辑，方便测试。
+/// 按当前网络挑场景。纯逻辑，方便测试；规则与 VPN 扩展共用 ScenarioAutoDecision。
 enum ScenarioAutoPicker {
-    struct Pick: Equatable, Sendable {
-        enum Reason: Equatable, Sendable {
-            /// 连上了某个场景登记过的 Wi-Fi。
-            case wifi(String)
-            /// 按网络出口所在地。
-            case country(String)
-        }
-
-        let scenarioID: String
-        let reason: Reason
-    }
+    typealias Pick = ScenarioAutoPick
 
     /// 先看 Wi-Fi：连着哪个场景登记过的 Wi-Fi，就用哪个场景。
     /// 否则看网络出口所在的地区：regionScenarios 里列了这个地区就用对应的场景，
@@ -32,66 +23,47 @@ enum ScenarioAutoPicker {
         scenarios: [Scenario],
         regionScenarios: [String: String] = [:]
     ) -> Pick? {
-        if let ssid = surroundings.ssid?.trimmingCharacters(in: .whitespacesAndNewlines), !ssid.isEmpty,
-           let matched = scenarios.first(where: { scenario in
-               scenario.matchSSIDs.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == ssid }
-           }) {
-            return Pick(scenarioID: matched.id, reason: .wifi(ssid))
+        struct WirePick: Decodable {
+            let scenario_id: String
+            let reason: String
         }
-        guard let code = surroundings.countryCode?.uppercased(), code.count == 2,
-              code.allSatisfy({ $0.isASCII && $0.isLetter }),
-              let scenarioID = regionScenarios[code] ?? regionScenarios["*"],
-              scenarios.contains(where: { $0.id == scenarioID }) else { return nil }
-        return Pick(scenarioID: scenarioID, reason: .country(code))
+        guard let scenariosData = try? JSONEncoder().encode(scenarios),
+              let regionsData = try? JSONEncoder().encode(regionScenarios),
+              let scenariosJSON = String(data: scenariosData, encoding: .utf8),
+              let regionsJSON = String(data: regionsData, encoding: .utf8) else { return nil }
+        var error: NSError?
+        let raw = LibboxPickScenario(
+            scenariosJSON, regionsJSON, surroundings.ssid ?? "", surroundings.countryCode ?? "", &error
+        )
+        guard error == nil,
+              let data = raw.data(using: .utf8),
+              let result = try? JSONDecoder().decode(WirePick.self, from: data) else { return nil }
+        let reason: Pick.Reason = result.reason == "wifi"
+            ? .wifi((surroundings.ssid ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+            : .country((surroundings.countryCode ?? "").uppercased())
+        return Pick(scenarioID: result.scenario_id, reason: reason)
     }
 }
 
-/// 最近一次自动判断的经过，写进「XDial 诊断」。不记录 Wi-Fi 名称。
-struct ScenarioSurveyRecord: Equatable, Sendable {
-    enum ExitLookup: Equatable, Sendable {
-        /// 已经靠 Wi-Fi 认出来，或者没有按地区选场景的配置。
-        case notNeeded
-        /// viaTunnel：已连接时由 VPN 扩展经 Direct 线路查；否则由 App 直接查。
-        case found(code: String, viaTunnel: Bool)
-        case failed(viaTunnel: Bool, reason: String?)
-    }
-
-    let at: Date
-    let ssidRead: Bool
-    let ssidMatched: Bool
-    let exit: ExitLookup
-    let picked: Bool
-
-    /// 「XDial 诊断」里的一行。
-    func summary(isChinese: Bool) -> String {
-        let time = Self.timeFormatter.string(from: at)
-        let wifi = ssidRead
-            ? (ssidMatched ? (isChinese ? "已读到并匹配" : "read, matched") : (isChinese ? "已读到，未匹配" : "read, no match"))
-            : (isChinese ? "未读到" : "not read")
-        let (open, close, colon) = isChinese ? ("（", "）", "：") : (" (", ")", ": ")
-        let exitText: String
-        switch exit {
-        case .notNeeded:
-            exitText = isChinese ? "未查询" : "not queried"
-        case .found(let code, let viaTunnel):
-            let source = viaTunnel ? (isChinese ? "经直连线路" : "via Direct line") : (isChinese ? "本机直接查询" : "queried locally")
-            exitText = "\(code)\(open)\(source)\(close)"
-        case .failed(let viaTunnel, let reason):
-            let source = viaTunnel ? (isChinese ? "经直连线路" : "via Direct line") : (isChinese ? "本机直接查询" : "queried locally")
-            let failed = isChinese ? "查询失败" : "failed"
-            exitText = "\(failed)\(open)\(source)\(reason.map { "\(colon)\($0)" } ?? "")\(close)"
+extension ScenarioAutoPolicy {
+    /// 各场景在编辑页登记的 Wi-Fi 名称，按场景列表顺序。
+    static func wifiRules(for scenarios: [Scenario]) -> [WiFiRule] {
+        scenarios.compactMap { scenario in
+            let ssids = scenario.matchSSIDs
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return ssids.isEmpty ? nil : WiFiRule(scenarioID: scenario.id, ssids: ssids)
         }
-        let outcome = picked ? (isChinese ? "已判断" : "decided") : (isChinese ? "没判断出来" : "undecided")
-        return isChinese
-            ? "\(time) \(outcome)；Wi-Fi \(wifi)；出口 \(exitText)"
-            : "\(time) \(outcome); Wi-Fi \(wifi); exit \(exitText)"
     }
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
+    static func make(profile: Profile, enabled: Bool, regionScenarios: [String: String]) -> ScenarioAutoPolicy {
+        ScenarioAutoPolicy(
+            enabled: enabled,
+            wifiRules: wifiRules(for: profile.scenarios),
+            regionScenarios: regionScenarios,
+            scenarioIDs: profile.scenarios.map(\.id)
+        )
+    }
 }
 
 /// 观察当前网络并给出该用哪个场景。只在 App 开着的时候工作。
@@ -111,24 +83,23 @@ final class ScenarioAutoPilot {
     @ObservationIgnored private var monitor: NWPathMonitor?
     @ObservationIgnored private var lastPathSignature: String?
     @ObservationIgnored private var changeDebounce: Task<Void, Never>?
-    @ObservationIgnored private var recentSwitches: [AutoSwitch] = []
+    @ObservationIgnored private var switchGuard = ScenarioAutoSwitchGuard()
 
-    /// 一次自动换场景的记录，用来防止来回切。
-    struct AutoSwitch: Equatable, Sendable {
-        let from: String
-        let to: String
-        let at: Date
+    /// 「自动」开关（主屏的 @AppStorage 存在同一个键里）。
+    static let autoEnabledKey = "xdial.auto-scenario"
+    static var isAutoEnabled: Bool {
+        UserDefaults.standard.object(forKey: autoEnabledKey) as? Bool ?? true
     }
 
     /// 已连接时要不要自动换到 target。刚刚才从 target 自动换走的话就不再换回去——
     /// 两次判断结果打架时（比如查出口的请求没能绕开隧道），宁可停下来提示，也不能反复断线重连。
+    /// 只用于扩展不支持隧道内切换（旧版本）时由 App 断开重连的情况。
     func mayAutoSwitch(to target: String, now: Date = Date()) -> Bool {
-        recentSwitches.removeAll { now.timeIntervalSince($0.at) > 600 }
-        return !recentSwitches.contains { $0.from == target }
+        switchGuard.mayAutoSwitch(to: target, now: now)
     }
 
     func noteAutoSwitch(from: String, to: String, now: Date = Date()) {
-        recentSwitches.append(AutoSwitch(from: from, to: to, at: now))
+        switchGuard.note(from: from, to: to, now: now)
     }
     @ObservationIgnored private var running: Task<ScenarioAutoPicker.Pick?, Never>?
     @ObservationIgnored private var lastSurveyAt: Date?
@@ -380,5 +351,37 @@ private final class DirectHTTPSProbe: @unchecked Sendable {
         self.continuation = nil
         connection.cancel()
         continuation.resume(returning: buffer.isEmpty ? nil : String(decoding: buffer, as: UTF8.self))
+    }
+}
+
+/// 订阅一个 Darwin 通知（VPN 扩展更新场景状态后发出），在主线程回调。
+final class DarwinNotificationObserver: @unchecked Sendable {
+    private let name: String
+    private let handler: @MainActor () -> Void
+
+    init(name: String, handler: @escaping @MainActor () -> Void) {
+        self.name = name
+        self.handler = handler
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let me = Unmanaged<DarwinNotificationObserver>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in me.handler() }
+            },
+            name as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    deinit {
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            CFNotificationName(name as CFString),
+            nil
+        )
     }
 }

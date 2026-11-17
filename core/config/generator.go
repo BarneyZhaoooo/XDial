@@ -142,11 +142,26 @@ func GenerateSingBoxFor(profile *Profile, socksPort int, vpnServerIP string, pla
 	return generateSingBox(profile, socksPort, vpnServerIP, platform, basePath, nil, nil, underlayInterface, nil)
 }
 
+// GenerateSingBoxAndroid uses the OS-provided Underlay DNS for the existing
+// mobile fallback transport. DNS dispatch remains entirely inside sing-box.
+func GenerateSingBoxAndroid(profile *Profile, basePath string, systemDNS []string) ([]byte, error) {
+	if _, err := validateTransparentProxySystemDNS(systemDNS); err != nil {
+		return nil, err
+	}
+	return generateSingBox(profile, 0, "", PlatformNE, basePath, nil, systemDNS, "", nil)
+}
+
 type transparentProxyIngress struct {
 	port          int
 	username      string
 	password      string
 	addressFamily transparentProxyAddressFamilyPolicy
+	// A compiler-owned acquisition capability reuses exact-Line DNS policy,
+	// but has no listener and receives Android's OS-selected network via callbacks.
+	androidResource bool
+	// Native desktop ingress has no SOCKS listener/metadata credentials. Its
+	// compiler lowers application selectors to sing-box OS process predicates.
+	nativeFlow bool
 }
 
 // LineAddressFamilyCapability is one Provider-measured, transaction-scoped
@@ -705,7 +720,12 @@ func generateSingBox(
 	// 默认路由已经选定的接口原样转交给 sing-box；它不识别 Wi-Fi、网线或任何
 	// VPN 产品。不能在桌面回落 auto_detect_interface：sing-tun 0.8.9 的 darwin
 	// 实现会跳过没有 RTF_GATEWAY 的 utun 默认路由，破坏自然叠加。
-	if platform == PlatformMacOS || platform == PlatformTransparentProxy {
+	if platform == PlatformTransparentProxy && transparentIngress.nativeFlow {
+		// Linux bypass-mark sockets retain the kernel's complete destination-
+		// specific Underlay routing, rather than binding all destinations to one NIC.
+	} else if platform == PlatformTransparentProxy && transparentIngress.androidResource {
+		route["auto_detect_interface"] = true
+	} else if platform == PlatformMacOS || platform == PlatformTransparentProxy {
 		underlayInterface = strings.TrimSpace(underlayInterface)
 		if underlayInterface == "" {
 			return nil, fmt.Errorf("desktop underlay interface snapshot is unavailable")
@@ -747,13 +767,31 @@ func generateSingBox(
 		)
 	}
 
+	if platform == PlatformNE && systemDNS != nil {
+		primary, err := validateTransparentProxySystemDNS(systemDNS)
+		if err != nil {
+			return nil, err
+		}
+		// This is the OS snapshot in its original priority order, not an
+		// interface/product heuristic or platform-side DNS query.
+		for _, server := range dnsConfig["servers"].([]map[string]interface{}) {
+			if server["tag"] == mobilePublicDNSTag {
+				server["server"] = primary
+			}
+		}
+	}
+
 	inbound := buildTUNInbound(vpnServerIP, platform)
-	if platform.isTransparentProxy() {
+	if platform.isTransparentProxy() && !transparentIngress.androidResource && !transparentIngress.nativeFlow {
 		var inboundErr error
 		inbound, inboundErr = buildTransparentProxyInbound(*transparentIngress, activeApplicationSelectors)
 		if inboundErr != nil {
 			return nil, inboundErr
 		}
+	}
+	var inbounds []map[string]interface{}
+	if transparentIngress == nil || (!transparentIngress.androidResource && !transparentIngress.nativeFlow) {
+		inbounds = []map[string]interface{}{inbound}
 	}
 
 	cfg := SingBoxConfig{
@@ -762,7 +800,7 @@ func generateSingBox(
 		},
 		DNS:          dnsConfig,
 		Endpoints:    endpoints,
-		Inbounds:     []map[string]interface{}{inbound},
+		Inbounds:     inbounds,
 		Outbounds:    outbounds,
 		Route:        route,
 		Experimental: buildExperimental(platform, basePath),

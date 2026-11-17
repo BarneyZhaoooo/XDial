@@ -1,4 +1,4 @@
-//go:build !windows && with_gvisor && !mobile_no_tailscale
+//go:build with_gvisor && !mobile_no_tailscale
 
 package libbox
 
@@ -199,10 +199,11 @@ func createTailscaleRuntimeCapability(
 		return nil, fmt.Errorf("Tailscale capability preparation canceled: %w", err)
 	}
 	detached = true
+	nativeDNS, _ := service.FromContext[adapter.DNSTransportManager](ctx).Transport(pooledTailscaleDNSTag)
 	return &tailscaleRuntimeCapability{
 		instance:   instance,
 		endpoint:   endpoint,
-		line:       &tailscaleLineRuntime{outbound: endpoint},
+		line:       &tailscaleLineRuntime{outbound: endpoint, nativeDNS: nativeDNS},
 		platform:   platform,
 		runtimeCtx: runtimeCtx,
 		cancel:     cancel,

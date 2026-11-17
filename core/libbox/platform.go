@@ -1,14 +1,12 @@
-//go:build !windows
-
 package libbox
 
 import (
 	stdjson "encoding/json"
 	"net"
 	"net/netip"
+	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -61,12 +59,16 @@ type xdPlatformInterface struct {
 	ownInterfaceName   string
 	monitor            *platformInterfaceMonitor
 	bindUnderlaySocket bool
-	lineEpoch          string
-	lineRevision       uint64
-	tunInPackets       atomic.Uint64
-	tunInBytes         atomic.Uint64
-	tunOutPackets      atomic.Uint64
-	tunOutBytes        atomic.Uint64
+	// Linux marked sockets leave destination-specific Underlay choice to the kernel.
+	kernelRoutedUnderlay bool
+	socketProtector      SocketProtector
+	secureStateStore     SecureStateStore
+	lineEpoch            string
+	lineRevision         uint64
+	tunInPackets         atomic.Uint64
+	tunInBytes           atomic.Uint64
+	tunOutPackets        atomic.Uint64
+	tunOutBytes          atomic.Uint64
 }
 
 var _ adapter.PlatformInterface = (*xdPlatformInterface)(nil)
@@ -87,52 +89,9 @@ func (p *xdPlatformInterface) ProcessPlatformOptions(option.TunPlatformOptions) 
 	return nil
 }
 
-// defaultTunOpener 是真实路径:dup 传入的 NE fd 后交给 tun.New。
-// 参照 sing-box 官方 experimental/libbox/service.go 的 OpenInterface(dup(fd) + tun.New)。
-func (p *xdPlatformInterface) defaultTunOpener(options *tun.Options, _ option.TunPlatformOptions) (tun.Tun, error) {
-	if p.tunFD <= 0 {
-		return nil, E.New("platform: tun fd not set (call Libbox.SetTunFD with the NE packetFlow fd before Start)")
-	}
-	// sing-tun 会按值复制 options。真实接口名必须在 tun.New 之前写入，否则其内部
-	// 会一直保留占位名 "utun"，Start 时再把接口监控器覆盖成错误名称。
-	name, err := tunnelNameFromFileDescriptor(p.tunFD)
-	if err != nil {
-		return nil, E.Cause(err, "query tun name")
-	}
-	if name != "" {
-		options.Name = name
-		if options.InterfaceMonitor != nil {
-			options.InterfaceMonitor.RegisterMyInterface(name)
-		}
-	}
-	dupFd, err := syscall.Dup(p.tunFD)
-	if err != nil {
-		return nil, E.Cause(err, "dup tun file descriptor")
-	}
-	options.FileDescriptor = dupFd
-	device, err := tun.New(*options)
-	if err != nil {
-		_ = syscall.Close(dupFd)
-		return nil, err
-	}
-	// 非 Darwin 平台没有通用的 fd→名称查询；保留原来的创建后读取作为回退。
-	if name == "" {
-		name, err = device.Name()
-		if err != nil {
-			_ = device.Close()
-			return nil, E.Cause(err, "read tun interface name")
-		}
-		options.Name = name
-		if options.InterfaceMonitor != nil {
-			options.InterfaceMonitor.RegisterMyInterface(name)
-		}
-	}
-	return wrapTunWithDiagnostics(device, p), nil
+func (p *xdPlatformInterface) UnderNetworkExtension() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "ios"
 }
-
-// UnderNetworkExtension 返回 true:XDial Apple 数据面始终跑在 NEPacketTunnelProvider 里。
-// sing-box 据此把 MTU 默认收敛到 4064 等 NE 友好参数。
-func (p *xdPlatformInterface) UnderNetworkExtension() bool { return true }
 
 // 默认接口/接口列表用于 direct 与 DNS 出站；其余 Wi-Fi 详情、进程归属、通知等
 // 非数据面能力暂不提供，让 sing-box 回退到通用逻辑。
@@ -147,14 +106,21 @@ func (p *xdPlatformInterface) Initialize(networkManager adapter.NetworkManager) 
 func (p *xdPlatformInterface) UsePlatformAutoDetectInterfaceControl() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.bindUnderlaySocket
+	return p.bindUnderlaySocket || p.socketProtector != nil || runtime.GOOS == "android"
 }
 
 func (p *xdPlatformInterface) AutoDetectInterfaceControl(fd int) error {
 	p.mu.Lock()
 	enabled := p.bindUnderlaySocket
+	protector := p.socketProtector
 	defaultInterface := cloneInterface(p.defaultInterface)
 	p.mu.Unlock()
+	if protector != nil {
+		return protector.ProtectSocket(fd)
+	}
+	if runtime.GOOS == "android" {
+		return E.New("platform: Android socket protector is required")
+	}
 	if !enabled {
 		return nil
 	}
@@ -290,6 +256,7 @@ func (m *platformInterfaceMonitor) Start() error {
 	m.platform.mu.Lock()
 	networkManager := m.platform.networkManager
 	defaultInterface := cloneInterface(m.platform.defaultInterface)
+	kernelRouted := m.platform.kernelRoutedUnderlay
 	m.platform.mu.Unlock()
 	if networkManager != nil {
 		if err := networkManager.UpdateInterfaces(); err != nil {
@@ -297,6 +264,9 @@ func (m *platformInterfaceMonitor) Start() error {
 		}
 	}
 	if defaultInterface == nil {
+		if kernelRouted {
+			return nil
+		}
 		return E.New("platform: default interface not set")
 	}
 	m.notify(defaultInterface)
@@ -366,11 +336,17 @@ func (p *xdPlatformInterface) setDefaultInterface(name string, index int) {
 			updated = p.firstUsableInterfaceLocked()
 		} else {
 			resolved := resolvePlatformInterface(name, index)
+			for _, snapshot := range p.networkInterfaces {
+				if snapshot.Name == name && snapshot.Index == index {
+					resolved = snapshot.Interface
+					break
+				}
+			}
 			updated = &resolved
 		}
 	}
 	old := p.defaultInterface
-	if old != nil && updated != nil && old.Name == updated.Name && old.Index == updated.Index {
+	if old != nil && updated != nil && old.Equals(*updated) {
 		p.mu.Unlock()
 		return
 	}
@@ -404,7 +380,10 @@ func (p *xdPlatformInterface) switchCandidate(
 	defaultInterfaceName string,
 	defaultInterfaceIndex int,
 ) (*xdPlatformInterface, error) {
-	if defaultInterfaceName == "" || defaultInterfaceIndex <= 0 {
+	p.mu.Lock()
+	kernelRouted := p.kernelRoutedUnderlay
+	p.mu.Unlock()
+	if !kernelRouted && (defaultInterfaceName == "" || defaultInterfaceIndex <= 0) {
 		return nil, E.New("platform: default Underlay interface is unavailable")
 	}
 	var snapshots []platformNetworkInterfaceSnapshot
@@ -422,7 +401,7 @@ func (p *xdPlatformInterface) switchCandidate(
 			break
 		}
 	}
-	if !defaultFound {
+	if !defaultFound && !kernelRouted {
 		return nil, E.New(
 			"platform: default Underlay is absent from interface snapshot",
 		)
@@ -430,10 +409,13 @@ func (p *xdPlatformInterface) switchCandidate(
 
 	p.mu.Lock()
 	candidate := &xdPlatformInterface{
-		tunFD:              p.tunFD,
-		opener:             p.opener,
-		ownInterfaceName:   p.ownInterfaceName,
-		bindUnderlaySocket: p.bindUnderlaySocket,
+		tunFD:                p.tunFD,
+		opener:               p.opener,
+		ownInterfaceName:     p.ownInterfaceName,
+		bindUnderlaySocket:   p.bindUnderlaySocket,
+		kernelRoutedUnderlay: p.kernelRoutedUnderlay,
+		socketProtector:      p.socketProtector,
+		secureStateStore:     p.secureStateStore,
 	}
 	p.mu.Unlock()
 	if err := candidate.setNetworkInterfaces(snapshots); err != nil {
@@ -455,12 +437,15 @@ func (p *xdPlatformInterface) lineRuntimeCapability() *xdPlatformInterface {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return &xdPlatformInterface{
-		tunFD:              p.tunFD,
-		opener:             p.opener,
-		defaultInterface:   cloneInterface(p.defaultInterface),
-		networkInterfaces:  cloneNetworkInterfaces(p.networkInterfaces),
-		ownInterfaceName:   p.ownInterfaceName,
-		bindUnderlaySocket: p.bindUnderlaySocket,
+		tunFD:                p.tunFD,
+		opener:               p.opener,
+		defaultInterface:     cloneInterface(p.defaultInterface),
+		networkInterfaces:    cloneNetworkInterfaces(p.networkInterfaces),
+		ownInterfaceName:     p.ownInterfaceName,
+		bindUnderlaySocket:   p.bindUnderlaySocket,
+		kernelRoutedUnderlay: p.kernelRoutedUnderlay,
+		socketProtector:      p.socketProtector,
+		secureStateStore:     p.secureStateStore,
 	}
 }
 
@@ -558,7 +543,7 @@ func samePlatformDefaultInterface(left, right *control.Interface) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	return left.Name == right.Name && left.Index == right.Index
+	return left.Equals(*right)
 }
 
 func samePlatformNetworkInterfaces(
@@ -569,8 +554,7 @@ func samePlatformNetworkInterfaces(
 		return false
 	}
 	for index := range left {
-		if left[index].Name != right[index].Name ||
-			left[index].Index != right[index].Index ||
+		if !left[index].Interface.Equals(right[index].Interface) ||
 			left[index].Type != right[index].Type ||
 			left[index].Expensive != right[index].Expensive ||
 			left[index].Constrained != right[index].Constrained {
@@ -581,9 +565,18 @@ func samePlatformNetworkInterfaces(
 }
 
 type platformNetworkInterfaceSnapshot struct {
-	Name  string `json:"name"`
-	Index int    `json:"index"`
-	Type  string `json:"type"`
+	Name  string                  `json:"name"`
+	Index int                     `json:"index"`
+	Type  string                  `json:"type"`
+	Facts *platformInterfaceFacts `json:"facts,omitempty"`
+}
+
+// Android cannot query interface facts through Go's netlink path. The host
+// may supply an atomic OS snapshot; omitted facts preserve Apple behavior.
+type platformInterfaceFacts struct {
+	MTU       int            `json:"mtu"`
+	Flags     uint32         `json:"flags"`
+	Addresses []netip.Prefix `json:"addresses"`
 }
 
 func (p *xdPlatformInterface) setNetworkInterfaces(snapshots []platformNetworkInterfaceSnapshot) error {
@@ -601,8 +594,22 @@ func (p *xdPlatformInterface) setNetworkInterfaces(snapshots []platformNetworkIn
 		if !loaded {
 			return E.New("platform: unsupported network interface type: ", snapshot.Type)
 		}
+		resolved := resolvePlatformInterface(snapshot.Name, snapshot.Index)
+		if snapshot.Facts != nil {
+			if snapshot.Facts.MTU <= 0 {
+				return E.New("platform: invalid interface MTU")
+			}
+			for _, address := range snapshot.Facts.Addresses {
+				if !address.IsValid() {
+					return E.New("platform: invalid interface address")
+				}
+			}
+			resolved.MTU = snapshot.Facts.MTU
+			resolved.Flags = net.Flags(snapshot.Facts.Flags)
+			resolved.Addresses = append([]netip.Prefix(nil), snapshot.Facts.Addresses...)
+		}
 		interfaces = append(interfaces, adapter.NetworkInterface{
-			Interface: resolvePlatformInterface(snapshot.Name, snapshot.Index),
+			Interface: resolved,
 			Type:      interfaceType,
 		})
 	}

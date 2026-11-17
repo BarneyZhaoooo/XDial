@@ -4,6 +4,22 @@ import Foundation
 import XCTest
 
 final class ProfileLibraryTests: XCTestCase {
+    func testExplicitAcquisitionLineSurvivesRoundTripAndCannotFallBack() throws {
+        let legacy = ProfileSource(url: "https://example.com/config")
+        XCTAssertNoThrow(try legacy.validateLegacyAcquisition())
+        for line in ["direct", "proxy-fixture"] {
+            var source = legacy
+            source.fetchLineID = line
+            let restored = try JSONDecoder().decode(ProfileSource.self, from: JSONEncoder().encode(source))
+            XCTAssertEqual(restored.fetchLineID, line)
+            XCTAssertThrowsError(try restored.validateLegacyAcquisition())
+        }
+        let oldJSON = #"{"url":"https://example.com/config","nodesOnly":false,"format":"auto","refreshInterval":86400}"#
+        let restored = try JSONDecoder().decode(ProfileSource.self, from: Data(oldJSON.utf8))
+        XCTAssertNil(restored.fetchLineID)
+        XCTAssertNoThrow(try restored.validateLegacyAcquisition())
+    }
+
     func testWriterMustHoldSharedFileLock() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

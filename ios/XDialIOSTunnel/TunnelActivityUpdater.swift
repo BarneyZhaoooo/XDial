@@ -64,6 +64,18 @@ final class TunnelActivityUpdater: @unchecked Sendable {
         old?.cancel()
     }
 
+    /// 扩展在后台换了场景：实时活动上的场景名跟着换，不用等 App 回到前台。
+    func updateScenarioName(_ name: String) {
+        Task.detached(priority: .utility) {
+            for activity in Activity<XDialConnectionAttributes>.activities {
+                var state = activity.content.state
+                guard state.scenarioName != name else { continue }
+                state.scenarioName = name
+                await activity.update(ActivityContent(state: state, staleDate: nil))
+            }
+        }
+    }
+
     /// 连接结束：停止采样，并把实时活动收掉。
     func stopAndEndActivities() {
         lock.lock()

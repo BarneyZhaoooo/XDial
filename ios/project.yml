@@ -51,6 +51,7 @@ targets:
       - path: XDialIOSTunnel/TunnelActivityUpdater.swift
       - path: XDialShared/XDialConnectionActivity.swift
       - path: XDialShared/XDialIdentity.swift
+      - path: XDialShared/ScenarioAutoSwitch.swift
       - path: XDialIOSTunnel/PrivacyInfo.xcprivacy
         buildPhase: resources
     info:
@@ -72,6 +73,8 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+        # 连接期间由扩展按 Wi-Fi 名称自动选场景（App 可能已被系统挂起）。
+        com.apple.developer.networking.wifi-info: true
         com.apple.security.application-groups:
           - $(XDIAL_APP_GROUP)
         keychain-access-groups:

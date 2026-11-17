@@ -1,5 +1,3 @@
-//go:build !windows
-
 package libbox
 
 import (
@@ -1133,32 +1131,168 @@ func activeRouteRuleSetTags(configJSON []byte) ([]string, error) {
 	return tags, nil
 }
 
-func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, platform config.Platform) (string, error) {
+// neSession is the switch-capable form of GenerateNEConfig. Besides the
+// sing-box configuration it carries the opaque Line runtime identities that
+// let a Packet Tunnel Provider start pool-owned AnyConnect / Tailscale
+// capabilities and later borrow them from a staged Scenario switch.
+//
+// The identities are Provider-memory-only: the host may keep the whole
+// session in the shared Keychain beside the on-demand start envelope, but it
+// must never log them or put them into diagnostics.
+type neSession struct {
+	ConfigJSON            string            `json:"config_json"`
+	LineRuntimeIdentities map[string]string `json:"line_runtime_identities"`
+	AnyConnect            *neSessionLine    `json:"anyconnect,omitempty"`
+	Tailscale             *neSessionLine    `json:"tailscale,omitempty"`
+}
+
+// neSessionLine names the single AnyConnect or Tailscale Line used by the
+// active Scenario. Credentials stay with the host's existing start contract.
+type neSessionLine struct {
+	LineID          string `json:"line_id"`
+	RuntimeIdentity string `json:"runtime_identity"`
+}
+
+// GenerateNESession compiles the active Scenario like GenerateNEConfig and
+// returns a JSON neSession. iOS uses it for every start so that the running
+// generation's Line capabilities are reusable by a later in-tunnel switch.
+func GenerateNESession(profileJSON string, vpnServerIP string, basePath string) (string, error) {
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", err
 	}
-	ruleDir, err := prepareNERuleSetDirectory(basePath)
+	data, err := generateNEConfigData(profile, vpnServerIP, basePath, config.PlatformNE)
 	if err != nil {
 		return "", err
 	}
-	if err := materializeNERuleSets(profile, basePath, subscription.FetchStrictBytes); err != nil {
+	plan, err := config.BuildConnectionPlan(profile)
+	if err != nil {
 		return "", err
+	}
+	identities, err := activeLineRuntimeIdentities(profile, plan)
+	if err != nil {
+		return "", err
+	}
+	session := neSession{
+		ConfigJSON:            string(data),
+		LineRuntimeIdentities: identities,
+	}
+	lineFor := func(lineID string) (*neSessionLine, error) {
+		identity := identities[lineID]
+		if identity == "" {
+			return nil, fmt.Errorf("active Line %q has no runtime identity", lineID)
+		}
+		return &neSessionLine{LineID: lineID, RuntimeIdentity: identity}, nil
+	}
+	if line := profile.ActiveVPNLine(); line != nil {
+		if session.AnyConnect, err = lineFor(line.ID); err != nil {
+			return "", err
+		}
+	}
+	tailscaleLine, err := config.ActiveTailscaleLine(profile)
+	if err != nil {
+		return "", err
+	}
+	if tailscaleLine != nil {
+		if session.Tailscale, err = lineFor(tailscaleLine.ID); err != nil {
+			return "", err
+		}
+	}
+	encoded, err := json.Marshal(session)
+	if err != nil {
+		return "", fmt.Errorf("encode NetworkExtension session: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// GenerateAndroidConfig accepts network facts and reads validated offline caches.
+// Network preparation requires Libbox.PrepareAndroidConfig and its protector.
+func GenerateAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
+	var servers []string
+	if err := json.Unmarshal([]byte(systemDNSJSON), &servers); err != nil {
+		return "", fmt.Errorf("invalid system DNS snapshot")
+	}
+	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxAndroid(profile, basePath, servers)
+	}, nil)
+}
+
+func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, platform config.Platform) (string, error) {
+	return generatePacketTunnelConfig(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	})
+}
+
+func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error)) (string, error) {
+	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, generate, subscription.FetchStrictBytes)
+}
+
+func generatePacketTunnelConfigWithFetcher(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) (string, error) {
+	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
+	if err != nil {
+		return "", err
+	}
+	data, err := generatePacketTunnelConfigData(profile, basePath, generate, fetch)
+	return string(data), err
+}
+
+func generateNEConfigData(profile *config.Profile, vpnServerIP, basePath string, platform config.Platform) ([]byte, error) {
+	return generatePacketTunnelConfigData(profile, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	}, subscription.FetchStrictBytes)
+}
+
+func generatePacketTunnelConfigData(profile *config.Profile, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) ([]byte, error) {
+	ruleDir, err := prepareNERuleSetDirectory(basePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := materializeNERuleSets(profile, basePath, fetch); err != nil {
+		return nil, err
 	}
 	// socksPort 在 NE 模式下不生效(vpn 出口固定用自研 type:"vpn",见
 	// generator.go 里的 NetworkExtension 分支),这里固定传 0。
-	data, err := config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	data, err := generate(profile)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	data, err = materializeGeneratedNERuleSets(data, ruleDir, subscription.FetchStrictBytes)
+	data, err = materializeGeneratedNERuleSets(data, ruleDir, fetch)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(data) > maxNEConfigBytes {
-		return "", fmt.Errorf("generated NetworkExtension config exceeds %d-byte limit", maxNEConfigBytes)
+		return nil, fmt.Errorf("generated NetworkExtension config exceeds %d-byte limit", maxNEConfigBytes)
 	}
-	return string(data), nil
+	return data, nil
+}
+
+// GenerateAndroidTailscaleSetupConfig uses the same compiler-owned Direct DNS
+// bootstrap as Android data sessions, with no TUN or plaintext local resolver.
+func GenerateAndroidTailscaleSetupConfig(profileJSON, lineID, systemDNSJSON, basePath string) (string, error) {
+	setup, err := GenerateTailscaleSetupConfig(profileJSON, lineID, basePath)
+	if err != nil {
+		return "", err
+	}
+	var servers []string
+	if err = json.Unmarshal([]byte(systemDNSJSON), &servers); err != nil {
+		return "", fmt.Errorf("invalid system DNS snapshot")
+	}
+	direct := &config.Profile{Lines: []config.Line{{ID: "direct", Type: config.LineTypeDirect, Enabled: true}}, Scenarios: []config.Scenario{{ID: "setup", DefaultLineID: "direct"}}, ActiveScenarioID: "setup"}
+	data, err := config.GenerateSingBoxAndroid(direct, "", servers)
+	if err != nil {
+		return "", err
+	}
+	var source, target map[string]json.RawMessage
+	if err = json.Unmarshal(data, &source); err != nil {
+		return "", err
+	}
+	if err = json.Unmarshal([]byte(setup), &target); err != nil {
+		return "", err
+	}
+	target["dns"] = source["dns"]
+	target["route"] = source["route"]
+	data, err = json.Marshal(target)
+	return string(data), err
 }
 
 // GenerateTailscaleSetupConfig 生成主 App 登录和发现节点所需的最小配置。
@@ -1289,6 +1423,10 @@ func materializeNERuleSetsWithRefreshEvents(
 	fetch neRuleSetFetcher,
 	progress connectionPreparationSink,
 ) ([]pendingNERuleSetRefresh, error) {
+	return materializeNERuleSetsWithFetchForRule(profile, basePath, func(*config.RuleSet) neRuleSetFetcher { return fetch }, progress)
+}
+
+func materializeNERuleSetsWithFetchForRule(profile *config.Profile, basePath string, fetchForRule func(*config.RuleSet) neRuleSetFetcher, progress connectionPreparationSink) ([]pendingNERuleSetRefresh, error) {
 	scenario := profile.ActiveScenario()
 	if scenario == nil {
 		return nil, fmt.Errorf("no active scenario")
@@ -1370,6 +1508,7 @@ func materializeNERuleSetsWithRefreshEvents(
 			})
 		}
 		if cachedErr != nil {
+			fetch := fetchForRule(rule)
 			if fetch == nil {
 				emitConnectionPreparationFailure(
 					progress,
@@ -1466,14 +1605,19 @@ func readValidatedNERuleSet(
 	format string,
 	limit int64,
 ) ([]byte, config.RuleSetMatchKind, os.FileInfo, error) {
-	info, err := os.Stat(localPath)
+	file, err := openRuleSetFile(localPath)
+	if err != nil {
+		return nil, config.RuleSetMatchUnknown, nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
 	if err != nil {
 		return nil, config.RuleSetMatchUnknown, nil, err
 	}
 	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > limit {
 		return nil, config.RuleSetMatchUnknown, nil, fmt.Errorf("cached rule set is invalid")
 	}
-	content, err := os.ReadFile(localPath)
+	content, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, config.RuleSetMatchUnknown, nil, err
 	}
@@ -1781,6 +1925,9 @@ func materializeGeneratedNERuleSetsWithEvents(
 			format,
 			remaining,
 			func(limit int64) ([]byte, error) {
+				if fetch == nil {
+					return nil, fmt.Errorf("resource has no valid offline cache")
+				}
 				return fetch(rawURL, limit)
 			},
 		)
