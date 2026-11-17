@@ -48,12 +48,28 @@ extension XDialConnectionAttributes.ContentState {
 
 /// 网速的两种写法：灵动岛收起时地方小，用「1.4M」；其它地方用「1.4 MB/s」。
 enum XDialSpeedFormat {
+    /// 灵动岛收起时地方很窄，K 以上最多四个字符：「12K」「0.1M」「9.9M」「12M」「1.2G」。
+    /// 100K 起就换成 M，免得出现「120K」「999K」这种更宽的写法。
     static func short(_ bytesPerSecond: Double?) -> String {
         guard let value = bytesPerSecond, value >= 0 else { return "—" }
         if value < 1_000 { return "\(Int(value))B" }
-        if value < 1_000_000 { return "\(Int((value / 1_000).rounded()))K" }
-        if value < 1_000_000_000 { return String(format: "%.1fM", value / 1_000_000) }
-        return String(format: "%.1fG", value / 1_000_000_000)
+        let kilo = (value / 1_000).rounded()
+        if kilo < 100 { return "\(Int(kilo))K" }
+        if let mega = twoDigits(value / 1_000_000, unit: "M") { return mega }
+        if let giga = twoDigits(value / 1_000_000_000, unit: "G") { return giga }
+        return "\(Int((value / 1_000_000_000).rounded()))G"
+    }
+
+    /// `short` 可能写出的最宽样子，灵动岛按它定排法和字号。
+    static let widestShort = "0.0M"
+
+    /// 不到 10 保留一位小数，10 到 99 取整；到 100 就交给下一个单位。
+    private static func twoDigits(_ amount: Double, unit: String) -> String? {
+        let tenths = (amount * 10).rounded() / 10
+        if tenths < 10 { return String(format: "%.1f%@", tenths, unit) }
+        let whole = amount.rounded()
+        if whole < 100 { return "\(Int(whole))\(unit)" }
+        return nil
     }
 
     static func full(_ bytesPerSecond: Double?) -> String {

@@ -149,20 +149,59 @@ private struct DisconnectButton: View {
 }
 
 /// 灵动岛收起时的一侧网速。
+/// 灵动岛会按这里内容的宽度伸缩，所以这里既要放得下，也不能比以前更占地方：
+/// - 横着的灵动岛：箭头在左、数字在右，宽度跟着数字走；`short` 最多四个字符，最宽也比以前窄。
+/// - 竖着的灵动岛（iPhone Duo 等）每侧只有一枚胶囊宽，箭头放旁边连「12K」都放不下，
+///   会被截成「…」；这时只留数字，上面是下载、下面是上传，和横着时左下载、右上传对应，
+///   一行字的高度也不比以前高。
+/// 排法拿最宽的写法去试，只取决于灵动岛的形状，不会因为网速变化而换排法或字号。
 private struct CompactSpeed: View {
     let symbol: String
     let value: Double
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 2) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-            Text(XDialSpeedFormat.short(value))
-                .font(.system(.caption, design: .rounded).monospacedDigit().weight(.semibold))
-                .contentTransition(.numericText())
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 2) {
+                Image(systemName: symbol)
+                    .font(.system(size: 9, weight: .bold))
+                number(size: 12)
+            }
+            number(size: 11)
+            number(size: 10)
         }
         .foregroundStyle(tint)
+    }
+
+    private func number(size: CGFloat) -> some View {
+        let font = Font.system(size: size, weight: .semibold, design: .rounded).monospacedDigit()
+        return WidestDecidesFit {
+            Text(XDialSpeedFormat.widestShort).font(font).hidden()
+            Text(XDialSpeedFormat.short(value))
+                .font(font)
+                .contentTransition(.numericText())
+        }
+        .lineLimit(1)
+    }
+}
+
+/// 第一个子视图是最宽写法的占位，第二个是实际内容。
+/// 判断放不放得下（理想宽度）时按占位算，真正排版时按实际内容的大小来，
+/// 这样排法稳定，占的地方又不会比实际内容大。
+private struct WidestDecidesFit: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let content = subviews[1].sizeThatFits(proposal)
+        guard proposal.width == nil else { return content }
+        let widest = subviews[0].sizeThatFits(.unspecified)
+        return CGSize(width: max(widest.width, content.width), height: content.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let origin = CGPoint(x: bounds.minX, y: bounds.midY)
+        for subview in subviews {
+            subview.place(at: origin, anchor: .leading, proposal: ProposedViewSize(bounds.size))
+        }
     }
 }
 
