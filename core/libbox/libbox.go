@@ -1,5 +1,3 @@
-//go:build !windows
-
 // Package libbox 是 XDial tvOS 自研引擎的进程内门面:
 // sslcon(AnyConnect) + gVisor 用户态栈 + sing-box(库,非外置进程)整合成
 // 单个 gomobile 可绑定的 API,供 NEPacketTunnelProvider(Swift)调用。
@@ -45,7 +43,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/ntp"
 	"github.com/sagernet/sing/service"
-	"golang.org/x/sys/unix"
 	"sslcon/session"
 
 	"github.com/kafeifei/xdial/core/config"
@@ -97,16 +94,22 @@ var anyConnectReconnectDelays = [...]time.Duration{
 }
 
 type Libbox struct {
-	mu        sync.Mutex
-	cb        Callback
-	vpn       vpnClient
-	bridge    *engine.VPNBridge
-	box       *box.Box
-	running   bool
-	platform  *xdPlatformInterface
-	lastError string
-	dnsJSON   string
-	session   *session.ConnSession
+	stablePacketIngress       bool
+	nativeFlowIngress         bool
+	nativeFlowConfigValidator func(string) error
+	androidSwitchCancel       context.CancelFunc
+	androidRefreshCancel      context.CancelFunc
+	packetIngress             *packetIngress
+	mu                        sync.Mutex
+	cb                        Callback
+	vpn                       vpnClient
+	bridge                    *engine.VPNBridge
+	box                       *box.Box
+	running                   bool
+	platform                  *xdPlatformInterface
+	lastError                 string
+	dnsJSON                   string
+	session                   *session.ConnSession
 	// generation scopes the process-global AnyConnect session monitor. A Box
 	// switch that reuses that session must not change it.
 	generation uint64
@@ -229,6 +232,7 @@ type preparedBoxSwitch struct {
 // Box, so Commit cannot close any of these resources. Retire owns the sole
 // transition from retained to closed.
 type retiredBoxGeneration struct {
+	packetFlows           *packetGeneration
 	box                   *box.Box
 	runtimeCtx            context.Context
 	runtimeCancel         context.CancelFunc
@@ -237,10 +241,17 @@ type retiredBoxGeneration struct {
 }
 
 func New(cb Callback) *Libbox {
+	platform := &xdPlatformInterface{}
+	vpn := engine.NewVPNClient()
+	// Apple keeps its existing provider/Underlay transport semantics. Android
+	// cannot rely on provider socket exclusion and must protect every socket.
+	if runtime.GOOS == "android" {
+		vpn = engine.NewVPNClientWithSocketControl(platform.AutoDetectInterfaceControl)
+	}
 	return &Libbox{
 		cb:       cb,
-		vpn:      engine.NewVPNClient(),
-		platform: &xdPlatformInterface{},
+		vpn:      vpn,
+		platform: platform,
 	}
 }
 
@@ -1240,6 +1251,14 @@ func (l *Libbox) coldStart(
 	if l.running {
 		return failLocked(ErrCodeState, fmt.Errorf("already running"))
 	}
+	if l.nativeFlowConfigValidator != nil {
+		if anyConnectConfig != nil || runtimeIdentity != "" || tailscaleLineID != "" || tailscaleRuntimeIdentity != "" {
+			return failLocked(ErrCodeConfig, fmt.Errorf("native adapter protocol socket capability is unavailable"))
+		}
+		if err := l.nativeFlowConfigValidator(configJSON); err != nil {
+			return failLocked(ErrCodeConfig, err)
+		}
+	}
 
 	// A new full lifecycle never inherits capability state from an earlier
 	// failed Start/retry. Only pool leases, not a startup-time Line list, decide
@@ -1269,6 +1288,8 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Add(1)
 	platform := l.platform
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	stablePacketIngress := l.stablePacketIngress
+	nativeFlowIngress := l.nativeFlowIngress
 	l.lastError = ""
 	l.dnsJSON = ""
 	l.anyConnectDiagnostics = nil
@@ -1291,6 +1312,8 @@ func (l *Libbox) coldStart(
 		tailscaleSpec       *tailscaleRuntimeSpec
 		tailscaleCapability pooledTailscaleRuntime
 		instance            *box.Box
+		ingress             *packetIngress
+		packetOptions       *option.Inbound
 		routingProbe        *routingProbeTracker
 	)
 	if err := baseCtx.Err(); err != nil {
@@ -1370,7 +1393,7 @@ func (l *Libbox) coldStart(
 	if startErr == nil && tailscaleCapability != nil {
 		ctx = service.ContextWith[*tailscaleLineRuntime](
 			ctx,
-			tailscaleCapability.lineHandle(),
+			tailscaleCapability.lineHandle().forEndpointTag(tailscaleSpec.endpointTag),
 		)
 	}
 	ctx = service.ContextWith[adapter.PlatformInterface](
@@ -1384,6 +1407,17 @@ func (l *Libbox) coldStart(
 			ctx,
 			[]byte(configJSON),
 		)
+		if startErr == nil && nativeFlowIngress && len(options.Inbounds) != 0 {
+			startErr = fmt.Errorf("native flow ingress requires a listener-free traffic configuration")
+		}
+		if startErr == nil && stablePacketIngress {
+			if len(options.Inbounds) != 1 || options.Inbounds[0].Type != "tun" {
+				startErr = fmt.Errorf("stable packet ingress requires exactly one TUN")
+			} else {
+				packetOptions = &options.Inbounds[0]
+				options.Inbounds = nil
+			}
+		}
 		if startErr != nil {
 			startErr = fmt.Errorf("parse sing-box config: %w", startErr)
 		} else {
@@ -1405,6 +1439,13 @@ func (l *Libbox) coldStart(
 				}
 			}
 		}
+	}
+
+	if startErr == nil && packetOptions != nil {
+		ingress, startErr = newPacketIngress(*packetOptions, platform, newPacketGeneration(ctx, instance.Router()))
+	}
+	if startErr == nil && nativeFlowIngress {
+		ingress = &packetIngress{current: newPacketGeneration(ctx, instance.Router()), cancel: func() {}}
 	}
 
 	l.mu.Lock()
@@ -1433,6 +1474,7 @@ func (l *Libbox) coldStart(
 			startErrorCode = ErrCodeState
 		} else {
 			l.box = instance
+			l.packetIngress = ingress
 			l.running = true
 			l.runtimeCtx = ctx
 			l.runtimeCancel = cancel
@@ -1513,6 +1555,7 @@ func (l *Libbox) coldStart(
 	l.mu.Unlock()
 
 	cancel()
+	ingress.close()
 	if instance != nil {
 		_ = instance.Close()
 	}
@@ -1835,7 +1878,53 @@ func (l *Libbox) prepareSwitch(
 	defaultInterfaceIndex int,
 	networkGenerations ...*lineNetworkGeneration,
 ) error {
+	return l.prepareSwitchContext(context.Background(), configJSON, anyConnectLineID, anyConnectRuntimeIdentity, targetAnyConnectConfig, tailscaleLineID, tailscaleRuntimeIdentity, networkInterfacesJSON, defaultInterfaceName, defaultInterfaceIndex, networkGenerations...)
+}
+
+func (l *Libbox) prepareSwitchContext(
+	parent context.Context,
+	configJSON,
+	anyConnectLineID,
+	anyConnectRuntimeIdentity string,
+	targetAnyConnectConfig *engine.VPNConfig,
+	tailscaleLineID,
+	tailscaleRuntimeIdentity string,
+	networkInterfacesJSON,
+	defaultInterfaceName string,
+	defaultInterfaceIndex int,
+	networkGenerations ...*lineNetworkGeneration,
+) error {
+	// A candidate must not acquire a second packet reader for a live OS TUN.
+	// Mobile switching needs a separately owned stable ingress first; callers
+	// cannot use the flow/relay transaction as an implicit packet-TUN switch.
+	var ingressCheck struct {
+		Inbounds []struct {
+			Type string `json:"type"`
+		} `json:"inbounds"`
+	}
+	if err := stdjson.Unmarshal([]byte(configJSON), &ingressCheck); err != nil {
+		return fmt.Errorf("invalid switch configuration")
+	}
+	for _, inbound := range ingressCheck.Inbounds {
+		if inbound.Type == "tun" {
+			return fmt.Errorf("switch candidate requires an independently owned flow ingress")
+		}
+	}
 	l.mu.Lock()
+	if l.nativeFlowIngress && len(ingressCheck.Inbounds) != 0 {
+		l.mu.Unlock()
+		return fmt.Errorf("native flow candidate must not create a listener")
+	}
+	if l.nativeFlowConfigValidator != nil {
+		if targetAnyConnectConfig != nil || anyConnectRuntimeIdentity != "" || tailscaleLineID != "" || tailscaleRuntimeIdentity != "" {
+			l.mu.Unlock()
+			return fmt.Errorf("native adapter protocol socket capability is unavailable")
+		}
+		if err := l.nativeFlowConfigValidator(configJSON); err != nil {
+			l.mu.Unlock()
+			return err
+		}
+	}
 	if !l.running || l.box == nil || l.runtimeCtx == nil {
 		l.mu.Unlock()
 		return fmt.Errorf("connection is not running")
@@ -1880,7 +1969,14 @@ func (l *Libbox) prepareSwitch(
 		return err
 	}
 	l.switchPreparing = true
-	baseCtx, cancel := context.WithCancel(context.Background())
+	scope := newLineRuntimeCapabilityPreparation(parent)
+	baseCtx, cancel := scope.runtimeCtx, scope.cancel
+	detached := false
+	defer func() {
+		if !detached {
+			scope.abort()
+		}
+	}()
 	l.switchPreparationCancel = cancel
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
 	// Stop cancels preparation and waits for this borrower before it closes any
@@ -1997,7 +2093,7 @@ func (l *Libbox) prepareSwitch(
 	if usesTailscale && err == nil {
 		ctx = service.ContextWith[*tailscaleLineRuntime](
 			ctx,
-			candidateTailscale.lineHandle(),
+			candidateTailscale.lineHandle().forEndpointTag(tailscaleSpec.endpointTag),
 		)
 	}
 	ctx = service.ContextWith[adapter.PlatformInterface](
@@ -2128,9 +2224,12 @@ func (l *Libbox) prepareSwitch(
 			(!usesTailscale || reusesTailscale ||
 				sourceTailscaleCapability == nil)
 	if err == nil && candidate != nil && activeIsUnchanged {
-		l.preparedSwitch = candidate
-		l.mu.Unlock()
-		return nil
+		if err = scope.detach(); err == nil {
+			detached = true
+			l.preparedSwitch = candidate
+			l.mu.Unlock()
+			return nil
+		}
 	}
 	l.mu.Unlock()
 
@@ -2483,6 +2582,9 @@ func (l *Libbox) CommitPreparedSwitch() error {
 		return err
 	}
 
+	if l.packetIngress != nil {
+		retired.packetFlows = l.packetIngress.swap(newPacketGeneration(candidate.runtimeCtx, candidate.box.Router()))
+	}
 	l.box = candidate.box
 	l.platform = candidate.platform
 	l.runtimeCtx = candidate.runtimeCtx
@@ -2714,6 +2816,7 @@ func (l *Libbox) closeRetiredGenerationLocked(
 	if retired.runtimeCancel != nil {
 		retired.runtimeCancel()
 	}
+	retired.packetFlows.close()
 	if retired.box != nil {
 		_ = retired.box.Close()
 	}
@@ -2781,7 +2884,7 @@ func (l *Libbox) Stop() error {
 	retired := l.retiredSwitch
 	l.retiredSwitch = nil
 
-	instance, stateLocks, detachedLineRuntimes := l.detachRunningLocked()
+	instance, stateLocks, detachedLineRuntimes, ingress := l.detachRunningLocked()
 	cb := l.cb
 	l.mu.Unlock()
 	defer l.finishCleaning()
@@ -2795,7 +2898,7 @@ func (l *Libbox) Stop() error {
 	if retired != nil {
 		l.closeRetiredGenerationLocked(retired)
 	}
-	l.closeDetached(instance, stateLocks, detachedLineRuntimes)
+	l.closeDetached(instance, stateLocks, detachedLineRuntimes, ingress)
 
 	if cb != nil {
 		cb.OnStatusChanged(`{"status":"disconnected"}`)
@@ -3090,7 +3193,7 @@ func (l *Libbox) failAfterAnyConnectReconnect(
 	l.preparedSwitch = nil
 	retired := l.retiredSwitch
 	l.retiredSwitch = nil
-	instance, stateLocks, detachedLineRuntimes := l.detachRunningLocked()
+	instance, stateLocks, detachedLineRuntimes, ingress := l.detachRunningLocked()
 	cb := l.cb
 	l.mu.Unlock()
 	defer l.finishCleaning()
@@ -3104,7 +3207,7 @@ func (l *Libbox) failAfterAnyConnectReconnect(
 	if retired != nil {
 		l.closeRetiredGenerationLocked(retired)
 	}
-	l.closeDetached(instance, stateLocks, detachedLineRuntimes)
+	l.closeDetached(instance, stateLocks, detachedLineRuntimes, ingress)
 	if cb != nil {
 		cb.OnError(ErrCodeNetwork, failureMessage)
 		cb.OnStatusChanged(`{"status":"disconnected"}`)
@@ -3158,7 +3261,13 @@ func (l *Libbox) detachRunningLocked() (
 	*box.Box,
 	[]*os.File,
 	[]lineRuntimeCapability,
+	*packetIngress,
 ) {
+	ingress := l.packetIngress
+	l.packetIngress = nil
+	if ingress != nil {
+		ingress.disable()
+	}
 	instance := l.box
 	stateLocks := l.stateLocks
 	detachedLineRuntimes := l.lineRuntimes.detachAll()
@@ -3186,14 +3295,16 @@ func (l *Libbox) detachRunningLocked() (
 	l.generation++
 	l.boxGeneration++
 	l.cleaning = true
-	return instance, stateLocks, detachedLineRuntimes
+	return instance, stateLocks, detachedLineRuntimes, ingress
 }
 
 func (l *Libbox) closeDetached(
 	instance *box.Box,
 	stateLocks []*os.File,
 	detachedLineRuntimes []lineRuntimeCapability,
+	ingress *packetIngress,
 ) {
+	ingress.close()
 	// detachRunningLocked cancels runtimeCtx before reaching this wait. A
 	// well-behaved probe therefore exits promptly, while this barrier prevents
 	// Box.Close (and VPNBridge.Close for the vpn outbound) from racing the
@@ -3260,10 +3371,10 @@ func acquireTailscaleStateLocks(configJSON string) ([]*os.File, error) {
 			releaseTailscaleStateLocks(locks)
 			return nil, fmt.Errorf("open Tailscale state lock: %w", err)
 		}
-		if err := unix.Flock(int(lockFile.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if err := tryLockStateFile(lockFile); err != nil {
 			_ = lockFile.Close()
 			releaseTailscaleStateLocks(locks)
-			if errors.Is(err, unix.EWOULDBLOCK) {
+			if errors.Is(err, errTailscaleStateInUse) {
 				return nil, errTailscaleStateInUse
 			}
 			return nil, fmt.Errorf("lock Tailscale state: %w", err)
@@ -3275,7 +3386,7 @@ func acquireTailscaleStateLocks(configJSON string) ([]*os.File, error) {
 
 func releaseTailscaleStateLocks(locks []*os.File) {
 	for index := len(locks) - 1; index >= 0; index-- {
-		_ = unix.Flock(int(locks[index].Fd()), unix.LOCK_UN)
+		_ = unlockStateFile(locks[index])
 		_ = locks[index].Close()
 	}
 }

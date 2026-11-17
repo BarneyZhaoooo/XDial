@@ -16,7 +16,7 @@ func TestSingBoxStopKillsHungProcess(t *testing.T) {
 		t.Fatalf("start process: %v", err)
 	}
 
-	process := &SingBoxProcess{cmd: cmd}
+	process := &SingBoxProcess{cmd: wrapSingBoxCommand(cmd)}
 	started := time.Now()
 	process.stop(100 * time.Millisecond)
 	if elapsed := time.Since(started); elapsed > time.Second {
@@ -41,10 +41,10 @@ func startWatched(t *testing.T, script string, onExit func(error)) *SingBoxProce
 	process := &SingBoxProcess{
 		configPath: filepath.Join(t.TempDir(), "sing-box.json"),
 		onExit:     onExit,
-		cmd:        cmd,
+		cmd:        wrapSingBoxCommand(cmd),
 		exited:     exited,
 	}
-	go process.watch(cmd, exited, logWriter)
+	go process.watch(process.cmd, exited, logWriter)
 	return process
 }
 

@@ -2,16 +2,7 @@
 
 package main
 
-import (
-	"log/slog"
-	"os/exec"
-)
-
-func killOrphanSingBox(pattern string) {
-	out, err := exec.Command("pgrep", "-f", pattern).Output()
-	if err != nil || len(out) == 0 {
-		return
-	}
-	slog.Info("killing orphan sing-box processes")
-	exec.Command("pkill", "-f", pattern).Run()
-}
+// Children launched by this version have an OS-backed owner lifetime. An old
+// process whose owner cannot be proven is not ours to kill by name or pattern.
+// Recovery of older installations requires an explicit installation transaction.
+func killOrphanSingBox(string) {}

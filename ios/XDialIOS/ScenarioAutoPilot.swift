@@ -2,6 +2,7 @@ import Foundation
 import Network
 import NetworkExtension
 import Observation
+@preconcurrency import Libbox
 
 /// 当前网络的两条线索：连着哪个 Wi-Fi，流量从哪个国家或地区出去。
 struct NetworkSurroundings: Equatable, Sendable {
@@ -32,17 +33,25 @@ enum ScenarioAutoPicker {
         scenarios: [Scenario],
         regionScenarios: [String: String] = [:]
     ) -> Pick? {
-        if let ssid = surroundings.ssid?.trimmingCharacters(in: .whitespacesAndNewlines), !ssid.isEmpty,
-           let matched = scenarios.first(where: { scenario in
-               scenario.matchSSIDs.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == ssid }
-           }) {
-            return Pick(scenarioID: matched.id, reason: .wifi(ssid))
+        struct WirePick: Decodable {
+            let scenario_id: String
+            let reason: String
         }
-        guard let code = surroundings.countryCode?.uppercased(), code.count == 2,
-              code.allSatisfy({ $0.isASCII && $0.isLetter }),
-              let scenarioID = regionScenarios[code] ?? regionScenarios["*"],
-              scenarios.contains(where: { $0.id == scenarioID }) else { return nil }
-        return Pick(scenarioID: scenarioID, reason: .country(code))
+        guard let scenariosData = try? JSONEncoder().encode(scenarios),
+              let regionsData = try? JSONEncoder().encode(regionScenarios),
+              let scenariosJSON = String(data: scenariosData, encoding: .utf8),
+              let regionsJSON = String(data: regionsData, encoding: .utf8) else { return nil }
+        var error: NSError?
+        let raw = LibboxPickScenario(
+            scenariosJSON, regionsJSON, surroundings.ssid ?? "", surroundings.countryCode ?? "", &error
+        )
+        guard error == nil,
+              let data = raw.data(using: .utf8),
+              let result = try? JSONDecoder().decode(WirePick.self, from: data) else { return nil }
+        let reason: Pick.Reason = result.reason == "wifi"
+            ? .wifi((surroundings.ssid ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+            : .country((surroundings.countryCode ?? "").uppercased())
+        return Pick(scenarioID: result.scenario_id, reason: reason)
     }
 }
 

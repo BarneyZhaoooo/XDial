@@ -1,4 +1,4 @@
-//go:build !windows && with_gvisor && !mobile_no_tailscale
+//go:build with_gvisor && !mobile_no_tailscale
 
 package libbox
 
@@ -298,6 +298,19 @@ func (l *Libbox) PreparedSwitchTailscaleStatus(
 // deliberately separate from TailscaleStatus so setup/UI status stays redacted.
 func (l *Libbox) TailscaleDNSCaptureDomains(endpointTag string) (string, error) {
 	endpoint, _, _, release, err := l.tailscaleRuntime(endpointTag)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	data, err := json.Marshal(endpoint.DNSCaptureDomains())
+	if err != nil {
+		return "", fmt.Errorf("Tailscale DNS capture domains are unavailable")
+	}
+	return string(data), nil
+}
+
+func (l *Libbox) preparedSwitchTailscaleDNSCaptureDomains(endpointTag string) (string, error) {
+	endpoint, _, _, release, err := l.preparedSwitchTailscaleRuntime(endpointTag)
 	if err != nil {
 		return "", err
 	}

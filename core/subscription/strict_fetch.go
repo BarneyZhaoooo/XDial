@@ -87,6 +87,13 @@ func FetchStrictBytesWithNetworkContext(
 	lookup func(context.Context, string, string) ([]netip.Addr, error),
 	dial func(context.Context, string, string) (net.Conn, error),
 ) ([]byte, error) {
+	return fetchStrictBytesWithNetworkContext(parent, rawURL, maxBytes, lookup, dial, false)
+}
+
+func FetchProfileSourceBytesWithNetworkContext(parent context.Context, rawURL string, maxBytes int64, lookup func(context.Context, string, string) ([]netip.Addr, error), dial func(context.Context, string, string) (net.Conn, error)) ([]byte, error) {
+	return fetchStrictBytesWithNetworkContext(parent, rawURL, maxBytes, lookup, dial, true)
+}
+func fetchStrictBytesWithNetworkContext(parent context.Context, rawURL string, maxBytes int64, lookup strictLookupFunc, dial strictDialFunc, source bool) ([]byte, error) {
 	if lookup == nil || dial == nil {
 		return nil, fmt.Errorf("remote network path is unavailable")
 	}
@@ -96,15 +103,29 @@ func FetchStrictBytesWithNetworkContext(
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DialContext = newStrictDialContext(lookup, dial)
+	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport:     transport,
 		Timeout:       30 * time.Second,
 		CheckRedirect: strictRedirectPolicy,
 	}
+	if source {
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if err := strictRedirectPolicy(req, via); err != nil {
+				return err
+			}
+			return ValidateProfileSourceURL(req.URL.String())
+		}
+	}
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	if err := validateStrictRemoteURL(rawURL); err != nil {
 		return nil, err
+	}
+	if source {
+		if err := ValidateProfileSourceURL(rawURL); err != nil {
+			return nil, err
+		}
 	}
 	content, err := fetchWithClientLimit(ctx, rawURL, client, maxBytes)
 	if err != nil {
@@ -170,4 +191,14 @@ func newStrictDialContext(lookup strictLookupFunc, dial strictDialFunc) strictDi
 func forbiddenRemoteIP(address netip.Addr) bool {
 	address = address.Unmap()
 	return !address.IsValid() || !address.IsGlobalUnicast() || address.IsPrivate() || carrierGradeNAT.Contains(address)
+}
+
+// ValidateProfileSourceURL bounds the source declaration before any network IO.
+// Query tokens are allowed but must remain in encrypted host storage.
+func ValidateProfileSourceURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || len(rawURL) > 4096 || parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("invalid source address")
+	}
+	return validateStrictRemoteURL(rawURL)
 }

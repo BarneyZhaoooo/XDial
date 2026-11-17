@@ -78,7 +78,7 @@ func validateGroupDependencies(profile *Profile, line *Line) error {
 	return validateGroupReferences(profile, line, true)
 }
 
-func validateGroupReferences(profile *Profile, line *Line, requireUsable bool) error {
+func validateGroupReferences(profile *Profile, line *Line, requireUsable bool, allowEmpty ...bool) error {
 	visiting := map[string]bool{}
 	var visit func(*Line, int) error
 	visit = func(item *Line, depth int) error {
@@ -101,6 +101,9 @@ func validateGroupReferences(profile *Profile, line *Line, requireUsable bool) e
 			return fmt.Errorf("urltest groups containing Direct are not supported: dynamic DNS ownership would change; use a selector for Direct")
 		}
 		if len(item.GroupMembers) == 0 {
+			if !requireUsable && len(allowEmpty) > 0 && allowEmpty[0] && item.GroupDefault == "" {
+				return nil
+			}
 			return fmt.Errorf("line group has no members")
 		}
 		visiting[item.ID] = true

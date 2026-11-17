@@ -6,6 +6,45 @@ on:
   pull_request:
 
 jobs:
+  android:
+    name: Android (dual ABI + inspected APK artifacts)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: install pinned Android SDK components
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.1.12297006'
+      - name: build and inspect debug and unsigned release APKs
+        run: python3 scripts/build-android.py --mode ci
+      - name: version, artifact and real signing contract tests
+        env:
+          XDIAL_ANDROID_TEST_APK: ${{ github.workspace }}/android/app/build/outputs/apk/release/app-release-unsigned.apk
+        run: python3 -m unittest discover -s scripts/tests -p 'test_android_build.py'
+      # These contain only the public source build. Public-repo artifacts are
+      # not private distribution; no company seed or long-lived signer is used.
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: android-${{ github.run_number }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: build/android/artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   # Beta shares the formal identity, configuration library, App Group and
   # helper with stable, so xdial-beta may not change the files whose formats
   # evolve only through main. This job only reports; release.yml and

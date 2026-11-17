@@ -2,7 +2,9 @@ package engine
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
+	"syscall"
 
 	"sslcon/auth"
 	"sslcon/base"
@@ -37,18 +39,42 @@ type VPNInfo struct {
 }
 
 type VPNClient struct {
-	mu   sync.Mutex
-	info *VPNInfo
+	mu            sync.Mutex
+	info          *VPNInfo
+	socketControl func(int) error
 }
 
 func NewVPNClient() *VPNClient {
 	return &VPNClient{}
 }
 
+// NewVPNClientWithSocketControl captures the host boundary for this client.
+// Each successful sslcon session retains this control for its DTLS channel.
+func NewVPNClientWithSocketControl(control func(int) error) *VPNClient {
+	return &VPNClient{socketControl: control}
+}
+
 func (c *VPNClient) Connect(cfg VPNConfig) (*VPNInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if runtime.GOOS == "android" && (c.socketControl == nil || cfg.DialAddress == "") {
+		return nil, fmt.Errorf("Android AnyConnect requires socket protection and a resolved dial address")
+	}
+	auth.Prof.SocketControl = nil
+	if c.socketControl != nil {
+		control := c.socketControl
+		auth.Prof.SocketControl = func(_ string, _ string, raw syscall.RawConn) error {
+			var controlErr error
+			if err := raw.Control(func(fd uintptr) { controlErr = control(int(fd)) }); err != nil {
+				return err
+			}
+			return controlErr
+		}
+	}
+	// Android's host already provides network facts. Do not query netlink or
+	// infer an interface through sslcon's standalone CLI discovery path.
+	auth.Prof.Initialized = runtime.GOOS == "android"
 	base.Cfg.NoTUN = true
 	base.Cfg.InsecureSkipVerify = cfg.AllowInsecure // 默认 false=验证证书，自签需显式 opt-in
 	base.Cfg.CiscoCompat = true
