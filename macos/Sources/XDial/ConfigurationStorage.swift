@@ -3,7 +3,8 @@ import Foundation
 /// Configuration belongs to the product, not its formal or Debug identity.
 /// Runtime directories and system component identities remain identity-owned.
 enum ConfigurationStorage {
-    static let keychainService = "com.kafeifei.xdial.configuration"
+    static let keychainService = "com.xd.xdial.configuration"
+    static let legacyConfigurationKeychainService = "com.kafeifei.xdial.configuration"
     static let directoryPath = ".xdial/configuration"
 
     static func directory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
@@ -36,5 +37,5 @@ enum ConfigurationStorage {
     ]
 
     static var preferenceDomains: [String] { desktopLocations.map(\.keychainService) }
-    static var keychainServices: [String] { preferenceDomains + [keychainService] }
+    static var keychainServices: [String] { preferenceDomains + [keychainService, legacyConfigurationKeychainService] }
 }

@@ -38,7 +38,7 @@ Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI
 | Settings UI / Extension / Helper / Daemon | Host 加 `.settings-ui` / `.transparent-proxy` / `.helper` / `.daemon` | 同左 |
 | 通道偏好域 | `com.kafeifei.xdial.debug` | `com.kafeifei.xdial` |
 | 通道运行目录 | `~/.xdial-debug` | `~/.xdial` |
-| 新版共享配置 / 密钥 service | `~/.xdial/configuration/profiles.enc` / `com.kafeifei.xdial.configuration` | 同左 |
+| 新版共享配置 / 密钥 service | `~/.xdial/configuration/profiles.enc` / `com.xd.xdial.configuration` | 同左 |
 | helper 状态目录 | `/Library/Application Support/XDial Debug` | `/Library/Application Support/XDial` |
 | App Group | `SX9RG894L5.com.xd.xdial.debug.network` | `SX9RG894L5.com.xd.xdial.network` |
 | helper socket | `/tmp/xdial-debug.sock` | `/tmp/xdial.sock` |
