@@ -1,5 +1,8 @@
 # macOS 构建与安装
 
+Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI 见
+[Android 构建与测试分发](android-release.md)。两端构建入口不互相安装或重启。
+
 日常 Debug 由 `make app`（等同 `make app-debug`）生成 `build/XDial Debug.app`，使用 Apple Development 签名，
 不提交公证。`FormalDevelopment` 保留正式身份，仅用于该身份的专项验证。
 正式归档由 `make release` 生成，签名、公证与发布机制见 [updates.md](updates.md)。

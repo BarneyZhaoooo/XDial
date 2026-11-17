@@ -273,3 +273,32 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
   插件 matchesLocal=true。最终已手动断开并读回未连接，仍选 One；网络正常。
   路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`。没有推送、PR、正式签名
   分发、宿主安装重启或 iOS 自动化修改；真实企业认证与 Tailscale 出口仍未验证。
+
+## 2026-11-17 固定构建、版本与签名产物
+
+- `scripts/build-android.py --mode ci` 本机连续两次重建双 ABI AAR、Debug APK 和
+  unsigned Release APK；两次 APK SHA-256 相同。APK 实际元数据、API 26/36、
+  双 ABI、debuggable、签名和 16 KiB ZIP 对齐通过。跨机器字节复现未验证。
+- Debug SHA-256：`1bad91ef3d37ceb0e9d38da85da6590933815eb8c8bad8d125e1a45fcff0dc6c`。
+  Release unsigned：`78091098701b6721b3e07fdceaa7ea101b2ce6ac796663c17b3fa931688931b6`。
+  AAR：`3065ecc2fff7562786fd88e8ea007dcc4567bc54377531fd9223c2472471a59b`。
+  Debug 可安装；unsigned Release 不能安装，也没有冒称长期签名测试版。
+- 产物目录 `build/android/artifacts/xdial-1-debug-1bad91ef3d37-928e6c7b6f65/` 与
+  `xdial-1-unsigned-78091098701b-69db0515cdd3/` 含 APK/manifest/SHA256SUMS。
+  manifest 如实记录源码基线 `09ea457` 与 dirty=true（本轮构建代码当时未提交），
+  不可反写为未来提交或 clean。目录同时绑定 APK 和来源清单摘要。
+- `scripts/tests/test_android_build.py` 五项通过（`build/android/package-tests.log`）：
+  CI 版本单调/边界、完整证书指纹、产物不覆盖及真实 keytool/apksigner 流程。
+  一天期临时证书仅在隔离目录生成，成功签名后验证错证书拒绝与修改 APK 后签名失败；
+  退出删除，没有作为正式身份保留或分发。
+- 插件确认模拟器 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B` 实际安装指纹与上述
+  Debug APK 相同（matchesLocal=true），版本 0.1.0-dev/code 1。来源库 One/Travel
+  保留，选 One；重新连接后 `XDialRuleRefresh updated=0/failed=0/deferred=0`，
+  普通 App socket 的 UDP DNS 与 HTTPS 检查均通过。最终手动断开，UI 读回未连接。
+  本轮运行仅 arm64；x86_64 仍只有构建/装包检查。
+- CI YAML 结构读取与 public-content-gate 通过；CI 尚未推送/执行，没有长期证书或
+  内部渠道发布证据。本轮只改 Android 打包/版本和文档，不新增 Apple 运行或 XCTest
+  证据；上一节六次 Apple 构建仍是最近一次核心回归。宿主 VPN/iOS 自动化未改变。
+- 按用户要求核查 Cindy/火炬 2 既有签名方式，结论与接入边界见 android-release.md。
+  不把公开仓库 artifact、Cindy 的空渠道模板或火炬 2 的 Play 上传密钥当作 XDial
+  已完成的受限测试分发；不要求用户再提供 Tailscale 测试环境。
