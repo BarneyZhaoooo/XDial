@@ -2,6 +2,15 @@ import XCTest
 @testable import XDial
 
 final class DataPathProbeTests: XCTestCase {
+    func testSnapshotReadDistinguishesMissingRejectedAndMalformedReplies() {
+        typealias Read = TunnelManager.SnapshotRead
+        XCTAssertEqual(Read.decode(nil).detail, "扩展返回空回包")
+        XCTAssertEqual(Read.decode(Data("!".utf8)).detail, "扩展回包格式异常")
+        XCTAssertEqual(Read.decode(Data("{}".utf8)).detail, "扩展回包缺少状态")
+        XCTAssertEqual(Read.decode(Data(#"{"ok":false,"message":"private"}"#.utf8)).detail, "扩展报告读取失败")
+        XCTAssertEqual(Read.decode(Data(#"{"ok":true,"data":"{}"}"#.utf8)).detail, "计数数据格式异常")
+    }
+
     func testBackgroundConnectionDefersInitialAndRepeatedProbesUntilForeground() {
         var policy = DataPathRecheckPolicy(isActive: false)
         XCTAssertTrue(policy.shouldDeferProbe)
