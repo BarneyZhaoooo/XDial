@@ -98,3 +98,53 @@ App 验收。没有创建第二个 iOS uploader，没有修改既有自动化，
 已接入，原生账号表单通过隔离模拟器错误路径和场景保留验证；切回 Direct 后 DNS/HTTPS
 仍通过。Tailscale scoped hooks 的多实例、拒绝回退、DERP proxy 测试通过，登录产品流程
 仍未交付。AAR 已实际同时包含 arm64-v8a、x86_64 两种 libgojni；未测试 x86_64 设备。
+
+## 2026-11-17 后续：Tailscale 设置与加密身份
+
+- 新增共享 Go setup/节点选择 API：准备登录保留当前场景；只有 LocalAPI 当前
+  `Running` 且选中节点在线才追加独立场景/线路，不改已有场景的出口绑定。
+  返回的 Profile 仍有隐私数据，只能进入平台加密存储。Android 未复制 Swift 选线逻辑。
+- Android setup 使用同一 sing-box 编译器的 Direct DNS，读取 LinkProperties DNS 快照；
+  不创建 TUN、不设置 exit node/accept_routes/system_interface。与正式连接串行持有身份，
+  设置结束后才允许启动流量连接。网络变化仍经 epoch 退休旧核心。
+- 协议身份通过可绑定 `SecureStateStore` 进入 Android Keystore/AES-GCM + AtomicFile，
+  namespace/key 作为认证附加数据且只用哈希命名文件。无备份目录不保存明文状态；
+  后端失败不退回 tsnet FileStore。切换候选/Line capability 继承同一安全存储。
+  Android 跳过 tsnet 明文 logtail 缓冲与上传器；登录 URL 不进协议日志或诊断。
+- 新增原生登录设置窗：取得登录链接、在系统浏览器完成登录、查看在线出口、保存场景、
+  显式退出登录；密码/账号设置窗使用 FLAG_SECURE。URL 只驻留内存。
+- 隔离 arm64 模拟器真实 setup 启动成功；状态进入 NeedsLogin，点击浏览器打开实际
+  Tailscale 登录页（Sign in / Google / Microsoft / GitHub / Apple 按钮可见）。
+  **未输入账号、未完成认证、未加入 tailnet；不能作为出口节点流量联调通过。**
+- setup 诊断：running=true、tun_fd_ready=false、上传/下载均 0、protected_sockets=2、
+  protection_failures=0。UI 明确显示“账号设置（未接管流量）”。连接控制器的 connected
+  此时仅代表 setup runtime 已启动，诊断增加 session_kind 区分。
+- 模拟器真实 Keystore 验收：独立非秘密随机命名记录，重新创建存储实例后读回相同数据；
+  缺键返回空；将密文复制到另一键名时 AEAD 拒绝；删除后读空。finally 清理验收记录。
+- 结束设置后读回未连接；原 One 场景保留，重新连接并由普通未 protect App socket
+  再次完成 UDP DNS/NXDOMAIN 和 HTTPS 200/正文验证，随后主动断开。
+- 正式 Tailscale 连接现在须等待 Running、在线且已选择的出口，以及 TSMP peer 探测；
+  MagicDNS 显式启用时验证 endpoint 的就绪状态和域归属；沿用 NE 原生 DNS transport，
+  不把桌面 hosts 内存快照接口误用在移动端 transport。仅 core.Start 返回不显示“已连接”。
+  这些就绪门槛有契约测试；真实出口验收待已有授权的隔离测试环境。
+
+完整验收、最终 APK 指纹及本阶段回归结果在完成下述检查后追加，开发版仍不作为完整交付。
+
+回归记录：core/mobile race、Android setup/安全存储/就绪门槛定向 race、core/config
+全量测试通过；core/libbox 不带 race 全量 4.392s 通过。全量 libbox race 两次有既有
+3 秒启动回调与 2 秒代理探测用例超时，单独运行这些用例通过，未出现 race detector
+报告；不把全量 race 写成通过，另做基线对照。补丁套件与 public-content-gate 通过。
+iOS/tvOS generic 模拟器、macOS Debug/Release App/扩展构建通过；本阶段未执行 iOS
+XCTest 或重新运行 macOS 909 项测试，不引用旧测试冒充本次结果。
+
+最终构建包含 arm64-v8a 与 x86_64；APK SHA-256：
+`7e4797d81033e31f4650bab3c41ef7efaab21e9c38b5233d38049759eb59490a`。
+插件核对 `matchesLocal=true`，最终标准 core/config/libbox/mobile 全量测试通过。
+APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地安装，未分发。
+
+基线对照：将提交 `44ab325` 的 core/go.mod/go.sum 导出到忽略目录，复用同一补丁依赖
+（新依赖行为仅 Android 分支，Darwin 不启用）运行全量 libbox race。216.587s 后也出现
+启动回调、代理测速、超时上限等时限测试失败，未有数据竞争报告。因此这是全量 race
+时序限制的复现，不能将其算作通过或断言根因已修复。日志分别保存为
+`build/android/baseline-core-race.log`、`tailscale-core-rerun.log` 和
+`tailscale-final-standard.log`。没有调大生产/测试超时来掩盖结果。

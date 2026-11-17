@@ -1178,6 +1178,35 @@ func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*con
 	return string(data), nil
 }
 
+// GenerateAndroidTailscaleSetupConfig uses the same compiler-owned Direct DNS
+// bootstrap as Android data sessions, with no TUN or plaintext local resolver.
+func GenerateAndroidTailscaleSetupConfig(profileJSON, lineID, systemDNSJSON, basePath string) (string, error) {
+	setup, err := GenerateTailscaleSetupConfig(profileJSON, lineID, basePath)
+	if err != nil {
+		return "", err
+	}
+	var servers []string
+	if err = json.Unmarshal([]byte(systemDNSJSON), &servers); err != nil {
+		return "", fmt.Errorf("invalid system DNS snapshot")
+	}
+	direct := &config.Profile{Lines: []config.Line{{ID: "direct", Type: config.LineTypeDirect, Enabled: true}}, Scenarios: []config.Scenario{{ID: "setup", DefaultLineID: "direct"}}, ActiveScenarioID: "setup"}
+	data, err := config.GenerateSingBoxAndroid(direct, "", servers)
+	if err != nil {
+		return "", err
+	}
+	var source, target map[string]json.RawMessage
+	if err = json.Unmarshal(data, &source); err != nil {
+		return "", err
+	}
+	if err = json.Unmarshal([]byte(setup), &target); err != nil {
+		return "", err
+	}
+	target["dns"] = source["dns"]
+	target["route"], _ = json.Marshal(map[string]string{"final": "direct", "default_domain_resolver": config.MobilePublicDNSTag})
+	data, err = json.Marshal(target)
+	return string(data), err
+}
+
 // GenerateTailscaleSetupConfig 生成主 App 登录和发现节点所需的最小配置。
 // 它只启动指定 Tailscale endpoint，不创建 TUN，也不启用该线路的出口节点或路由。
 func GenerateTailscaleSetupConfig(profileJSON string, lineID string, basePath string) (string, error) {

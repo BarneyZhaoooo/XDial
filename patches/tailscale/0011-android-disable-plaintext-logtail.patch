@@ -1,0 +1,14 @@
+diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
+--- a/tsnet/tsnet.go
++++ b/tsnet/tsnet.go
+@@ -768,7 +768,9 @@
+ }
+ 
+ func (s *Server) startLogger(closePool *closeOnErrorPool, health *health.Tracker, tsLogf logger.Logf) error {
+-	if testenv.InTest() {
++	// Android identity and login material must not enter plaintext log buffers.
++	// The embedding app exposes bounded diagnostics; no logtail uploader is started.
++	if runtime.GOOS == "android" || testenv.InTest() {
+ 		return nil
+ 	}
+ 	cfgPath := filepath.Join(s.rootPath, "tailscaled.log.conf")

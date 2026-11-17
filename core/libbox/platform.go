@@ -63,6 +63,7 @@ type xdPlatformInterface struct {
 	monitor            *platformInterfaceMonitor
 	bindUnderlaySocket bool
 	socketProtector    SocketProtector
+	secureStateStore   SecureStateStore
 	lineEpoch          string
 	lineRevision       uint64
 	tunInPackets       atomic.Uint64
@@ -452,6 +453,7 @@ func (p *xdPlatformInterface) switchCandidate(
 		ownInterfaceName:   p.ownInterfaceName,
 		bindUnderlaySocket: p.bindUnderlaySocket,
 		socketProtector:    p.socketProtector,
+		secureStateStore:   p.secureStateStore,
 	}
 	p.mu.Unlock()
 	if err := candidate.setNetworkInterfaces(snapshots); err != nil {
@@ -480,6 +482,7 @@ func (p *xdPlatformInterface) lineRuntimeCapability() *xdPlatformInterface {
 		ownInterfaceName:   p.ownInterfaceName,
 		bindUnderlaySocket: p.bindUnderlaySocket,
 		socketProtector:    p.socketProtector,
+		secureStateStore:   p.secureStateStore,
 	}
 }
 

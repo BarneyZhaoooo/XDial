@@ -43,10 +43,10 @@ bootstrap DNS 的保护拒绝与错误脱敏经过 Go race 测试。现有 AnyCo
 Android scoped adapter 只在 Android 端点中启用；Apple 保留既有网络事实入口。
 DERP proxy 改走 NetNS 的保护入口同样适用于其他平台。
 
-**当前产品门槛**：Android Tailscale 登录/节点选择流程尚未接入。旧 setup 配置使用
-`local` DNS，不应直接复用到 Android；需要替换成捕获的系统 DNS 经受保护的 sing-box
-传输，并让 setup session 与正式会话共享本机身份目录，再解除 UI 的 Tailscale 拒绝。
-保护契约通过不等于 tailnet 注册、DERP 或 exit-node 真机联调通过。
+**后续已接入**：Android setup 通过编译器生成捕获系统 DNS 的受保护传输，不创建 TUN。
+登录与在线出口选择复用 Go/LocalAPI，setup 和正式会话串行共享加密身份，已解除
+UI 的 Tailscale 拒绝。已在隔离模拟器到达真实登录页，未完成 tailnet 注册或出口联调。
+持久状态见 `sing-box/0013`；Android 跳过明文 logtail 缓冲见 `tailscale/0011`。
 
 ## Android 账号表单与验收
 
@@ -58,7 +58,7 @@ DERP proxy 改走 NetNS 的保护入口同样适用于其他平台。
   当作 AnyConnect 登录成功。
 - AAR/APK 已实际构建 arm64-v8a 与 x86_64；只在 arm64 模拟器执行安装/交互。
 
-尚需：授权隔离企业环境下的认证/CSTP/DTLS/重连；Tailscale 登录与出口选择；远程规则
+尚需：授权隔离企业环境下的认证/CSTP/DTLS/重连；Tailscale 已认证出口流量验收；远程规则
 获取在已有 TUN 下的专用准备事务（不能让普通宿主 HTTP socket 递归进入尚未启动的核心）；
 离线规则的原生导入/缓存 UI；连接中场景事务；事件驱动分发。此文不宣称全平台完成。
 

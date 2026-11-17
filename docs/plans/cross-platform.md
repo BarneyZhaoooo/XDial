@@ -7,11 +7,11 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
-| Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
+| Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
 | 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘/拖动/无障碍；产品配置页待做 | 缺失 | 缺失 |
-| 自动场景 | 已有 | Swift 自动驾驶 | 需逐项核对 | 共享 Go 选择器；连接前 SSID 已接入 | 缺失 | 缺失 |
-| 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile，待测试 | 缺失 | 缺失 |
+| 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID 已接入 | 缺失 | 缺失 |
+| 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile；身份持久化/篡改拒绝已验 | 缺失 | 缺失 |
 | 发布 | 已有 | 既有事件驱动 TestFlight | 已有构建 | 本地 debug；签名/分发待核实 | 缺失 | 缺失 |
 
 ## 边界决策
@@ -25,11 +25,11 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 - Android 每个 user/profile 只能有一个 VpnService，不能承诺与另一个 VPN 叠加。
   系统确认可能替换已有 VPN，验收只使用无现存 VPN 的隔离设备。
 - AnyConnect 已接入受保护的 TLS/CSTP/DTLS 与共享启动入口，待授权隔离企业联调。
-  Tailscale 的端点级保护契约已补齐，仍须完成 Android 专用登录/节点选择后解除产品限制；
+  Tailscale 的端点级保护、Android 登录/节点选择与加密身份已接入，真实出口待隔离联调；
   不以普通代理或本地契约测试冒充企业 VPN 已通过。
 - 开发预览支持导入 runtime Profile、手动场景、连接前 SSID 匹配、撤权与清理；
   网络丢失保留连接意图/TUN，恢复后重建唯一核心。地区判断、连接中场景事务、
-  登录和离线规则产品流程仍缺失，不得将此检查点称为 Android 完成交付。
+  配置来源库和离线规则产品流程仍缺失，不得将此检查点称为 Android 完成交付。
 
 ## 阶段与验收门槛
 
@@ -47,9 +47,12 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
    `5bf44400-3dfc-4fca-8c3a-56bcab855db0` 不新增 uploader、不改范围。
    Android 先私有 CI artifact，核实稳定 keystore 和受限下载渠道后再启用自动分发。
    不将 debug key 当长期更新身份，不提交公司种子/凭据，不上 Play 正式版。
-6. **Windows/Linux**：先选择产品接入再实施。Windows 需决定 Wintun 全流量与
-   WFP 按应用接入、驱动分发和管理员服务；Linux 需决定桌面发行版、polkit/systemd
-   权限分离、系统 DNS 管理器适配与包格式。独立于 Android 推进，交叉编译不验收。
+6. **Windows/Linux**：用户于 2026-11-17 明确首版包含按应用透明接入与多发行版。
+   Windows 实做应用识别、WFP 重定向/防环路、管理员服务与驱动签名安装；
+   Linux 实做应用识别/透明接入、权限分离和多发行版安装，不以 Ubuntu 单一 TUN 代替。
+   首批验证基线采用 Ubuntu/Debian、Fedora、Arch，分别验证安装、升级、卸载和 DNS
+   恢复；具体后端需先做隔离原型证明，sing-box 仍独占路由/DNS 裁决。
+   原生窗口复用 Go 控制面。驱动签名渠道待具体可审查产物形成后确认；交叉编译不验收。
 
 ## 构建
 
@@ -90,8 +93,8 @@ cd android
 
 依据：[Android NetworkCallback](https://developer.android.com/reference/android/net/ConnectivityManager.NetworkCallback)
 和 [ConnectivityManager](https://developer.android.com/reference/android/net/ConnectivityManager)。
-Windows/Linux 接入范围已向用户提出：优先原生窗口 + Wintun / Ubuntu TUN，或首版
-包含按应用透明接入与多发行版；这不阻塞 Android。
+Windows/Linux 范围已确定：首版按应用透明接入及多发行版（2026-11-17 用户回复）。
+Android 继续独立推进；Windows/Linux 不再作为待范围确认项。
 
 
 ## 2026-11-17 协议与账号阶段
@@ -103,3 +106,13 @@ Android 原生账号密码表单追加 AnyConnect 线路/场景，保留现有�
 
 按用户最新要求，具体进展、测试数字和阶段提交只留本 XDial 任务及仓库，不再主动发往
 来源 Telegram 群或来源任务；仅用户询问或确需其提供信息/决策时联系。
+
+## 2026-11-17 Tailscale Android 设置阶段
+
+已接上原生浏览器登录/节点列表/场景保存，解除开发 UI 对全部 Tailscale Profile 的
+一刀切拒绝。共享控制面检查在线节点；数据连接等待认证和出口探测。Android 独立加密
+身份适配，不改 Apple 状态目录/凭据行为。登录准备实际到达公开登录页；没有使用生产
+凭据或完成 tailnet 注册，真实数据面仍待隔离环境。详细证据见 Android 检查点。
+
+下一步继续离线规则与受保护的资源获取、配置来源库、地区观察和连接中的场景事务。
+Windows/Linux 首版范围已按用户回答扩大到按应用透明接入及多发行版，不再等待范围回答。

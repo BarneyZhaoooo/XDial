@@ -14,7 +14,7 @@ import javax.crypto.spec.GCMParameterSpec;
 final class ProfileStore {
  private final AtomicFile file;
  ProfileStore(Context c) { file = new AtomicFile(new File(c.getNoBackupFilesDir(), "profile.enc")); }
- private javax.crypto.SecretKey key() throws Exception {
+ static synchronized javax.crypto.SecretKey key() throws Exception {
   KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
   if (!store.containsAlias("xdial-profile")) {
    KeyGenerator generator = KeyGenerator.getInstance("AES", "AndroidKeyStore");

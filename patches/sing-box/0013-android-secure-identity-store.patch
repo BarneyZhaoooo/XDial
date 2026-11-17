@@ -1,0 +1,157 @@
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index b729bb4..fa71070 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -198,6 +198,13 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 	}
+ 	dialerQueryOptions := outboundDialer.(dialer.ResolveDialer).QueryOptions()
+ 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
++	var secureStore ipn.StateStore
++	if runtime.GOOS == "android" {
++		secureStore, err = newAndroidStateStore(platformInterface, stateDirectory)
++		if err != nil {
++			return nil, err
++		}
++	}
+ 	var transportDialer N.Dialer = &endpointDialer{Dialer: outboundDialer, logger: logger}
+ 	if runtime.GOOS == "android" {
+ 		transportDialer = &androidEndpointDialer{Dialer: transportDialer, platform: platformInterface, network: service.FromContext[adapter.NetworkManager](ctx)}
+@@ -213,12 +220,17 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 		platformInterface: platformInterface,
+ 		server: &tsnet.Server{
+ 			Dir:      stateDirectory,
++			Store:    secureStore,
+ 			Hostname: hostname,
+ 			Logf: func(format string, args ...any) {
+-				logger.Trace(fmt.Sprintf(format, args...))
++				if runtime.GOOS != "android" {
++					logger.Trace(fmt.Sprintf(format, args...))
++				}
+ 			},
+ 			UserLogf: func(format string, args ...any) {
+-				logger.Debug(fmt.Sprintf(format, args...))
++				if runtime.GOOS != "android" {
++					logger.Debug(fmt.Sprintf(format, args...))
++				}
+ 			},
+ 			Ephemeral:     options.Ephemeral,
+ 			AuthKey:       options.AuthKey,
+@@ -531,7 +543,11 @@ func (t *Endpoint) watchState() {
+ 				return true
+ 			}
+ 			reportedAuthURL = authURL
+-			t.logger.Info("Waiting for authentication: ", authURL)
++			if runtime.GOOS != "android" {
++				t.logger.Info("Waiting for authentication: ", authURL)
++			} else {
++				t.logger.Info("Waiting for authentication")
++			}
+ 			if t.platformInterface != nil && t.platformInterface.UsePlatformNotification() {
+ 				err := t.platformInterface.SendNotification(&adapter.Notification{
+ 					Identifier: "tailscale-authentication",
+diff --git a/protocol/tailscale/xdial_android_state.go b/protocol/tailscale/xdial_android_state.go
+new file mode 100644
+index 0000000..b1aa140
+--- /dev/null
++++ b/protocol/tailscale/xdial_android_state.go
+@@ -0,0 +1,38 @@
++//go:build with_gvisor
++
++package tailscale
++
++import (
++	"fmt"
++	"github.com/sagernet/tailscale/ipn"
++)
++
++type securePlatformState interface {
++	TailscaleStateRead(namespace, key string) ([]byte, error)
++	TailscaleStateWrite(namespace, key string, value []byte) error
++}
++type androidStateStore struct {
++	platform  securePlatformState
++	namespace string
++}
++
++func newAndroidStateStore(platform any, namespace string) (ipn.StateStore, error) {
++	store, ok := platform.(securePlatformState)
++	if !ok {
++		return nil, fmt.Errorf("Android secure identity storage unavailable")
++	}
++	return &androidStateStore{store, namespace}, nil
++}
++func (s *androidStateStore) ReadState(key ipn.StateKey) ([]byte, error) {
++	value, err := s.platform.TailscaleStateRead(s.namespace, string(key))
++	if err != nil {
++		return nil, err
++	}
++	if value == nil {
++		return nil, ipn.ErrStateNotExist
++	}
++	return value, nil
++}
++func (s *androidStateStore) WriteState(key ipn.StateKey, value []byte) error {
++	return s.platform.TailscaleStateWrite(s.namespace, string(key), value)
++}
+diff --git a/protocol/tailscale/xdial_android_state_test.go b/protocol/tailscale/xdial_android_state_test.go
+new file mode 100644
+index 0000000..46b2e64
+--- /dev/null
++++ b/protocol/tailscale/xdial_android_state_test.go
+@@ -0,0 +1,56 @@
++//go:build with_gvisor
++
++package tailscale
++
++import (
++	"errors"
++	"github.com/sagernet/tailscale/ipn"
++	"testing"
++)
++
++type stateHost struct {
++	values map[string][]byte
++	fail   bool
++}
++
++func (s *stateHost) TailscaleStateRead(ns, key string) ([]byte, error) {
++	if s.fail {
++		return nil, errors.New("storage denied")
++	}
++	return s.values[ns+key], nil
++}
++func (s *stateHost) TailscaleStateWrite(ns, key string, v []byte) error {
++	if s.fail {
++		return errors.New("storage denied")
++	}
++	s.values[ns+key] = v
++	return nil
++}
++func TestXDialAndroidStateStoreNeverFallsBack(t *testing.T) {
++	if _, err := newAndroidStateStore(struct{}{}, "ns"); err == nil {
++		t.Fatal("missing secure host allowed")
++	}
++	host := &stateHost{values: map[string][]byte{}}
++	a, _ := newAndroidStateStore(host, "a")
++	b, _ := newAndroidStateStore(host, "b")
++	if _, err := a.ReadState("key"); !errors.Is(err, ipn.ErrStateNotExist) {
++		t.Fatal("missing mapping")
++	}
++	if err := a.WriteState("key", []byte("test-fixture")); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := b.ReadState("key"); !errors.Is(err, ipn.ErrStateNotExist) {
++		t.Fatal("namespace leak")
++	}
++	a.WriteState("key", nil)
++	if _, err := a.ReadState("key"); !errors.Is(err, ipn.ErrStateNotExist) {
++		t.Fatal("delete failed")
++	}
++	host.fail = true
++	if _, err := a.ReadState("key"); err == nil || errors.Is(err, ipn.ErrStateNotExist) {
++		t.Fatal("denied read treated as missing")
++	}
++	if err := a.WriteState("key", []byte("fixture")); err == nil {
++		t.Fatal("denied write allowed")
++	}
++}

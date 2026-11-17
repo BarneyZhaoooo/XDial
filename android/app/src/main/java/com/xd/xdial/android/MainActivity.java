@@ -14,8 +14,10 @@ public final class MainActivity extends Activity {
  private Switch automatic;
  private Button scenarios;
  private boolean refreshingSelection;
+ private String pendingSetupLine="";
+ private boolean lastActive;
  private final Handler handler = new Handler();
- private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);handler.postDelayed(this, 500); } };
+ private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);if(lastActive!=TunnelService.active){lastActive=TunnelService.active;refreshSelection();}handler.postDelayed(this, 500); } };
  @Override public void onCreate(Bundle saved) {
   super.onCreate(saved);
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
@@ -42,16 +44,17 @@ public final class MainActivity extends Activity {
    } catch(Exception e){Toast.makeText(this,"请先导入配置，连接期间不能改变选择",Toast.LENGTH_SHORT).show();refreshSelection();}
   });
   Button login=new Button(this);login.setText("添加 AnyConnect 账号与场景");layout.addView(login);login.setOnClickListener(v->addVPN());
+  Button tailscale=new Button(this);tailscale.setText("Tailscale 账号与出口节点");layout.addView(tailscale);tailscale.setOnClickListener(v->tailscale());
   Button config = new Button(this); config.setText("导入运行 Profile"); layout.addView(config);
   config.setOnClickListener(v -> edit());
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
-  details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":"probe"));}).show());
-  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；AnyConnect 支持账号密码，企业联调、Tailscale 登录、地区判断和连接中切换仍待完成。"); layout.addView(notice);
+  details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS","验证安全存储"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":index==1?"probe":"identity-test"));}).show());
+  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；AnyConnect 支持账号密码，支持 Tailscale 浏览器登录与出口选择；真实企业网络联调、地区判断和连接中切换仍待完成。"); layout.addView(notice);
   setContentView(scroll);
  }
  private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
  private void connect() { startForegroundService(new Intent(this,TunnelService.class)); }
- @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(request==1 && result==RESULT_OK) connect(); }
+ @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(request==1 && result==RESULT_OK) connect();if(request==3 && result==RESULT_OK)startTailscale(); }
  private void chooseScenario() {
   if(TunnelService.active) {new AlertDialog.Builder(this).setMessage("当前连接保持不变。开发验收版暂需断开后选择场景。").setPositiveButton("知道了",null).show();return;}
   try {
@@ -84,6 +87,63 @@ public final class MainActivity extends Activity {
    }catch(Exception failure){Toast.makeText(this,"请检查必填项、服务器地址和本机存储",Toast.LENGTH_LONG).show();}
   });});
   dialog.setOnDismissListener(d->password.setText(""));dialog.show();
+ }
+ private void tailscale(){
+  if(TunnelService.settingUp){showTailscale();return;}
+  if(TunnelService.active){Toast.makeText(this,"请先断开再设置 Tailscale",Toast.LENGTH_SHORT).show();return;}
+  new AlertDialog.Builder(this).setTitle("Tailscale").setMessage("准备登录并发现可用出口节点。此步骤不会接管设备流量；身份密钥加密保存在本机。")
+   .setNegativeButton("取消",null).setPositiveButton("开始设置",(d,w)->{
+    try{
+     ProfileStore store=new ProfileStore(this);String existing;
+     try{existing=store.load();}catch(java.io.FileNotFoundException missing){existing="";}
+     org.json.JSONObject setup=new org.json.JSONObject(Libbox.ensureTailscaleSetup(existing));
+     store.save(setup.getString("profile"));MobileSelection.invalidate();pendingSetupLine=setup.getString("line_id");refreshSelection();
+     Intent consent=VpnService.prepare(this);if(consent!=null)startActivityForResult(consent,3);else startTailscale();
+    }catch(Exception error){Toast.makeText(this,"无法准备 Tailscale，请检查配置与本机存储",Toast.LENGTH_LONG).show();}
+   }).show();
+ }
+ private void startTailscale(){
+  if(pendingSetupLine.isEmpty())return;
+  startForegroundService(new Intent(this,TunnelService.class).setAction("tailscale-setup").putExtra("line",pendingSetupLine));
+  handler.postDelayed(()->{if(!isFinishing())showTailscale();},500);
+ }
+ private void showTailscale(){
+  LinearLayout content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(24),0,dp(24),0);
+  TextView info=new TextView(this);content.addView(info);
+  Button login=new Button(this);login.setText("获取登录链接");content.addView(login);
+  Button browser=new Button(this);browser.setText("在浏览器中登录");content.addView(browser);
+  Button nodes=new Button(this);nodes.setText("选择出口节点");content.addView(nodes);
+  Button logout=new Button(this);logout.setText("退出 Tailscale 登录");content.addView(logout);
+  logout.setOnClickListener(v->new AlertDialog.Builder(this).setMessage("退出本机 Tailscale 登录？已保存的场景会保留，下次连接需要重新登录。")
+   .setNegativeButton("取消",null).setPositiveButton("退出登录",(d,w)->startService(new Intent(this,TunnelService.class).setAction("tailscale-logout"))).show());
+  final String[] authURL={""};
+  login.setOnClickListener(v->startService(new Intent(this,TunnelService.class).setAction("tailscale-login")));
+  browser.setOnClickListener(v->{
+   if(!Libbox.validateTailscaleAuthURL(authURL[0]))return;
+   try{startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(authURL[0])));}catch(Exception error){Toast.makeText(this,"没有可用浏览器，请安装浏览器后重试",Toast.LENGTH_LONG).show();}
+  });
+  nodes.setOnClickListener(v->{
+   try{
+    org.json.JSONArray all=new org.json.JSONObject(TunnelService.tailscaleStatus).getJSONArray("exit_nodes");
+    java.util.ArrayList<String> names=new java.util.ArrayList<>(),ids=new java.util.ArrayList<>();
+    for(int i=0;i<all.length();i++){org.json.JSONObject node=all.getJSONObject(i);if(node.optBoolean("online")){names.add(node.getString("name"));ids.add(node.getString("id"));}}
+    if(ids.isEmpty()){Toast.makeText(this,"没有在线出口，请在 Tailscale 管理端启用出口节点",Toast.LENGTH_LONG).show();return;}
+    new AlertDialog.Builder(this).setTitle("在线出口节点").setItems(names.toArray(new String[0]),(d,index)->startService(new Intent(this,TunnelService.class).setAction("tailscale-select").putExtra("node",ids.get(index)))).setNegativeButton("取消",null).show();
+   }catch(Exception error){Toast.makeText(this,"节点列表暂不可用，请稍后重试",Toast.LENGTH_LONG).show();}
+  });
+  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Tailscale 账号").setView(content).setNegativeButton("收起",null)
+   .setNeutralButton("结束设置",(d,w)->startService(new Intent(this,TunnelService.class).setAction("stop"))).create();
+  Runnable update=new Runnable(){public void run(){
+   if(!dialog.isShowing())return;
+   String backend="";authURL[0]="";
+   try{org.json.JSONObject status=new org.json.JSONObject(TunnelService.tailscaleStatus);backend=status.optString("backend_state");authURL[0]=status.optString("auth_url");}catch(Exception ignored){}
+   String label=backend.equals("Running")?"已登录，可选择出口节点":backend.equals("NeedsMachineAuth")?"请在 Tailscale 管理端批准此设备":backend.equals("NeedsLogin")?"等待浏览器登录":"正在准备账号连接";
+   info.setText(TunnelService.settingUp?label+"\n"+TunnelService.setupMessage:TunnelService.state);
+   login.setEnabled(TunnelService.settingUp&&!backend.equals("Running"));browser.setEnabled(TunnelService.settingUp&&Libbox.validateTailscaleAuthURL(authURL[0]));nodes.setEnabled(TunnelService.settingUp&&backend.equals("Running"));logout.setEnabled(TunnelService.settingUp&&backend.equals("Running"));
+   handler.postDelayed(this,500);
+  }};
+  dialog.setOnShowListener(d->{dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);handler.post(update);});
+  dialog.setOnDismissListener(d->{handler.removeCallbacks(update);authURL[0]="";refreshSelection();});dialog.show();
  }
  private void edit() {
   if(TunnelService.active){Toast.makeText(this,"请先断开再编辑配置",Toast.LENGTH_SHORT).show();return;}

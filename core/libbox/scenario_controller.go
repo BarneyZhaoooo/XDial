@@ -62,3 +62,11 @@ func (c *ConnectionController) Snapshot() string { return c.controller.Snapshot(
 func AddAnyConnectScenario(profileJSON, name, server, username, password string) (string, error) {
 	return mobile.AddAnyConnectScenario(profileJSON, name, server, username, password)
 }
+
+func EnsureTailscaleSetup(profileJSON string) (string, error) {
+	return mobile.EnsureTailscaleSetup(profileJSON)
+}
+func SelectTailscaleExit(profileJSON, lineID, statusJSON, nodeID string) (string, error) {
+	return mobile.SelectTailscaleExit(profileJSON, lineID, statusJSON, nodeID)
+}
+func ValidateTailscaleAuthURL(raw string) bool { return mobile.ValidateTailscaleAuthURL(raw) }
