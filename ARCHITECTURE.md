@@ -282,6 +282,16 @@ journal 无法可靠写入时不能 Commit。入口：[事务处置](macos/Share
 
 入口：[Line 能力池](core/libbox/line_runtime_pool.go)、[Switch 测试](core/libbox/switch_test.go)。
 
+**iOS Packet Tunnel。** 只有一个 packetFlow，没有可按代转发的 relay。候选 Box 摘下 TUN inbound
+启动，与旧代并存准备和探测，不接触用户流量；Commit 在原有验证之后关闭旧代 TUN inbound，
+用同一 fd 为候选创建，候选打不开时还给旧代，两边都失败才结束隧道。旧 gVisor 栈终结的连接
+随之重置，不排空；NE 会话、路由与 DNS 设置不变，切换期间没有流量绕过隧道。iOS 的 Tailscale
+仍归各代 Box 所有；AnyConnect 身份不同或两代都含 Tailscale 而不能并存时，Provider 在同一 NE
+会话里换引擎（先停旧引擎，新引擎失败时以旧启动包重起），不停系统 VPN。已连接期间场景由 Provider 判断与切换，启动包与判断规则来自
+App 写入共享 Keychain 的场景目录。入口：[TUN 交接](core/libbox/tun_handover.go)、
+[Provider](appletv/XDialTVTunnel/PacketTunnelProvider.swift)、
+[计划](docs/plans/ios-in-tunnel-scenario-switch.md)。
+
 ### 5.4 网络变化与恢复
 
 NWPath、默认路由、DNS 与 SSID 的同次物理变化合并为一个不含 SSID 的 network epoch；
@@ -408,9 +418,10 @@ URL RuleSet 的 `fetch_line_id` 默认 Direct，仅拥有资源的 DNS、HTTPS�
 相同的意图激活场景：已有连接意图则 Switch，已显式断开则只改变选择；无匹配保持当前场景。
 手动选择持续到 SSID 下次变化。
 
-SSID 只是触发条件，不证明网络可信，也不进入 Provider、计划、日志、Debug、DNS、route 或
-Underlay 快照。宿主在位置权限允许时读取；拒绝、Wi-Fi 关闭或读取失败不触发自动动作，
-UI 显示权限状态，手动切换仍可用。
+SSID 只是触发条件，不证明网络可信，也不进入计划、日志、Debug、DNS、route 或 Underlay
+快照。macOS 宿主在位置权限允许时读取，不进入 Provider；拒绝、Wi-Fi 关闭或读取失败不触发
+自动动作，UI 显示权限状态，手动切换仍可用。iOS 已连接期间 App 可能被挂起，由 Packet Tunnel
+Provider 读取并只在内存中用于选择场景，不写进共享存储或诊断（见 5.3）。
 
 ## 9. 历史兼容边界（D29、D31、D32、D34、D-CRASH）
 
