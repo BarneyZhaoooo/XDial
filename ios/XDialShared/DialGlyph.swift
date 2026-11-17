@@ -34,6 +34,13 @@ struct DialLayout {
 
     static let standard = DialLayout(holeRadius: 1.1, stopWidth: 1.2)
 
+    func powerSymbolSize(diameter: CGFloat) -> CGFloat {
+        min(diameter * hubRadius / Self.discRadius * 0.44, diameter * 0.15)
+    }
+
+    static func ringInset(diameter: CGFloat) -> CGFloat { max(9, diameter * 0.055) }
+    static func ringWidth(diameter: CGFloat) -> CGFloat { max(2.5, diameter * 0.014) }
+
     /// 把第 index 个孔顺时针拨到指停器要转多少度。离指停器最远的第一个孔转得最少，
     /// 紧挨着指停器的最后一个孔要绕一大圈——和真的拨号盘一样。
     func travel(forHole index: Int) -> Double {
