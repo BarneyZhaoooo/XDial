@@ -918,6 +918,40 @@ final class TunnelProviderSession: TunnelSession {
 /// 连接验收没通过、但隧道保留时，写在 dataPathSummary 开头的标记，首页据此提示。
 let dataPathDegradedPrefix = "自检未通过，连接已保留："
 
+/// 前后台与补测预算由同一个值状态管理；计时任务只执行这里允许的下一次补测。
+/// 安排计时不消耗次数，真正开始补测才消耗；后台及断开会取消外部计时任务。
+struct DataPathRecheckPolicy {
+    static let delays: [UInt64] = [30, 120, 300]
+    private(set) var isActive: Bool
+    private(set) var attempts = 0
+    private(set) var isDegraded = false
+
+    init(isActive: Bool) { self.isActive = isActive }
+
+    var shouldDeferProbe: Bool { !isActive }
+    var nextDelay: UInt64? {
+        guard isActive, isDegraded, attempts < Self.delays.count else { return nil }
+        return Self.delays[attempts]
+    }
+
+    mutating func enteredBackground() { isActive = false }
+    mutating func becameActive() {
+        isActive = true
+        resetBudget()
+    }
+    mutating func resetBudget() { attempts = 0 }
+    mutating func markDegraded() { isDegraded = true }
+    mutating func clearDegraded() {
+        isDegraded = false
+        resetBudget()
+    }
+    mutating func beginScheduledRecheck() -> Bool {
+        guard nextDelay != nil else { return false }
+        attempts += 1
+        return true
+    }
+}
+
 @MainActor
 final class TunnelManager: ObservableObject, TunnelManaging {
     /// 手机网络经常高延迟或受限，验收失败时保留隧道而不是主动断开。
@@ -926,7 +960,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     static let dataPathWatchdogSeconds: UInt64 = 90
     /// 自检没通过、连接保留后，App 在前台时按这些间隔（秒）自动再测；用完就停，
     /// 等下次回到前台、手动「重新检测」或系统重连时再从头开始。
-    static let degradedRecheckDelays: [UInt64] = [30, 120, 300]
+    static let degradedRecheckDelays = DataPathRecheckPolicy.delays
 
 
     private static let configGenerationQueue = TunnelConfigGenerationQueue()
@@ -952,8 +986,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private var dataPathProbeTask: Task<Void, Never>?
     private var dataPathProbeID: UUID?
     private var dataPathVerified = false
-    /// 当前连接自检没通过但被保留；只在 connected 期间为 true。
-    private var dataPathDegraded = false
     /// 正在进行的验收是对已保留连接的补测：不把首页拉回「检查中」，失败也不断开。
     private var dataPathProbeIsRecheck = false
     /// 验收正在跑的步骤，超时时写进诊断，说明停在了哪一步。
@@ -961,8 +993,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     /// Tailscale 等用户登录期间验收会长时间挂着，这时切到后台（去浏览器登录）不能暂停它。
     private var dataPathAwaitingTailscaleLogin = false
     private var dataPathRecheckTask: Task<Void, Never>?
-    private var dataPathRecheckAttempt = 0
-    private var appIsActive = true
+    private var recheckPolicy = DataPathRecheckPolicy(isActive: false)
     private var appLifecycleSubscriptions: Set<AnyCancellable> = []
     private var startOperationState = TunnelStartOperationState()
     private var activeStartAttemptID: String?
@@ -988,6 +1019,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                       connection === self.manager?.connection else { return }
                 self.applyConnectionStatus()
             }
+        recheckPolicy = DataPathRecheckPolicy(isActive: UIApplication.shared.applicationState == .active)
         observeAppLifecycle()
     }
 
@@ -1008,7 +1040,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     private func handleAppDidEnterBackground() {
-        appIsActive = false
+        recheckPolicy.enteredBackground()
         dataPathRecheckTask?.cancel()
         dataPathRecheckTask = nil
         guard dataPathProbeID != nil,
@@ -1027,7 +1059,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     private func handleAppDidBecomeActive() {
-        appIsActive = true
+        recheckPolicy.becameActive()
         recheckDegradedDataPath(resetBackoff: true)
     }
 
@@ -1038,11 +1070,12 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     /// 只补测「已连接、自检没通过、当前没有验收在跑」的连接。resetBackoff 用于用户
     /// 主动触发（回到前台、点重新检测），让自动补测的间隔从头算。
     private func recheckDegradedDataPath(resetBackoff: Bool) {
-        guard dataPathDegraded, !dataPathVerified, dataPathProbeID == nil,
+        guard !recheckPolicy.shouldDeferProbe,
+              recheckPolicy.isDegraded, !dataPathVerified, dataPathProbeID == nil,
               let connection = manager?.connection,
               connection.status == .connected else { return }
         if resetBackoff {
-            dataPathRecheckAttempt = 0
+            recheckPolicy.resetBudget()
             dataPathRecheckTask?.cancel()
             dataPathRecheckTask = nil
         }
@@ -1052,26 +1085,22 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private func scheduleDegradedRecheck() {
         dataPathRecheckTask?.cancel()
         dataPathRecheckTask = nil
-        guard appIsActive,
-              dataPathRecheckAttempt < Self.degradedRecheckDelays.count else { return }
-        let delay = Self.degradedRecheckDelays[dataPathRecheckAttempt]
-        dataPathRecheckAttempt += 1
+        guard let delay = recheckPolicy.nextDelay else { return }
         dataPathRecheckTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
             guard !Task.isCancelled, let self else { return }
             self.dataPathRecheckTask = nil
-            guard self.appIsActive else { return }
+            guard self.recheckPolicy.beginScheduledRecheck() else { return }
             self.recheckDegradedDataPath(resetBackoff: false)
         }
     }
 
     /// 连接离开 connected 时，补测状态随之作废；下次连上会做完整验收。
     private func resetDegradedRecheck() {
-        dataPathDegraded = false
+        recheckPolicy.clearDegraded()
         dataPathProbeIsRecheck = false
         dataPathProbeStage = nil
         dataPathAwaitingTailscaleLogin = false
-        dataPathRecheckAttempt = 0
         dataPathRecheckTask?.cancel()
         dataPathRecheckTask = nil
         engine?.dataPathRechecking = false
@@ -1095,7 +1124,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             engine?.dataPathSummary = dataPathDegradedPrefix + summary
         }
         engine?.dataPathRechecking = false
-        dataPathDegraded = true
+        recheckPolicy.markDegraded()
         scheduleDegradedRecheck()
     }
 
@@ -1476,13 +1505,16 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         case .connected:
             if dataPathVerified {
                 engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
-            } else if previousStatus == .connected && dataPathDegraded {
+            } else if previousStatus == .connected && recheckPolicy.isDegraded {
                 // 连接一直在，只是又收到一次状态通知：按补测处理，不把首页拉回「检查中」。
                 recheckDegradedDataPath(resetBackoff: false)
             } else if previousStatus != .connected || dataPathProbeTask == nil {
                 verifyDataPath(for: connection)
             }
         case .connecting:
+            dataPathProbeTask?.cancel()
+            dataPathProbeTask = nil
+            dataPathProbeID = nil
             dataPathVerified = false
             resetDegradedRecheck()
             engine?.applySystemStatus("connecting")
@@ -1531,6 +1563,18 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         // 不能继续消耗 AnyConnect 握手前就开始的 45 秒，否则慢网会在
         // 线路已通、正验收分流时被误判为启动超时。
         startWatchdogTask?.cancel()
+        // 系统可能在 App 已经进入后台后才连上；这条路径没有新的后台通知。
+        // 首次验收、手动补测、重复 connected 通知统一在此延期，不启动探针或看门狗。
+        if recheckPolicy.shouldDeferProbe {
+            settleDegraded(
+                summary: isRecheck ? nil : "App 在后台，自检暂停；回到前台会自动重新检测",
+                connection: connection
+            )
+            return
+        }
+        // 任何入口开始验收都要收回旧补测计时，避免运行中耗掉下一次预算。
+        dataPathRecheckTask?.cancel()
+        dataPathRecheckTask = nil
         let probeID = UUID()
         dataPathProbeID = probeID
         dataPathProbeIsRecheck = isRecheck
@@ -1543,7 +1587,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             engine?.dataPathRechecking = true
             appLog("DataPathProbe: recheck begin")
         } else {
-            dataPathDegraded = false
+            recheckPolicy.clearDegraded()
             engine?.dataPathRechecking = false
             engine?.dataPathSummary = acceptancePlan?.requiresAnyConnect == true
                 ? "正在检测 Direct、AnyConnect 与分流规则"
