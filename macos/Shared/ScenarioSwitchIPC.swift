@@ -1,5 +1,23 @@
 import Foundation
 
+/// An explicit reconnect rebuilds the Box on the current network. Only a
+/// network change requires a fresh epoch for all Line runtimes.
+enum HostScenarioSwitchMode {
+    case select
+    case reapply
+    case refreshUnderlay
+
+    func canReuseCommittedReport(sameScenario: Bool, sameConfiguration: Bool, sameUnderlay: Bool) -> Bool {
+        self == .select && sameScenario && sameConfiguration && sameUnderlay
+    }
+
+    func including(_ request: Self) -> Self {
+        if self == .refreshUnderlay || request == .refreshUnderlay { return .refreshUnderlay }
+        if self == .reapply || request == .reapply { return .reapply }
+        return .select
+    }
+}
+
 /// A structured Provider failure; callers must classify `code`, never the
 /// localized display message, when deciding whether an automatic intent retries.
 struct ProviderScenarioSwitchRejectedError: LocalizedError {

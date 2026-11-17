@@ -207,7 +207,7 @@ final class AppState: ObservableObject {
     private var scenarioSwitchGeneration = 0
     private var scenarioSwitchInFlight: ScenarioSwitchAttempt?
     private var scenarioSwitchCancellationRequested = false
-    private var scenarioSwitchRequiresUnderlayRefresh = false
+    private var pendingSwitchMode: HostScenarioSwitchMode = .select
     private var networkEpochSwitchCoordinator =
         NetworkEpochSwitchCoordinator()
     private var activeNetworkEpochScenarioSwitchIntent:
@@ -1573,7 +1573,7 @@ final class AppState: ObservableObject {
         cancelNetworkEpochQuietWindow()
         _ = enqueueScenarioSwitch(
             to: activeScenario.id,
-            requiresUnderlayRefresh: false
+            mode: .reapply
         )
     }
 
@@ -1602,7 +1602,6 @@ final class AppState: ObservableObject {
         cancelNetworkEpochQuietWindow()
         return enqueueScenarioSwitch(
             to: id,
-            requiresUnderlayRefresh: false,
             profileID: profileID
         )
     }
@@ -1624,15 +1623,14 @@ final class AppState: ObservableObject {
             return persistActiveScenario(id)
         }
         return enqueueScenarioSwitch(
-            to: id,
-            requiresUnderlayRefresh: false
+            to: id
         )
     }
 
     @discardableResult
     private func enqueueScenarioSwitch(
         to id: String,
-        requiresUnderlayRefresh: Bool,
+        mode: HostScenarioSwitchMode = .select,
         automaticIntent: NetworkEpochSwitchCoordinator.Intent? = nil,
         profileID: String? = nil
     ) -> Bool {
@@ -1652,13 +1650,13 @@ final class AppState: ObservableObject {
            inFlight.targetScenarioID == id,
            inFlight.targetProfileID == targetProfileID,
            !scenarioSwitchCancellationRequested,
-           !requiresUnderlayRefresh {
+           mode == .select {
             return true
         }
         if scenarioSwitchInFlight == nil,
            scenarioSwitchTargetID == id,
            scenarioSwitchTargetProfileID == targetProfileID,
-           !requiresUnderlayRefresh {
+           mode == .select {
             return true
         }
 
@@ -1683,14 +1681,12 @@ final class AppState: ObservableObject {
         }
         scenarioSwitchTargetID = id
         scenarioSwitchTargetProfileID = targetProfileID
-        scenarioSwitchRequiresUnderlayRefresh =
-            scenarioSwitchRequiresUnderlayRefresh
-            || requiresUnderlayRefresh
+        pendingSwitchMode = pendingSwitchMode.including(mode)
 
         if let inFlight = scenarioSwitchInFlight,
            (inFlight.targetScenarioID != id
                 || inFlight.targetProfileID != targetProfileID
-                || requiresUnderlayRefresh),
+                || mode != .select),
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
             engine.cancelScenarioSwitch()
@@ -1716,13 +1712,13 @@ final class AppState: ObservableObject {
             guard persistActiveScenario(targetScenarioID) else {
                 scenarioSwitchTargetID = nil
                 scenarioSwitchTargetProfileID = nil
-                scenarioSwitchRequiresUnderlayRefresh = false
+                pendingSwitchMode = .select
                 return
             }
             if scenarioSwitchGeneration == generation {
                 scenarioSwitchTargetID = nil
                 scenarioSwitchTargetProfileID = nil
-                scenarioSwitchRequiresUnderlayRefresh = false
+                pendingSwitchMode = .select
             }
             connect()
             return
@@ -1741,8 +1737,7 @@ final class AppState: ObservableObject {
         }
 
         let generation = scenarioSwitchGeneration
-        let requiresUnderlayRefresh =
-            scenarioSwitchRequiresUnderlayRefresh
+        let mode = pendingSwitchMode
         let profileJSON = buildProfileJSON(
             activeScenarioID: targetScenarioID,
             sourceProfile: targetRecord.profile,
@@ -1765,14 +1760,13 @@ final class AppState: ObservableObject {
             targetScenarioID: targetScenarioID,
             sourceTransactionID: sourceReport.transactionID,
             sourceScenarioID: sourceReport.scenario.id,
-            requiresUnderlayRefresh: requiresUnderlayRefresh,
             automaticIntent: automaticIntent
         )
-        scenarioSwitchRequiresUnderlayRefresh = false
+        pendingSwitchMode = .select
         scenarioSwitchCancellationRequested = false
         engine.switchScenario(
             profileJSON: profileJSON,
-            refreshLineRuntimes: requiresUnderlayRefresh,
+            mode: mode,
             networkEpochID: automaticIntent.map {
                 networkEpochID(for: $0)
             },
@@ -1859,7 +1853,7 @@ final class AppState: ObservableObject {
                     // Switch instead of tearing down the live session.
                     scenarioSwitchTargetID = inFlight.sourceScenarioID
                     scenarioSwitchTargetProfileID = inFlight.sourceProfileID
-                    scenarioSwitchRequiresUnderlayRefresh = false
+                    pendingSwitchMode = .select
                 }
             } else {
                 engine.lastError = tr(
@@ -1894,7 +1888,7 @@ final class AppState: ObservableObject {
                         automaticIntent,
                         outcome: .retryableFailure
                     )
-                    scenarioSwitchRequiresUnderlayRefresh = true
+                    pendingSwitchMode = .refreshUnderlay
                     scheduleAutomaticScenarioSwitchRetry(
                         retry,
                         intent: automaticIntent
@@ -1940,7 +1934,7 @@ final class AppState: ObservableObject {
         if scenarioSwitchGeneration == generation {
             scenarioSwitchTargetID = nil
             scenarioSwitchTargetProfileID = nil
-            scenarioSwitchRequiresUnderlayRefresh = false
+            pendingSwitchMode = .select
             return
         }
         driveScenarioSwitchIfPossible()
@@ -2059,7 +2053,7 @@ final class AppState: ObservableObject {
         scenarioSwitchGeneration += 1
         scenarioSwitchTargetID = nil
         scenarioSwitchTargetProfileID = nil
-        scenarioSwitchRequiresUnderlayRefresh = false
+        pendingSwitchMode = .select
         if let sourceScenarioID = scenarioSwitchInFlight?.sourceScenarioID
                 ?? engine.connectionReport?.scenario.id,
            !sourceScenarioID.isEmpty {
@@ -2084,7 +2078,7 @@ final class AppState: ObservableObject {
         scenarioSwitchCancellationRequested = false
         scenarioSwitchTargetID = nil
         scenarioSwitchTargetProfileID = nil
-        scenarioSwitchRequiresUnderlayRefresh = false
+        pendingSwitchMode = .select
     }
 
     // MARK: - Wi-Fi scenario activation
@@ -2500,7 +2494,7 @@ final class AppState: ObservableObject {
             )
             scenarioSwitchTargetID = nil
             scenarioSwitchTargetProfileID = nil
-            scenarioSwitchRequiresUnderlayRefresh = false
+            pendingSwitchMode = .select
             _ = persistActiveScenario(intent.desiredScenarioID)
             let preparation = AutomaticReconnectPreparation(
                 profileJSON: buildProfileJSON(
@@ -2559,7 +2553,7 @@ final class AppState: ObservableObject {
             )
             let accepted = enqueueScenarioSwitch(
                 to: intent.desiredScenarioID,
-                requiresUnderlayRefresh: requiresUnderlayRefresh,
+                mode: requiresUnderlayRefresh ? .refreshUnderlay : .select,
                 automaticIntent: intent
             )
             if !accepted {
@@ -2692,7 +2686,7 @@ final class AppState: ObservableObject {
         scenarioSwitchGeneration += 1
         scenarioSwitchTargetID = nil
         scenarioSwitchTargetProfileID = nil
-        scenarioSwitchRequiresUnderlayRefresh = false
+        pendingSwitchMode = .select
         if scenarioSwitchInFlight?.automaticIntent == intent,
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
@@ -2741,7 +2735,7 @@ final class AppState: ObservableObject {
         scenarioSwitchGeneration += 1
         scenarioSwitchTargetID = nil
         scenarioSwitchTargetProfileID = nil
-        scenarioSwitchRequiresUnderlayRefresh = false
+        pendingSwitchMode = .select
         if !sourceScenarioID.isEmpty {
             connectionDesired.userRequestedConnection(
                 scenarioID: sourceScenarioID
@@ -3118,6 +3112,5 @@ private struct ScenarioSwitchAttempt {
     let targetScenarioID: String
     let sourceTransactionID: String
     let sourceScenarioID: String
-    let requiresUnderlayRefresh: Bool
     let automaticIntent: NetworkEpochSwitchCoordinator.Intent?
 }

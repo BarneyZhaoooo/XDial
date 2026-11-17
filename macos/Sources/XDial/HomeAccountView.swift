@@ -26,16 +26,16 @@ struct HomeAccountView: View {
             if let line {
                 Text(line.name).font(.headline)
                 Group {
-                if sourceOwned && !line.vpnServer.isEmpty {
-                    LabeledContent(state.tr("服务器", "Server"), value: line.vpnServer)
-                } else {
-                    TextField(state.tr("服务器", "Server"), text: $server)
-                }
-                TextField(state.tr("用户名", "Username"), text: $username)
-                    .textContentType(.username).autocorrectionDisabled()
-                LabeledContent(state.tr("密码", "Password")) {
-                    CredentialSecureField(placeholder: state.tr("密码", "Password"), text: $password)
-                }
+                    if sourceOwned && !line.vpnServer.isEmpty {
+                        LabeledContent(state.tr("服务器", "Server"), value: line.vpnServer)
+                    } else {
+                        TextField(state.tr("服务器", "Server"), text: $server)
+                    }
+                    TextField(state.tr("用户名", "Username"), text: $username)
+                        .textContentType(.username).autocorrectionDisabled()
+                    LabeledContent(state.tr("密码", "Password")) {
+                        CredentialSecureField(placeholder: state.tr("密码", "Password"), text: $password)
+                    }
                 }
                 .disabled(!editable)
             }

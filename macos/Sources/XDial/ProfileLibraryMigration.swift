@@ -255,6 +255,14 @@ struct SeedProfileLedger: Codable, Equatable {
     struct Entry: Codable, Equatable {
         var profileID: String
         var digest: String
+        var regionTargets: [String: String]?
+
+        func isNewer(than seed: SeedProfile) -> Bool {
+            let prefix = "mobile-v1-"
+            guard let revision = seed.revision, digest.hasPrefix(prefix),
+                  let applied = Int(digest.dropFirst(prefix.count)) else { return false }
+            return applied > revision
+        }
     }
 
     var entries: [String: Entry] = [:]

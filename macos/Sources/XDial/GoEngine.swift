@@ -184,7 +184,7 @@ final class GoEngine: ObservableObject {
     /// atomically commits the target transaction.
     func switchScenario(
         profileJSON: String,
-        refreshLineRuntimes: Bool,
+        mode: HostScenarioSwitchMode,
         networkEpochID: String? = nil,
         expectedUnderlayFingerprint: String? = nil,
         completion: @escaping (Result<ConnectionReport, Error>) -> Void
@@ -206,7 +206,7 @@ final class GoEngine: ObservableObject {
                 }
                 self.transparentProxy.switchScenario(
                     profileJSON: profileJSON,
-                    refreshLineRuntimes: refreshLineRuntimes,
+                    mode: mode,
                     networkEpochID: networkEpochID,
                     expectedUnderlayFingerprint: expectedUnderlayFingerprint
                 ) { [weak self] result in

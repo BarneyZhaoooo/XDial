@@ -51,7 +51,7 @@ targets:
       - path: XDialIOSTunnel/TunnelActivityUpdater.swift
       - path: XDialShared/XDialConnectionActivity.swift
       - path: XDialShared/XDialIdentity.swift
-      - path: XDialShared/ScenarioSelectionPolicy.swift
+      - path: ../apple/Home/ScenarioSelectionPolicy.swift
       - path: XDialShared/ScenarioAutoSwitch.swift
       - path: XDialIOSTunnel/PrivacyInfo.xcprivacy
         buildPhase: resources
@@ -104,6 +104,7 @@ targets:
           - Info.plist
           - XDialIOSWidgets.entitlements
       - path: XDialShared
+      - path: ../apple/Home/ScenarioSelectionPolicy.swift
     info:
       path: XDialIOSWidgets/Info.plist
       properties:

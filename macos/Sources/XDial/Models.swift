@@ -987,7 +987,9 @@ extension Profile {
     }
 
     func scenario(matchingSSID ssid: String) -> Scenario? {
-        scenarios.first { $0.matchSSIDs.contains(ssid) }
+        let rules = scenarios.map { ScenarioAutoPolicy.WiFiRule(scenarioID: $0.id, ssids: $0.matchSSIDs) }
+        guard let pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: rules) else { return nil }
+        return scenarios.first { $0.id == pick.scenarioID }
     }
 
     static func bootstrap() -> Profile {

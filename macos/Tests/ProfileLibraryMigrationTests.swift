@@ -174,6 +174,9 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         let data = Data(#"{"format":"xdial-mobile-seed","schema_version":1,"revision":2,"region_scenarios":{"nz":"office","*":"away"},"profile":{"scenarios":[{"id":"office"},{"id":"away"}]}}"#.utf8)
         try data.write(to: directory.appendingPathComponent("Seed.json"))
         let source = try XCTUnwrap(SeedProfile.load(directory: directory))
+        let applied = SeedProfileLedger.Entry(profileID: "seed", digest: "mobile-v1-999")
+        XCTAssertTrue(applied.isNewer(than: source))
+        XCTAssertFalse(SeedProfileLedger.Entry(profileID: "seed", digest: source.digest).isNewer(than: source))
         var incoming = Profile.bootstrap()
         incoming.lines[1].vpnServer = "vpn.example.com"
         incoming.scenarios = [Scenario(id: "scoped-a", name: "Office", defaultLineID: "vpn"),

@@ -133,6 +133,10 @@ extension AppState {
         let entry = ledger.entries[seed.name]
 
         let profileID = createdProfileID ?? entry?.profileID ?? UUID().uuidString.lowercased()
+        if createdProfileID == nil, let entry, entry.isNewer(than: seed) {
+            regionScenarioTargets = entry.regionTargets ?? [:]
+            return
+        }
         if !seed.regions.isEmpty,
            let imported = try? ProfileDocumentService.importDocument(seed.text, profileID: profileID) {
             regionScenarioTargets = seed.regionTargets(in: imported)
@@ -161,7 +165,7 @@ extension AppState {
             profile = profileLibrary.snapshot()
         }
         var updated = ledger
-        updated.entries[seed.name] = .init(profileID: profileID, digest: seed.digest)
+        updated.entries[seed.name] = .init(profileID: profileID, digest: seed.digest, regionTargets: regionScenarioTargets)
         do { try updated.save() }
         catch { profileOperationError = "无法保存预置配置记录：\(error.localizedDescription)" }
     }

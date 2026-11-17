@@ -369,7 +369,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
     /// never written into `ConnectionReportJournal`.
     func switchScenario(
         profileJSON: String,
-        refreshLineRuntimes: Bool,
+        mode: HostScenarioSwitchMode,
         networkEpochID: String? = nil,
         expectedUnderlayFingerprint: String? = nil,
         completion: @escaping (Result<ConnectionReport, Error>) -> Void
@@ -438,7 +438,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 plan.configurationFingerprint,
             profileJSON: profileJSON,
             targetReportJSON: targetReportJSON,
-            refreshLineRuntimes: refreshLineRuntimes,
+            mode: mode,
             networkEpochID: networkEpochID,
             expectedUnderlayFingerprint: expectedUnderlayFingerprint,
             candidateReport: targetReport,
@@ -603,11 +603,11 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         active.sourceReport = liveSourceReport
 
-        if liveSourceReport.scenario.id == active.targetScenarioID,
-           liveSourceReport.configurationFingerprint ==
-            active.targetConfigurationFingerprint,
-           activeUnderlay?.isEquivalent(to: underlay) == true,
-           !active.refreshLineRuntimes {
+        if active.mode.canReuseCommittedReport(
+            sameScenario: liveSourceReport.scenario.id == active.targetScenarioID,
+            sameConfiguration: liveSourceReport.configurationFingerprint == active.targetConfigurationFingerprint,
+            sameUnderlay: activeUnderlay?.isEquivalent(to: underlay) == true
+        ) {
             activeScenarioSwitch = nil
             recordScenarioSwitch(
                 active,
@@ -636,7 +636,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             underlayDefaultName: underlay.defaultInterface.name,
             underlayDefaultIndex: underlay.defaultInterface.index,
             systemDNSJSON: underlay.systemDNSJSON,
-            refreshLineRuntimes: active.refreshLineRuntimes,
+            refreshLineRuntimes: active.mode == .refreshUnderlay,
             networkEpochID: active.networkEpochID,
             underlayPathIdentity: underlay.pathIdentity
         )
@@ -5605,7 +5605,7 @@ private struct HostScenarioSwitch {
     let targetConfigurationFingerprint: String
     let profileJSON: String
     let targetReportJSON: String
-    let refreshLineRuntimes: Bool
+    let mode: HostScenarioSwitchMode
     let networkEpochID: String?
     let expectedUnderlayFingerprint: String?
     var candidateReport: ConnectionReport
