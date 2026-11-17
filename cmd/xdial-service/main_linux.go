@@ -12,7 +12,6 @@ import (
 	"github.com/kafeifei/xdial/core/linuxinstall"
 	"github.com/kafeifei/xdial/core/linuxservice"
 	"io"
-	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -52,19 +51,24 @@ func run() error {
 		if len(os.Args) != 8 {
 			return fmt.Errorf("expected UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER")
 		}
-		numbers := make([]uint32, 5)
-		for i := range numbers {
+		marks := make([]uint32, 3)
+		for i := range marks {
 			n, e := strconv.ParseUint(os.Args[i+2], 0, 32)
 			if e != nil {
 				return fmt.Errorf("invalid policy number")
 			}
-			numbers[i] = uint32(n)
+			marks[i] = uint32(n)
 		}
-		// Table and priority are kernel int32 values; bound them before int conversion.
-		if numbers[3] > math.MaxInt32 || numbers[4] > math.MaxInt32 {
-			return fmt.Errorf("invalid policy number")
+		// Table and priority are non-negative kernel int32 values.
+		routing := make([]int, 2)
+		for i := range routing {
+			n, e := strconv.ParseInt(os.Args[i+5], 0, 32)
+			if e != nil || n < 0 {
+				return fmt.Errorf("invalid policy number")
+			}
+			routing[i] = int(n)
 		}
-		p := linuxservice.Policy{Version: 1, AllowedUID: numbers[0], Socket: "/run/xdial-service/control.sock", Capture: linuxcapture.Plan{CaptureMark: numbers[1], BypassMark: numbers[2], Table: int(numbers[3]), Priority: int(numbers[4]), Listener: os.Args[7]}}
+		p := linuxservice.Policy{Version: 1, AllowedUID: marks[0], Socket: "/run/xdial-service/control.sock", Capture: linuxcapture.Plan{CaptureMark: marks[1], BypassMark: marks[2], Table: routing[0], Priority: routing[1], Listener: os.Args[7]}}
 		if p.AllowedUID == 0 {
 			return fmt.Errorf("select one unprivileged UID")
 		}
