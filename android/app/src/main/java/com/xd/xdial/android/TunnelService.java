@@ -204,7 +204,7 @@ public final class TunnelService extends VpnService {
    setUnderlyingNetworks(new Network[]{captured});core.setTunFD(tunnel.getFd());
    stage="启动数据面";core.startAndroidSession(profile,config,systemDNS.toString());
    if(stopRequested){state="未连接";finish();return;}
-   awaitReady(epoch,profile,SystemClock.elapsedRealtime()+30000);
+   awaitReady(epoch,profile,systemDNS.toString(),SystemClock.elapsedRealtime()+30000);
   }catch(Exception error){
    stopCore();
    if(stopRequested){state="未连接";finish();return;}
@@ -225,14 +225,18 @@ public final class TunnelService extends VpnService {
   catch(Exception error){tailscaleStatus="";setupMessage="暂时无法读取账号状态";}
   statusRefresh=worker.schedule(()->refreshTailscale(epoch),2000,TimeUnit.MILLISECONDS);
  }
- private void awaitReady(long epoch,String profile,long deadline){
+ private void awaitReady(long epoch,String profile,String systemDNS,long deadline){
   if(core==null||coreEpoch!=epoch||!active)return;
+  if(stopRequested){state="未连接";finish();return;}
   try{
    if(core.androidSessionReady(profile)){
-    MobileSelection.get(this).connected(true);lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="已连接";return;
+    MobileSelection.get(this).connected(true);lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="已连接";
+    Libbox_ committed=core;String base=getNoBackupFilesDir().getAbsolutePath();
+    probes.execute(()->{try{android.util.Log.i("XDialRuleRefresh",committed.refreshAndroidRuleSets(profile,systemDNS,base));}catch(Exception ignored){/* Valid cache and traffic remain usable. */}});
+    return;
    }
    if(SystemClock.elapsedRealtime()>=deadline)throw new java.io.IOException("Exit readiness timeout");
-   state="正在验证出口连接";statusRefresh=worker.schedule(()->awaitReady(epoch,profile,deadline),1000,TimeUnit.MILLISECONDS);
+   state="正在验证出口连接";statusRefresh=worker.schedule(()->awaitReady(epoch,profile,systemDNS,deadline),1000,TimeUnit.MILLISECONDS);
   }catch(Exception error){state="出口未就绪，请检查 Tailscale 登录、授权和节点状态";finish();}
  }
  private void diagnose(){

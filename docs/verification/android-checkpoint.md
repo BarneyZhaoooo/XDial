@@ -205,3 +205,34 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
 待继续：非 Direct 获取 Line、提交后的过期刷新、配置来源库、地区观察、连接中场景
 事务、后台/撤权更完整的验收及事件驱动分发。Windows/Linux 按应用透明接入与多发行版
 目标不变。未认证的企业 VPN 和 Tailscale 实际出口仍无流量联调证据。
+
+## 2026-11-17 指定代理资源与提交后刷新
+
+- 新增核心 `GenerateAndroidAcquisition`，复用已有精确 Line 的 DNS/出站编译。
+  编译模式明确不生成监听器，不使用虚构接口或临时凭据；Android 获取配置中无 TUN、
+  user RuleSet、持久 cache_file 或 type:local resolver。平台仍只给网络事实和 socket
+  保护。Direct 解析使用原始系统 DNS 顺序的首项，代理资源 DNS 和 HTTPS 走同一 Line。
+- `PrepareAndroidConfig` 支持共享核心已有原生代理类型的冷缓存获取；临时传输关闭后
+  再启动正式数据面。AnyConnect/Tailscale 资源会话遇到缺失身份租约仍明确拒绝，
+  不换 Direct。常规用户流量的 AnyConnect/Tailscale 支持保持不变。
+- `RefreshAndroidRuleSets` 在连接 readiness/commit 后后台执行，持当前运行租约，
+  最长 60 秒；每份资源独立关闭临时 Box。新鲜/未引用规则没有请求。失败、取消、过期
+  generation 保留旧副本，新的有效内容原子落盘，下次连接生效。返回仅更新/失败/延后
+  计数；停止连接取消并等待刷新退出，不重启流量核心。
+- 编译契约测试验证 DNS detour 与资源 outbound 相同、不含系统入口、原 Profile 不变、
+  协议会话租约缺失时拒绝。最初使用不支持的 SOCKS Line 测试被模型拒绝，改用已有
+  Shadowsocks 类型；没有因此放宽配置模型。
+- 本地 Shadowsocks-none 协议 fixture 仅接收并关闭连接，不向外转发：实际读到资源 DNS
+  的目标 `1.1.1.1:443`，保护回调被调用；保护拒绝时本地监听器没有接受到连接。
+  这证明指定代理/DNS/socket 边界，**不是代理 HTTPS 完整成功或真实 VPN 出口验收**。
+- 测试覆盖刷新网络失败、无效内容、协议延后、取消/过期 generation 保留副本，
+  新鲜/未绑定规则零刷新，以及实际 Stop 与阻塞保护回调的退出竞争。Android 定向 race
+  通过；config/libbox/mobile/subscription 常规全量、public-content-gate 通过。
+- 双 ABI AAR/APK、iOS/tvOS generic 模拟器、macOS Debug/Release App/扩展构建通过。
+  没有新增 XCTest 执行记录。隔离 Android 设备曾自动关机，重新启动同一设备后安装；
+  不使用 adb。暖缓存连接后的刷新报告 updated=0/failed=0/deferred=0；准备 socket 0、
+  总保护 2、失败 0；普通未 protect App socket 的 UDP DNS 与 HTTPS 再通过。
+  过期下载/缓存替换/取消由核心测试验证，未伪称模拟器实测了过期缓存的网络刷新。
+- 最终 APK SHA-256：`3e09b983b5e81b698ee936b23e28647ddf6347bfd5d65705b9dd2f30182dd2f4`，
+  插件 matchesLocal=true；设备已手动断开。日志为 `build/android/acquisition-*`。
+  尚未推送、PR 或分发；仍不是完整 Android 产品或全平台交付。

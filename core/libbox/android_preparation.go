@@ -41,6 +41,36 @@ func (l *Libbox) newAndroidBootstrap(parent context.Context, systemDNSJSON strin
 	if err != nil {
 		return nil, err
 	}
+	return l.newAndroidResourceTransport(parent, data, "direct", "")
+}
+
+func (l *Libbox) newAndroidAcquisition(parent context.Context, profile *config.Profile, lineID, systemDNSJSON, basePath string) (*androidBootstrap, error) {
+	var servers []string
+	if json.Unmarshal([]byte(systemDNSJSON), &servers) != nil {
+		return nil, fmt.Errorf("invalid system DNS snapshot")
+	}
+	data, err := config.GenerateAndroidAcquisition(profile, lineID, basePath, servers)
+	if err != nil {
+		return nil, err
+	}
+	var target struct {
+		DNS struct {
+			Final string `json:"final"`
+		} `json:"dns"`
+		Route struct {
+			Final string `json:"final"`
+		} `json:"route"`
+	}
+	if json.Unmarshal(data, &target) != nil || target.DNS.Final == "" || target.Route.Final == "" {
+		return nil, fmt.Errorf("resource Line has no exact transport")
+	}
+	return l.newAndroidResourceTransport(parent, data, target.Route.Final, target.DNS.Final)
+}
+
+func (l *Libbox) newAndroidResourceTransport(parent context.Context, data []byte, outboundTag, resolverTag string) (*androidBootstrap, error) {
+	if parent.Err() != nil {
+		return nil, parent.Err()
+	}
 	l.mu.Lock()
 	platform := l.platform.lineRuntimeCapability()
 	l.mu.Unlock()
@@ -71,11 +101,17 @@ func (l *Libbox) newAndroidBootstrap(parent context.Context, systemDNSJSON strin
 	if router == nil || transports == nil {
 		return fail()
 	}
-	transport, found := directLineResolver(transports)
+	var transport adapter.DNSTransport
+	var found bool
+	if resolverTag == "" {
+		transport, found = directLineResolver(transports)
+	} else {
+		transport, found = transports.Transport(resolverTag)
+	}
 	if !found {
 		return fail()
 	}
-	outbound, found := instance.Outbound().Outbound("direct")
+	outbound, found := instance.Outbound().Outbound(outboundTag)
 	if !found {
 		return fail()
 	}
@@ -113,8 +149,8 @@ func (l *Libbox) CancelPreparation() {
 
 // PrepareAndroidConfig materializes validated offline caches before starting the
 // sole data-plane reader. Unbound GenerateAndroidConfig is deliberately cache-only.
-// Explicit non-Direct acquisition never silently falls back to Direct: until its
-// isolated Line transaction is available it requires a previously validated cache.
+// Explicit acquisition never silently falls back to Direct. Protocol-owned
+// sessions still require a separate identity lease; native proxies are isolated.
 func (l *Libbox) PrepareAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
 	l.mu.Lock()
 	if l.running || l.startPreparing || l.cleaning {
@@ -161,7 +197,14 @@ func (l *Libbox) PrepareAndroidConfig(profileJSON, systemDNSJSON, basePath strin
 	}
 	_, err = materializeNERuleSetsWithFetchForRule(profile, basePath, func(rule *config.RuleSet) neRuleSetFetcher {
 		if rule.EffectiveFetchLineID() != "direct" {
-			return nil
+			return func(rawURL string, limit int64) ([]byte, error) {
+				resource, err := l.newAndroidAcquisition(parent, profile, rule.EffectiveFetchLineID(), systemDNSJSON, basePath)
+				if err != nil {
+					return nil, err
+				}
+				defer resource.instance.Close()
+				return resource.fetch(rawURL, limit)
+			}
 		}
 		return fetch
 	}, nil)
