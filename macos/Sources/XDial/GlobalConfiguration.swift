@@ -335,6 +335,15 @@ extension ProfileLibrary {
                 throw ProfileLibraryError.invalid("规则「\(rule.name)」的下载线路已不存在")
             }
         }
+        // A subscription's fetch Line is a stored dependency like a rule set's:
+        // removing it (deletion, a refresh dropping it, an edit) is refused.
+        for record in profiles {
+            guard let source = record.source, !source.usesDirectAcquisition,
+                  let lineID = source.fetchLineID else { continue }
+            guard lines.contains(lineID) else {
+                throw ProfileLibraryError.invalid("订阅「\(record.name)」的获取线路已不存在")
+            }
+        }
         guard activeScenarioID.isEmpty ? scenarios.isEmpty : scenarios.contains(where: { $0.id == activeScenarioID }) else {
             throw ProfileLibraryError.invalid("活动场景不存在")
         }

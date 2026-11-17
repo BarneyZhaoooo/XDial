@@ -3,6 +3,7 @@
 package libbox
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kafeifei/xdial/core/config"
+	"github.com/kafeifei/xdial/core/subscription"
 )
 
 func lineFetchProfileJSON(t *testing.T, lines ...config.Line) string {
@@ -33,7 +35,7 @@ func lineFetchProfileJSON(t *testing.T, lines ...config.Line) string {
 // to reach and then refuses; no DNS or HTTPS packet leaves the test machine.
 // It proves the Apple path resolves and connects through the chosen Line with
 // no socket protector installed, and that failure does not fall back to Direct.
-func TestFetchProfileSourceViaLineUsesSelectedLine(t *testing.T) {
+func TestImportProfileSourceViaLineUsesSelectedLine(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +71,7 @@ func TestFetchProfileSourceViaLineUsesSelectedLine(t *testing.T) {
 		SSServer: "127.0.0.1", SSPort: listener.Addr().(*net.TCPAddr).Port, SSMethod: "none", SSPass: "fixture",
 	})
 	l := New(nil)
-	_, err = l.FetchProfileSourceViaLine(profileJSON, "https://profiles.example.invalid/p.json", "source", `["192.0.2.53"]`, t.TempDir())
+	_, err = l.ImportProfileSourceViaLine(profileJSON, "https://profiles.example.invalid/p.json", "source", `["192.0.2.53"]`, t.TempDir(), "imported", false)
 	if err == nil {
 		t.Fatal("refusing Line produced a document")
 	}
@@ -86,20 +88,20 @@ func TestFetchProfileSourceViaLineUsesSelectedLine(t *testing.T) {
 	}
 }
 
-func TestFetchProfileSourceViaLineRefusesProtocolOwnedLines(t *testing.T) {
+func TestImportProfileSourceViaLineRefusesProtocolOwnedLines(t *testing.T) {
 	for _, kind := range []config.LineType{config.LineTypeVPN, config.LineTypeTailscale} {
 		profileJSON := lineFetchProfileJSON(t, config.Line{
 			ID: "protocol", Name: "Protocol", Type: kind, Enabled: true,
 			VPNServer: "vpn.invalid", TailscaleExitNode: "100.64.0.1",
 		})
-		_, err := New(nil).FetchProfileSourceViaLine(profileJSON, "https://profiles.example.invalid/p.json", "protocol", `["192.0.2.53"]`, t.TempDir())
+		_, err := New(nil).ImportProfileSourceViaLine(profileJSON, "https://profiles.example.invalid/p.json", "protocol", `["192.0.2.53"]`, t.TempDir(), "imported", false)
 		if !errors.Is(err, ErrProfileSourceLineUnsupported) {
 			t.Fatalf("%s Line was not refused: %v", kind, err)
 		}
 	}
 }
 
-func TestFetchProfileSourceViaLineRejectsUnsafeInput(t *testing.T) {
+func TestImportProfileSourceViaLineRejectsUnsafeInput(t *testing.T) {
 	profileJSON := lineFetchProfileJSON(t)
 	for _, tc := range []struct{ url, line string }{
 		{"http://profiles.example.invalid/p.json", "direct"},
@@ -108,8 +110,33 @@ func TestFetchProfileSourceViaLineRejectsUnsafeInput(t *testing.T) {
 		{"https://profiles.example.invalid/p.json", ""},
 		{"https://profiles.example.invalid/p.json", "missing"},
 	} {
-		if _, err := New(nil).FetchProfileSourceViaLine(profileJSON, tc.url, tc.line, `["192.0.2.53"]`, t.TempDir()); err == nil {
+		if _, err := New(nil).ImportProfileSourceViaLine(profileJSON, tc.url, tc.line, `["192.0.2.53"]`, t.TempDir(), "imported", false); err == nil {
 			t.Fatalf("accepted %s via %q", tc.url, tc.line)
 		}
+	}
+}
+
+// Only non-native documents expand rule sources, and only through the caller's
+// path: a Line-fetched Surge/Clash source must not reach the default network.
+func TestImportProfileDocumentExpandsOnlyThroughCallerPath(t *testing.T) {
+	surge := "[Proxy]\nJP = ss, jp.example.com, 8388, encrypt-method=aes-128-gcm, password=fixture\n\n[Proxy Group]\nManual = select, JP\n\n[Rule]\nRULE-SET,https://rules.example.com/list,Manual\nFINAL,Manual\n"
+	calls := 0
+	expand := func(parsed *subscription.ParseResult) error {
+		calls++
+		return subscription.ExpandRulesetsStrictWithFetch(context.Background(), parsed, func(context.Context, string, int64) ([]byte, error) {
+			return []byte("DOMAIN-SUFFIX,example.org\n"), nil
+		})
+	}
+	if _, err := importProfileDocument(surge, "auto", "imported", false, expand); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("rule sources were not expanded through the caller path: %d", calls)
+	}
+	if _, err := importProfileDocument(surge, "auto", "imported", true, expand); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("lines-only import expanded rule sources")
 	}
 }

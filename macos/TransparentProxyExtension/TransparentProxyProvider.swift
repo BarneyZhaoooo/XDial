@@ -770,19 +770,19 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 var content: String?
                 if let instance = LibboxNew(nil) {
                     var error: NSError?
-                    let fetched = instance.fetchProfileSource(
-                    viaLine: request.profileJSON, rawURL: request.url, lineID: request.lineID,
+                    let imported = instance.importProfileSource(
+                        viaLine: request.profileJSON, rawURL: request.url, lineID: request.lineID,
                         systemDNSJSON: request.systemDNSJSON, basePath: NSTemporaryDirectory(),
-                        error: &error)
+                        namespace: request.namespace, nodesOnly: request.nodesOnly, error: &error)
                     if let error {
                         code = ProfileSourceLineFetchOutcome.code(for: error)
                         logger.warning("profile-source-line-fetch failed code=\(code, privacy: .public)")
                     } else {
-                        content = fetched
+                        content = imported
                         code = "ok"
                     }
                 }
-                if let content, content.utf8.count > ProfileSourceLineFetch.maxContentBytes {
+                if let content, content.utf8.count > ProfileSourceLineFetch.maxImportedBytes {
                     reply("fetch-failed")
                 } else {
                     reply(code, code == "ok" ? content : nil)

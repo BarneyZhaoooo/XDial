@@ -15,6 +15,12 @@ import (
 // ImportProfile has no system ingress or connection side effects. Downloads of
 // referenced rule sources occur only in this explicitly requested import.
 func ImportProfile(content, format, namespace string, nodesOnly bool) (string, error) {
+	return importProfileDocument(content, format, namespace, nodesOnly, subscription.ExpandRulesetsStrict)
+}
+
+// importProfileDocument lets the caller own how referenced rule sources are
+// downloaded; expand runs only for non-native, non-nodes-only documents.
+func importProfileDocument(content, format, namespace string, nodesOnly bool, expand func(*subscription.ParseResult) error) (string, error) {
 	var root map[string]json.RawMessage
 	var profile *config.Profile
 	var err error
@@ -61,7 +67,7 @@ func ImportProfile(content, format, namespace string, nodesOnly bool) (string, e
 		var parsed *subscription.ParseResult
 		parsed, err = subscription.ParseStrict("", content, format)
 		if err == nil && !nodesOnly {
-			err = subscription.ExpandRulesetsStrict(parsed)
+			err = expand(parsed)
 		}
 		if err == nil {
 			profile, err = config.ImportSubscriptionProfile(namespace, parsed.Lines, parsed.ProxyGroups, parsed.Rules, nodesOnly)

@@ -122,14 +122,14 @@ enum ProfileDocumentService {
     }
 
     /// Downloads a source the way it declares: URLSession for Direct, otherwise
-    /// only through its explicit fetch Line.
+    /// the body and its referenced rule sources only through the explicit Line.
     @MainActor
     static func read(source: ProfileSource, profileID: String, state: AppState) async throws -> Profile {
         guard !source.usesDirectAcquisition, let lineID = source.fetchLineID else {
             return try await read(content: "", url: source.url, profileID: profileID, nodesOnly: source.nodesOnly)
         }
-        let text = try await ProfileSourceLineFetcher.fetch(url: source.url, lineID: lineID, state: state)
-        return try await read(content: text, url: "", profileID: profileID, nodesOnly: source.nodesOnly)
+        return try await ProfileSourceLineFetcher.importProfile(
+            source: source, lineID: lineID, profileID: profileID, state: state)
     }
 
     static func importDocument(_ text: String, profileID: String, nodesOnly: Bool = false) throws -> Profile {

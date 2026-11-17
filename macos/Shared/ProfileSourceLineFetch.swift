@@ -5,14 +5,16 @@ import Foundation
 /// host app's own sockets are captured, so the request runs inside the Provider;
 /// otherwise the app runs the same core call itself.
 enum ProfileSourceLineFetch {
-    static let maxContentBytes = 4 * 1024 * 1024
     /// Runtime profile with credentials plus the URL; far below typical
     /// profile sizes but bounded so a corrupted request cannot exhaust memory.
     static let maxRequestBytes = 8 * 1024 * 1024
-    /// Escaped JSON may roughly double the bounded body.
-    static let maxResponseBytes = 2 * maxContentBytes + 4096
-    /// Go bounds the fetch to 30 s; this covers the Provider round trip.
-    static let hostTimeout: TimeInterval = 40
+    /// Imported Profile JSON derived from a bounded body and bounded rule sets.
+    static let maxImportedBytes = 16 * 1024 * 1024
+    /// Escaped JSON may roughly double the imported document.
+    static let maxResponseBytes = 2 * maxImportedBytes + 4096
+    /// Go bounds the body plus rule-set expansion to 60 s; this covers the
+    /// Provider round trip.
+    static let hostTimeout: TimeInterval = 70
 
     /// Line types whose protocol owns a process identity. They need the shared
     /// session lease before a resource fetch may run beside traffic.
@@ -36,8 +38,12 @@ struct ProfileSourceLineFetchRequest: Codable, Equatable {
     let lineID: String
     let profileJSON: String
     let systemDNSJSON: String
+    /// Profile ID the imported document is namespaced under.
+    let namespace: String
+    let nodesOnly: Bool
 
-    init(transactionID: String, url: String, lineID: String, profileJSON: String, systemDNSJSON: String) {
+    init(transactionID: String, url: String, lineID: String, profileJSON: String, systemDNSJSON: String,
+         namespace: String, nodesOnly: Bool) {
         kind = Self.kind
         version = Self.version
         requestID = UUID().uuidString
@@ -46,13 +52,15 @@ struct ProfileSourceLineFetchRequest: Codable, Equatable {
         self.lineID = lineID
         self.profileJSON = profileJSON
         self.systemDNSJSON = systemDNSJSON
+        self.namespace = namespace
+        self.nodesOnly = nodesOnly
     }
 
     var isValid: Bool {
         kind == Self.kind && version == Self.version && !requestID.isEmpty
             && !transactionID.isEmpty && !url.isEmpty && url.utf8.count <= 4096
             && !ProfileSourceLineFetch.isDirect(lineID) && !profileJSON.isEmpty
-            && !systemDNSJSON.isEmpty
+            && !systemDNSJSON.isEmpty && !namespace.isEmpty
     }
 }
 
@@ -62,6 +70,7 @@ struct ProfileSourceLineFetchResponse: Codable, Equatable {
     /// `ok`, `invalid-request`, `transaction-mismatch`, `session-not-committed`,
     /// `busy`, `unsupported-line` or `fetch-failed`.
     let code: String
+    /// Imported Profile JSON when `code` is `ok`.
     let content: String?
 }
 

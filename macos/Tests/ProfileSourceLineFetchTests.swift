@@ -44,12 +44,13 @@ final class ProfileSourceLineFetchTests: XCTestCase {
     func testRequestValidationRejectsDirectAndUnboundedInput() {
         let valid = ProfileSourceLineFetchRequest(
             transactionID: "tx", url: "https://example.com/p", lineID: "proxy",
-            profileJSON: "{}", systemDNSJSON: #"["192.0.2.53"]"#)
+            profileJSON: "{}", systemDNSJSON: #"["192.0.2.53"]"#, namespace: "p", nodesOnly: false)
         XCTAssertTrue(valid.isValid)
         for request in [
-            ProfileSourceLineFetchRequest(transactionID: "tx", url: "https://example.com/p", lineID: "direct", profileJSON: "{}", systemDNSJSON: "[]"),
-            ProfileSourceLineFetchRequest(transactionID: "", url: "https://example.com/p", lineID: "proxy", profileJSON: "{}", systemDNSJSON: "[]"),
-            ProfileSourceLineFetchRequest(transactionID: "tx", url: "https://example.com/" + String(repeating: "a", count: 4096), lineID: "proxy", profileJSON: "{}", systemDNSJSON: "[]"),
+            ProfileSourceLineFetchRequest(transactionID: "tx", url: "https://example.com/p", lineID: "direct", profileJSON: "{}", systemDNSJSON: "[]", namespace: "p", nodesOnly: false),
+            ProfileSourceLineFetchRequest(transactionID: "", url: "https://example.com/p", lineID: "proxy", profileJSON: "{}", systemDNSJSON: "[]", namespace: "p", nodesOnly: false),
+            ProfileSourceLineFetchRequest(transactionID: "tx", url: "https://example.com/" + String(repeating: "a", count: 4096), lineID: "proxy", profileJSON: "{}", systemDNSJSON: "[]", namespace: "p", nodesOnly: false),
+            ProfileSourceLineFetchRequest(transactionID: "tx", url: "https://example.com/p", lineID: "proxy", profileJSON: "{}", systemDNSJSON: "[]", namespace: "", nodesOnly: false),
         ] {
             XCTAssertFalse(request.isValid)
         }
