@@ -138,6 +138,8 @@ struct HomeView: View {
         .task {
             autoPilot.onNetworkChange = { Task { await refreshAutoScenario(afterNetworkChange: true) } }
             autoPilot.start()
+            // 冷启动时隧道可能已经在跑，连接状态要等系统 VPN 配置读出来才准。
+            await app.refreshTunnelProfileStatusAndWait()
             await refreshAutoScenario()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -173,6 +175,10 @@ struct HomeView: View {
                 // 扩展是旧版本：沿用 App 判断、断开重连。
                 break
             }
+        } else if isWorking || app.hasActiveTunnel {
+            // 隧道正在连接或自检：本机直接查出口会被隧道挡住，这时也不能改选场景。
+            // 连上以后由 VPN 扩展判断（见 AppState.refreshScenarioCatalog）。
+            return
         }
         // 已连接时只有 VPN 扩展查得到本地网络的出口，见 ScenarioAutoPilot.survey。
         var exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)?

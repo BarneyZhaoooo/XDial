@@ -197,11 +197,18 @@ private final class SwitchSpyManager: TunnelManaging {
         return switchReply
     }
 
+    private(set) var evaluationRequestCount = 0
+    private(set) var stateRequestCount = 0
+
     func requestScenarioEvaluation() async -> ScenarioEvaluationReply {
+        evaluationRequestCount += 1
         if evaluationUnsupported { return .unsupported }
         return evaluationState.map(ScenarioEvaluationReply.evaluated) ?? .unavailable
     }
-    func requestScenarioState() async -> TunnelScenarioState? { evaluationState }
+    func requestScenarioState() async -> TunnelScenarioState? {
+        stateRequestCount += 1
+        return evaluationState
+    }
     func adoptSwitchedScenario(_ scenarioID: String) { adoptedScenarios.append(scenarioID) }
 }
 
@@ -258,6 +265,31 @@ final class ScenarioInTunnelSwitchTests: XCTestCase {
         XCTAssertEqual(build?.ids, ["office", "outside"])
         XCTAssertEqual(build?.keepingOthers, false)
         XCTAssertEqual(build?.policy.enabled, true)
+    }
+
+    func testConnectingAsksTheExtensionOnceTheCatalogIsReady() async {
+        let (app, _, manager) = makeApp()
+        // 连接前 App 自己没查到出口；连上后由扩展经 Direct 线路重新判断。
+        manager.evaluationState = state(running: "outside")
+        app.connect()
+        await settle()
+
+        XCTAssertEqual(manager.catalogBuilds.count, 1)
+        XCTAssertEqual(manager.evaluationRequestCount, 1)
+        XCTAssertEqual(app.profile.activeScenarioID, "outside")
+        XCTAssertEqual(manager.adoptedScenarios, ["outside"])
+    }
+
+    func testConnectingWithAutoOffOnlyReadsTheExtensionState() async {
+        let (app, _, manager) = makeApp()
+        autoEnabled = false
+        manager.evaluationState = state(running: "office")
+        app.connect()
+        await settle()
+
+        XCTAssertEqual(manager.evaluationRequestCount, 0)
+        XCTAssertEqual(manager.stateRequestCount, 1)
+        XCTAssertEqual(app.profile.activeScenarioID, "office")
     }
 
     func testManualSwitchKeepsTheVPNUpAndAdoptsTheNewScenario() async {

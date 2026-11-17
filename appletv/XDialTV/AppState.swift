@@ -2993,7 +2993,13 @@ extension AppState {
             _ = await tunnelManager.rebuildScenarioCatalog(inputs: inputs, policy: policy, keepingOthers: false)
             guard !Task.isCancelled, let self else { return }
             self.scenarioCatalogTask = nil
-            await self.refreshTunnelScenarioState()
+            // 刚连上（含 App 冷启动时隧道已在运行、系统自动连回）：目录就绪后请扩展按当前网络判断一次。
+            // 连接前 App 自己的判断可能没查到出口，或者网络在连接期间变了。
+            if self.scenarioAutoPolicyProvider?(snapshot).enabled == true {
+                _ = await self.requestTunnelScenarioEvaluation()
+            } else {
+                await self.refreshTunnelScenarioState()
+            }
         }
     }
 

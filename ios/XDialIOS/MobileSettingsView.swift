@@ -272,10 +272,18 @@ struct MobileSettingsView: View {
     private var autoScenarioSummary: String? {
         let isChinese = app.language == .zh
         let tunnelState = app.isConnected ? app.tunnelScenarioState : nil
-        let survey = [tunnelState?.lastSurvey, ScenarioAutoPilot.lastRecord]
-            .compactMap { $0 }
-            .max { $0.at < $1.at }
-        var parts = survey.map { [$0.summary(isChinese: isChinese)] } ?? []
+        // App 与 VPN 扩展各自的最近一次判断分开写：已连接时以扩展为准，没连接时只有 App。
+        var parts: [String] = []
+        if let record = ScenarioAutoPilot.lastRecord {
+            parts.append("App " + record.summary(isChinese: isChinese))
+        }
+        if app.isConnected {
+            let tunnelSummary = tunnelState?.lastSurvey?.summary(isChinese: isChinese)
+                ?? (tunnelState == nil
+                    ? (isChinese ? "VPN 扩展未回应" : "VPN extension did not respond")
+                    : (isChinese ? "VPN 扩展尚未判断" : "VPN extension has not checked yet"))
+            parts.append(tunnelSummary)
+        }
         if let lastSwitch = tunnelState?.lastSwitch {
             let mode: String
             switch lastSwitch.mode {
@@ -290,7 +298,7 @@ struct MobileSettingsView: View {
                 ? "最近一次切换（\(mode)）\(outcome)"
                 : "Last switch (\(mode)) \(outcome)")
         }
-        return parts.isEmpty ? nil : parts.joined(separator: isChinese ? "；" : "; ")
+        return parts.isEmpty ? nil : parts.joined(separator: " ｜ ")
     }
 
     private func prepareExport() {
