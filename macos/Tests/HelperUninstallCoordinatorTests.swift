@@ -169,6 +169,55 @@ final class HelperUninstallCoordinatorTests: XCTestCase {
         XCTAssertTrue(unregistered)
     }
 
+    func testReplacementAcceptsRefusedUnregisterOnlyWhenNothingIsRegistered() async throws {
+        var cleared = false
+        let coordinator = replacementCoordinator(
+            processes: .available([]),
+            jobPresent: { false },
+            clear: { cleared = true }
+        )
+
+        try await coordinator.run()
+        XCTAssertTrue(cleared)
+    }
+
+    func testReplacementRefusedUnregisterFailsWhenLaunchdStillHoldsJob() async {
+        await assertRefusedUnregisterFails(replacementCoordinator(
+            processes: .available([]), jobPresent: { true }
+        ))
+    }
+
+    func testReplacementRefusedUnregisterFailsWhenLaunchdStateIsUnknown() async {
+        await assertRefusedUnregisterFails(replacementCoordinator(
+            processes: .available([]), jobPresent: { nil }
+        ))
+    }
+
+    func testReplacementRefusedUnregisterFailsWhileOwnedHelperRuns() async {
+        await assertRefusedUnregisterFails(replacementCoordinator(
+            processes: .available([42]), jobPresent: { false }
+        ))
+    }
+
+    func testRefusedUnregisterOfVisibleRegistrationStillFails() async {
+        var cleared = false
+        let coordinator = HelperUninstallCoordinator(
+            requiresUnregister: true,
+            io: .init(
+                unregisterPending: { false },
+                registrationStatus: { .registered },
+                ownedProcesses: { _ in .available([]) },
+                unregister: { throw TestError.unregisterFailed },
+                clearMaintenanceIntent: { cleared = true },
+                now: { 0 },
+                sleep: { _ in XCTFail("unexpected wait") },
+                systemJobPresent: { false }
+            )
+        )
+        await assertRefusedUnregisterFails(coordinator)
+        XCTAssertFalse(cleared)
+    }
+
     func testTimedOutUnregisterBlocksRemovedStateRetryUntilRealCompletion() async throws {
         let gate = HelperRegistrationMutationGate()
         var status: HelperUninstallCoordinator.RegistrationStatus = .registered
@@ -261,6 +310,39 @@ final class HelperUninstallCoordinatorTests: XCTestCase {
             ),
             .available([42])
         )
+    }
+
+    private func replacementCoordinator(
+        processes: HelperUninstallCoordinator.ProcessSnapshot,
+        jobPresent: @escaping () -> Bool?,
+        clear: @escaping () throws -> Void = {}
+    ) -> HelperUninstallCoordinator {
+        HelperUninstallCoordinator(
+            requiresUnregister: true,
+            io: .init(
+                unregisterPending: { false },
+                registrationStatus: { .removed },
+                ownedProcesses: { _ in processes },
+                unregister: { throw TestError.unregisterFailed },
+                clearMaintenanceIntent: clear,
+                now: { 0 },
+                sleep: { _ in XCTFail("unexpected wait") },
+                systemJobPresent: jobPresent
+            )
+        )
+    }
+
+    private func assertRefusedUnregisterFails(
+        _ coordinator: HelperUninstallCoordinator,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            try await coordinator.run()
+            XCTFail("refused unregister passed the teardown barrier", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? TestError, .unregisterFailed, file: file, line: line)
+        }
     }
 
     private func makeCoordinator(

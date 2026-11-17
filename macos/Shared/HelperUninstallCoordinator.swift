@@ -56,6 +56,9 @@ struct HelperUninstallCoordinator {
         var clearMaintenanceIntent: () throws -> Void
         var now: () -> TimeInterval
         var sleep: (TimeInterval) async throws -> Void
+        /// Whether launchd's system domain holds a job with the helper label:
+        /// `nil` when that cannot be established. Independent of SMAppService.
+        var systemJobPresent: () -> Bool? = { nil }
     }
 
     private let limits: Limits
@@ -84,7 +87,21 @@ struct HelperUninstallCoordinator {
         }
 
         if requiresUnregister || registration == .registered || !initialProcessIDs.isEmpty {
-            try await io.unregister()
+            do {
+                try await io.unregister()
+            } catch {
+                // Replacement asks for an unregister completion even when the
+                // incoming bundle reads the helper as removed, because that
+                // status may not see the outgoing container's registration.
+                // macOS refuses to unregister a service it has no record of.
+                // Only when nothing was registered by any measure is there no
+                // registration left for that completion barrier to order.
+                guard registration == .removed, initialProcessIDs.isEmpty,
+                      !io.unregisterPending(),
+                      io.registrationStatus() == .removed,
+                      io.systemJobPresent() == false
+                else { throw error }
+            }
         }
 
         let deadline = io.now() + limits.teardown
