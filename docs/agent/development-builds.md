@@ -78,6 +78,11 @@ Debug 曾安装为 `/Applications/XDail Debug.app`。新包发现该路径上签
 仍有进程占用时留给下一次安装事务。正式版按新旧两个路径识别 Debug；此前发布的版本只认旧路径，
 新 Debug 运行期间它们的 helper 维护会因进程状态未知而停止，退出 Debug 后恢复。
 
+替换安装总是先请求注销旧 helper，因为新包读到的注册状态可能看不到旧容器的注册。
+旧 helper 根本没有注册时，macOS 会以 `SMAppServiceErrorDomain Code=1` 拒绝注销；只有前后
+状态都是未注册、没有属于该 bundle 的 helper 进程、且 `launchctl print system/<label>`
+明确返回不存在（113）时，才接受这次拒绝并继续替换。任一事实未知仍保留原应用并停止。
+
 `--install-only` 不提供保留旧进程或连接的安装能力。实现见
 [ApplicationRelocator.swift](../../macos/Sources/XDial/ApplicationRelocator.swift)；
 既有重启脚本的交接和验收见 [restart-macos-app.sh](../../scripts/restart-macos-app.sh)。
