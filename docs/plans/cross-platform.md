@@ -388,3 +388,6 @@ Direct/bootstrap 经共享 sing-box 带标记 transport，代理应用 DNS 仍�
 接口已适配，后续必须补内核调用者归因的原生入口。这个缺口保留在首版范围内。
 Fedora/Arch 仍须真实完整镜像，不能复用 Debian 验收标签；Windows SCM/WFP、Linux
 协议租约/IPv6/既有 mark 共存/UI、Android 和发布剩余目标继续推进。
+
+本阶段保存为 `1d418cb`，随后以 `bc9c8e9` 合入新主线 `878e455`；合并后的
+受影响 iOS/tvOS 再构建通过。三个远端测试/工具目录已清理并读回不存在，未推送或开 PR。

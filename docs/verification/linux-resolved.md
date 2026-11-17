@@ -100,3 +100,13 @@ iOS/tvOS generic simulator、macOS Debug/Release App 与扩展六构建通过
 最终数据验收后，initramfs 旧 runner 补写显式 `hosts: files dns`，避免最小系统因没有
 NSS 文件而违反新准入条件；只做 Python 语法检查，未重跑旧 initramfs 矩阵，未改变
 最终 Debian 受测服务或测试程序。
+
+三个远端 UUID（初轮、最终轮、工具准备）均由 helper clean 完成；另经原生 SSH
+读回三目录不存在、无本任务 QEMU，收据 `resolved-cleanup-readback.json`。工具生成树
+先核对精确 UUID、UID、包清单 hash 和无活 QEMU 后删除，再执行 helper clean。
+没有可续用的远端工具/镜像目录，下一轮须重新准备。
+
+本阶段末主线新增 `878e455`（iOS/tvOS 保留连接后的重查与后台延迟），已在工作分支
+以 `bc9c8e9` 合入；没有推送或创建 PR。新增文件只涉及 Apple 客户端，合并后的
+`make ios appletv` 再次通过（`resolved-main-apple.log`），无新增 XCTest。Linux 和
+Android 产物保持原始来源摘要，不把合并后版本号写进先前受测产物。
