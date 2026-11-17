@@ -148,3 +148,32 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
 时序限制的复现，不能将其算作通过或断言根因已修复。日志分别保存为
 `build/android/baseline-core-race.log`、`tailscale-core-rerun.log` 和
 `tailscale-final-standard.log`。没有调大生产/测试超时来掩盖结果。
+
+## 2026-11-17 Android 受保护的资源准备与缓存恢复
+
+- `PrepareAndroidConfig` 在正式数据面启动前持有可取消的准备租约；按捕获的系统 DNS、
+  protector/Network 事实创建无 TUN、无用户场景绑定的独立 sing-box Direct 传输。
+  DNS 与数值地址 HTTP 拨号走同一传输，继续使用逐跳 HTTPS、全地址 SSRF、内容语义
+  校验和原子缓存。普通 `GenerateAndroidConfig` 改为只读有效缓存，不能旁路保护器。
+- 用户停止/撤权可从服务线程立即取消准备，再等待串行清理；Stop 退休准备租约之后
+  才允许换保护器。严格 HTTP 临时传输结束时关闭闲置连接，避免越过能力生命周期。
+- 独立 arm64 模拟器导入非秘密 Direct 测试 Profile，绑定显式公开 SRS 来源
+  `https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs`。
+  首次无缓存连接准备阶段保护 socket 2 次、总计 4 次、失败 0 次。随后普通未 protect
+  App socket 的 UDP DNS 响应 ID/NXDOMAIN 与 HTTPS 200/正文均通过。
+- 插件断网后显示等待恢复；恢复网络后保留 TUN 并重建唯一核心。准备阶段 socket 0 次，
+  使用有效离线副本；总保护 7 次、失败 0 次；普通 DNS/HTTPS 再次通过。这里证明了
+  冷缓存首次下载及暖缓存恢复，尚未模拟保留旧 TUN 时冷缓存缺失的完整下载。
+- 契约测试覆盖保护拒绝无 fallback、无 TUN 能力、缓存独立编译、取消/Stop 竞争、
+  未提供 fetcher 时返回错误而非 panic。显式非 Direct `fetch_line_id` 冷缓存仍拒绝，
+  不静默改走 Direct；其他 Line 获取事务、提交后过期刷新与离线管理 UI 待继续。
+- Android 定向 race、core/config/libbox/mobile 常规全量测试通过；临时 HTTP 清理修改后
+  subscription/libbox 再验证通过。public-content-gate 通过。AAR 双 ABI、APK、iOS/tvOS
+  generic 模拟器、macOS Debug/Release App/扩展构建通过；未新增 XCTest 执行证据。
+- 最终 APK SHA-256：
+  `0f75f2dfa92c46962c2b5d6258d31f581668af8c363bc286c8e4afe2d29535ad`；
+  插件 `matchesLocal=true`。最终包安装后缓存连接与普通 DNS/HTTPS 复验通过，
+  已主动断开并读回“未连接”，模拟器网络恢复。未改变宿主 VPN、上传或分发。
+
+用户无需额外开通 Tailscale；没有隔离 tailnet 凭据时保留真实认证出口未验证，继续其他
+独立功能。此阶段仍为开发验收，不代表 Android 产品或全平台完成。

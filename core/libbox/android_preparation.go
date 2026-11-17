@@ -1,0 +1,190 @@
+//go:build !windows
+
+package libbox
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/netip"
+	"time"
+
+	"github.com/kafeifei/xdial/core/config"
+	"github.com/kafeifei/xdial/core/subscription"
+	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
+	jsonext "github.com/sagernet/sing/common/json"
+	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/sing/service"
+)
+
+type androidBootstrap struct {
+	instance  *box.Box
+	ctx       context.Context
+	router    adapter.DNSRouter
+	transport adapter.DNSTransport
+	outbound  adapter.Outbound
+}
+
+// This capability has no ingress, cache or user Scenario. Both DNS and numeric
+// dialing belong to one protected sing-box Direct transport on the captured OS
+// network. It is safe while an old OS TUN remains installed with no reader.
+func (l *Libbox) newAndroidBootstrap(parent context.Context, systemDNSJSON string) (*androidBootstrap, error) {
+	var servers []string
+	if json.Unmarshal([]byte(systemDNSJSON), &servers) != nil {
+		return nil, fmt.Errorf("invalid system DNS snapshot")
+	}
+	profile := &config.Profile{Lines: []config.Line{{ID: "direct", Type: config.LineTypeDirect, Enabled: true}}, Scenarios: []config.Scenario{{ID: "bootstrap", DefaultLineID: "direct"}}, ActiveScenarioID: "bootstrap"}
+	data, err := config.GenerateSingBoxAndroid(profile, "", servers)
+	if err != nil {
+		return nil, err
+	}
+	l.mu.Lock()
+	platform := l.platform.lineRuntimeCapability()
+	l.mu.Unlock()
+	if platform.socketProtector == nil {
+		return nil, fmt.Errorf("protected network unavailable")
+	}
+	ctx := service.ContextWith[adapter.PlatformInterface](boxContext(parent), platform)
+	options, err := jsonext.UnmarshalExtendedContext[option.Options](ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	options.Inbounds = nil
+	options.Experimental = nil
+	options.Log = &option.LogOptions{Disabled: true}
+	instance, err := box.New(box.Options{Options: options, Context: ctx})
+	if err != nil {
+		return nil, err
+	}
+	fail := func() (*androidBootstrap, error) {
+		instance.Close()
+		return nil, fmt.Errorf("protected network unavailable")
+	}
+	if err = instance.Start(); err != nil {
+		return fail()
+	}
+	router := service.FromContext[adapter.DNSRouter](ctx)
+	transports := service.FromContext[adapter.DNSTransportManager](ctx)
+	if router == nil || transports == nil {
+		return fail()
+	}
+	transport, found := directLineResolver(transports)
+	if !found {
+		return fail()
+	}
+	outbound, found := instance.Outbound().Outbound("direct")
+	if !found {
+		return fail()
+	}
+	return &androidBootstrap{instance, ctx, router, transport, outbound}, nil
+}
+
+func (b *androidBootstrap) fetch(rawURL string, limit int64) ([]byte, error) {
+	lookup := func(ctx context.Context, _, host string) ([]netip.Addr, error) {
+		return b.router.Lookup(ctx, host, adapter.DNSQueryOptions{Transport: b.transport, DisableCache: true})
+	}
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		target, err := netip.ParseAddrPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("numeric resource destination required")
+		}
+		return b.outbound.DialContext(ctx, network, M.SocksaddrFrom(target.Addr(), target.Port()))
+	}
+	content, err := subscription.FetchStrictBytesWithNetworkContext(b.ctx, rawURL, limit, lookup, dial)
+	if err != nil {
+		return nil, fmt.Errorf("protected resource fetch failed")
+	}
+	return content, nil
+}
+
+// CancelPreparation is nonblocking, so an Android user stop can interrupt DNS or
+// HTTP while its serial service worker is still preparing. Stop performs cleanup.
+func (l *Libbox) CancelPreparation() {
+	l.mu.Lock()
+	cancel := l.startPreparationCancel
+	l.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// PrepareAndroidConfig materializes validated offline caches before starting the
+// sole data-plane reader. Unbound GenerateAndroidConfig is deliberately cache-only.
+// Explicit non-Direct acquisition never silently falls back to Direct: until its
+// isolated Line transaction is available it requires a previously validated cache.
+func (l *Libbox) PrepareAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
+	l.mu.Lock()
+	if l.running || l.startPreparing || l.cleaning {
+		l.mu.Unlock()
+		return "", fmt.Errorf("configuration preparation requires an idle runtime")
+	}
+	parent, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	l.startPreparing = true
+	l.startPreparationCancel = cancel
+	l.startPreparationUsers.Add(1)
+	l.mu.Unlock()
+	var bootstrap *androidBootstrap
+	defer func() {
+		cancel()
+		if bootstrap != nil {
+			bootstrap.instance.Close()
+		}
+		l.mu.Lock()
+		l.startPreparing = false
+		l.startPreparationCancel = nil
+		l.mu.Unlock()
+		l.startPreparationUsers.Done()
+	}()
+	fetch := func(rawURL string, limit int64) ([]byte, error) {
+		if err := parent.Err(); err != nil {
+			return nil, fmt.Errorf("configuration preparation cancelled")
+		}
+		if bootstrap == nil {
+			var err error
+			bootstrap, err = l.newAndroidBootstrap(parent, systemDNSJSON)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return bootstrap.fetch(rawURL, limit)
+	}
+	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
+	if err != nil {
+		return "", err
+	}
+	ruleDir, err := prepareNERuleSetDirectory(basePath)
+	if err != nil {
+		return "", err
+	}
+	_, err = materializeNERuleSetsWithFetchForRule(profile, basePath, func(rule *config.RuleSet) neRuleSetFetcher {
+		if rule.EffectiveFetchLineID() != "direct" {
+			return nil
+		}
+		return fetch
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	var servers []string
+	if json.Unmarshal([]byte(systemDNSJSON), &servers) != nil {
+		return "", fmt.Errorf("invalid system DNS snapshot")
+	}
+	data, err := config.GenerateSingBoxAndroid(profile, basePath, servers)
+	if err != nil {
+		return "", err
+	}
+	data, err = materializeGeneratedNERuleSets(data, ruleDir, fetch)
+	if err != nil {
+		return "", err
+	}
+	if parent.Err() != nil {
+		return "", fmt.Errorf("configuration preparation cancelled")
+	}
+	if len(data) > maxNEConfigBytes {
+		return "", fmt.Errorf("generated configuration exceeds limit")
+	}
+	return string(data), nil
+}

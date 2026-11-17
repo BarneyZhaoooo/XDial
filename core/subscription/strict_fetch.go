@@ -96,6 +96,7 @@ func FetchStrictBytesWithNetworkContext(
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DialContext = newStrictDialContext(lookup, dial)
+	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport:     transport,
 		Timeout:       30 * time.Second,

@@ -1133,15 +1133,16 @@ func activeRouteRuleSetTags(configJSON []byte) ([]string, error) {
 	return tags, nil
 }
 
-// GenerateAndroidConfig accepts only network facts from the Android host.
+// GenerateAndroidConfig accepts network facts and reads validated offline caches.
+// Network preparation requires Libbox.PrepareAndroidConfig and its protector.
 func GenerateAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
 	var servers []string
 	if err := json.Unmarshal([]byte(systemDNSJSON), &servers); err != nil {
 		return "", fmt.Errorf("invalid system DNS snapshot")
 	}
-	return generatePacketTunnelConfig(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
+	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
 		return config.GenerateSingBoxAndroid(profile, basePath, servers)
-	})
+	}, nil)
 }
 
 func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, platform config.Platform) (string, error) {
@@ -1151,6 +1152,10 @@ func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, p
 }
 
 func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error)) (string, error) {
+	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, generate, subscription.FetchStrictBytes)
+}
+
+func generatePacketTunnelConfigWithFetcher(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) (string, error) {
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", err
@@ -1159,7 +1164,7 @@ func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*con
 	if err != nil {
 		return "", err
 	}
-	if err := materializeNERuleSets(profile, basePath, subscription.FetchStrictBytes); err != nil {
+	if err := materializeNERuleSets(profile, basePath, fetch); err != nil {
 		return "", err
 	}
 	// socksPort 在 NE 模式下不生效(vpn 出口固定用自研 type:"vpn",见
@@ -1168,7 +1173,7 @@ func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*con
 	if err != nil {
 		return "", err
 	}
-	data, err = materializeGeneratedNERuleSets(data, ruleDir, subscription.FetchStrictBytes)
+	data, err = materializeGeneratedNERuleSets(data, ruleDir, fetch)
 	if err != nil {
 		return "", err
 	}
@@ -1335,6 +1340,10 @@ func materializeNERuleSetsWithRefreshEvents(
 	fetch neRuleSetFetcher,
 	progress connectionPreparationSink,
 ) ([]pendingNERuleSetRefresh, error) {
+	return materializeNERuleSetsWithFetchForRule(profile, basePath, func(*config.RuleSet) neRuleSetFetcher { return fetch }, progress)
+}
+
+func materializeNERuleSetsWithFetchForRule(profile *config.Profile, basePath string, fetchForRule func(*config.RuleSet) neRuleSetFetcher, progress connectionPreparationSink) ([]pendingNERuleSetRefresh, error) {
 	scenario := profile.ActiveScenario()
 	if scenario == nil {
 		return nil, fmt.Errorf("no active scenario")
@@ -1416,6 +1425,7 @@ func materializeNERuleSetsWithRefreshEvents(
 			})
 		}
 		if cachedErr != nil {
+			fetch := fetchForRule(rule)
 			if fetch == nil {
 				emitConnectionPreparationFailure(
 					progress,
@@ -1827,6 +1837,9 @@ func materializeGeneratedNERuleSetsWithEvents(
 			format,
 			remaining,
 			func(limit int64) ([]byte, error) {
+				if fetch == nil {
+					return nil, fmt.Errorf("resource has no valid offline cache")
+				}
 				return fetch(rawURL, limit)
 			},
 		)

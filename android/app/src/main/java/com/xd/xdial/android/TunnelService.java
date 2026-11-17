@@ -19,15 +19,15 @@ public final class TunnelService extends VpnService {
  private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
  private final ExecutorService probes=Executors.newSingleThreadExecutor();
  private final ConnectionController lifecycle=Libbox.newConnectionController();
- private Libbox_ core;
+ private volatile Libbox_ core;
  private ParcelFileDescriptor tunnel;
  private ConnectivityManager connectivity;
  private Network underlay;
  private LinkProperties links;
  private NetworkCapabilities capabilities;
  private boolean watching,blocked;
- private volatile boolean destroyed;
- private long coreEpoch;
+ private volatile boolean destroyed,stopRequested;
+ private long coreEpoch, preparationSockets;
  private ScheduledFuture<?> retry;
  private String stage="配置读取";
  private final java.util.concurrent.atomic.AtomicLong protectedSockets=new java.util.concurrent.atomic.AtomicLong();
@@ -46,7 +46,7 @@ public final class TunnelService extends VpnService {
  @Override public void onCreate(){super.onCreate();connectivity=getSystemService(ConnectivityManager.class);}
  @Override public int onStartCommand(Intent intent,int flags,int id) {
   String action=intent==null?"":intent.getAction();
-  if("stop".equals(action)){enqueue(()->{state="未连接";finish();});return START_NOT_STICKY;}
+  if("stop".equals(action)){cancelPreparation();enqueue(()->{state="未连接";finish();});return START_NOT_STICKY;}
   if("tailscale-login".equals(action)){enqueue(()->{
    if(core==null||!settingUp)return;
    try{tailscaleStatus=core.beginTailscaleLogin("tailscale-"+setupLine);setupMessage="请打开浏览器完成登录";}
@@ -80,6 +80,7 @@ public final class TunnelService extends VpnService {
    });return START_NOT_STICKY;
   }
   if("diagnose".equals(action)){enqueue(this::diagnose);return START_NOT_STICKY;}
+  if(!active)stopRequested=false;
   NotificationManager nm=getSystemService(NotificationManager.class);
   nm.createNotificationChannel(new NotificationChannel("connection","连接状态",NotificationManager.IMPORTANCE_LOW));
   PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE);
@@ -89,6 +90,7 @@ public final class TunnelService extends VpnService {
    .addAction(new Notification.Action.Builder(null,"断开",stop).build()).build());
   enqueue(()->{
    if(active)return;
+   if(stopRequested){state="未连接";finish();return;}
    settingUp="tailscale-setup".equals(action);setupLine=settingUp?intent.getStringExtra("line"):"";tailscaleStatus="";setupMessage="";
    active=true;probeResult="";lifecycle.requestConnection(true);state="等待可用网络";
    try {
@@ -144,7 +146,6 @@ public final class TunnelService extends VpnService {
    stage="配置编译";
    JSONArray systemDNS = new JSONArray();
    for(java.net.InetAddress server : links.getDnsServers()) systemDNS.put(server.getHostAddress());
-   String config=settingUp?Libbox.generateAndroidTailscaleSetupConfig(profile,setupLine,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath()):Libbox.generateAndroidConfig(profile,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath());
    stage="核心初始化";
    core=Libbox.new_(new Callback(){
     public void onStatusChanged(String json){}
@@ -176,6 +177,11 @@ public final class TunnelService extends VpnService {
    snapshot.put("facts", facts); snapshots.put(snapshot);
    core.setNetworkInterfaces(snapshots.toString());
    core.setDefaultInterface(nic.getName(),nic.getIndex());
+   stage="准备离线规则";
+   long beforePreparation=protectedSockets.get();
+   String config=settingUp?Libbox.generateAndroidTailscaleSetupConfig(profile,setupLine,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath()):core.prepareAndroidConfig(profile,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath());
+   preparationSockets=protectedSockets.get()-beforePreparation;
+   if(stopRequested)throw new java.io.InterruptedIOException("Stopped");
    if(settingUp){
     stage="准备 Tailscale 登录";core.startStandalone(config);
     lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="Tailscale 账号设置（未接管流量）";
@@ -197,9 +203,11 @@ public final class TunnelService extends VpnService {
    if(tunnel==null)throw new IllegalStateException("VPN permission revoked");
    setUnderlyingNetworks(new Network[]{captured});core.setTunFD(tunnel.getFd());
    stage="启动数据面";core.startAndroidSession(profile,config,systemDNS.toString());
+   if(stopRequested){state="未连接";finish();return;}
    awaitReady(epoch,profile,SystemClock.elapsedRealtime()+30000);
   }catch(Exception error){
    stopCore();
+   if(stopRequested){state="未连接";finish();return;}
    lifecycle.completeAttempt(epoch,false,error instanceof java.io.IOException,SystemClock.elapsedRealtime());
    try{
     JSONObject result=new JSONObject(lifecycle.snapshot());
@@ -232,7 +240,7 @@ public final class TunnelService extends VpnService {
    JSONObject facts=core==null?new JSONObject():new JSONObject(core.diagnostics());JSONObject safe=new JSONObject();
    for(String key:new String[]{"running","gvisor_compiled","tun_fd_ready"})safe.put(key,facts.opt(key));
    if(core!=null)safe.put("routed_traffic",new JSONObject(core.trafficTotals()));
-   safe.put("session_kind",settingUp?"setup":"traffic");safe.put("protected_sockets",protectedSockets.get());safe.put("protection_failures",protectionFailures.get());
+   safe.put("session_kind",settingUp?"setup":"traffic");safe.put("preparation_protected_sockets",preparationSockets);safe.put("protected_sockets",protectedSockets.get());safe.put("protection_failures",protectionFailures.get());
    safe.put("lifecycle",new JSONObject(lifecycle.snapshot()));android.util.Log.i("XDialDiagnostics",safe.toString());
   }catch(Exception ignored){}
  }
@@ -250,6 +258,7 @@ public final class TunnelService extends VpnService {
   underlay=null;links=null;capabilities=null;active=false;settingUp=false;setupLine="";tailscaleStatus="";setupMessage="";probeResult="";
  }
  private void finish(){cleanup();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
- @Override public void onRevoke(){enqueue(()->{state="VPN 授权已撤销";finish();});}
- @Override public void onDestroy(){destroyed=true;probes.shutdownNow();worker.execute(this::cleanup);worker.shutdown();super.onDestroy();}
+ private void cancelPreparation(){stopRequested=true;Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}
+ @Override public void onRevoke(){cancelPreparation();enqueue(()->{state="VPN 授权已撤销";finish();});}
+ @Override public void onDestroy(){destroyed=true;cancelPreparation();probes.shutdownNow();worker.execute(this::cleanup);worker.shutdown();super.onDestroy();}
 }
