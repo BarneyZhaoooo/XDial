@@ -237,10 +237,17 @@ type retiredBoxGeneration struct {
 }
 
 func New(cb Callback) *Libbox {
+	platform := &xdPlatformInterface{}
+	vpn := engine.NewVPNClient()
+	// Apple keeps its existing provider/Underlay transport semantics. Android
+	// cannot rely on provider socket exclusion and must protect every socket.
+	if runtime.GOOS == "android" {
+		vpn = engine.NewVPNClientWithSocketControl(platform.AutoDetectInterfaceControl)
+	}
 	return &Libbox{
 		cb:       cb,
-		vpn:      engine.NewVPNClient(),
-		platform: &xdPlatformInterface{},
+		vpn:      vpn,
+		platform: platform,
 	}
 }
 

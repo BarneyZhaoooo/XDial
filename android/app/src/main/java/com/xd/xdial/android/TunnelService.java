@@ -112,7 +112,7 @@ public final class TunnelService extends VpnService {
    JSONArray lines=doc.optJSONArray("lines");
    if(lines!=null) for(int i=0;i<lines.length();i++) {
     String type=lines.getJSONObject(i).optString("type");
-    if(type.equals("vpn")||type.equals("tailscale")) throw new IllegalStateException("Unsupported checkpoint protocol");
+    if(type.equals("tailscale")) throw new IllegalStateException("Unsupported checkpoint protocol");
    }
    stage="系统网络";
    final Network captured=underlay;
@@ -136,7 +136,7 @@ public final class TunnelService extends VpnService {
    core=Libbox.new_(new Callback(){
     public void onStatusChanged(String json){}
     public void onError(long code,String message){enqueue(()->{
-     if(coreEpoch!=epoch)return;
+     if(core==null || !active || coreEpoch!=epoch)return;
      state="连接错误（"+code+"），请重新连接";
      lifecycle.completeAttempt(epoch,false,false,SystemClock.elapsedRealtime());reconcile();
     });}
@@ -168,7 +168,7 @@ public final class TunnelService extends VpnService {
    if(tunnel==null)tunnel=builder.establish();
    if(tunnel==null)throw new IllegalStateException("VPN permission revoked");
    setUnderlyingNetworks(new Network[]{captured});core.setTunFD(tunnel.getFd());
-   stage="启动数据面";core.startStandalone(config);
+   stage="启动数据面";core.startAndroidSession(profile,config,systemDNS.toString());
    MobileSelection.get(this).connected(true);
    lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="已连接";
   }catch(Exception error){

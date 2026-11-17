@@ -41,11 +41,12 @@ public final class MainActivity extends Activity {
      requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},2);
    } catch(Exception e){Toast.makeText(this,"请先导入配置，连接期间不能改变选择",Toast.LENGTH_SHORT).show();refreshSelection();}
   });
+  Button login=new Button(this);login.setText("添加 AnyConnect 账号与场景");layout.addView(login);login.setOnClickListener(v->addVPN());
   Button config = new Button(this); config.setText("导入运行 Profile"); layout.addView(config);
   config.setOnClickListener(v -> edit());
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
   details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":"probe"));}).show());
-  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；地区判断、连接中切换和登录仍待完成。"); layout.addView(notice);
+  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；AnyConnect 支持账号密码，企业联调、Tailscale 登录、地区判断和连接中切换仍待完成。"); layout.addView(notice);
   setContentView(scroll);
  }
  private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
@@ -63,6 +64,26 @@ public final class MainActivity extends Activity {
     catch(Exception e){Toast.makeText(this,"无法保存场景，原配置保留",Toast.LENGTH_LONG).show();}
    }).setNegativeButton("取消",null).show();
   } catch(Exception e){Toast.makeText(this,"请先导入有效配置",Toast.LENGTH_LONG).show();}
+ }
+ private void addVPN(){
+  if(TunnelService.active){Toast.makeText(this,"请先断开再添加账号",Toast.LENGTH_SHORT).show();return;}
+  LinearLayout fields=new LinearLayout(this);fields.setOrientation(LinearLayout.VERTICAL);fields.setPadding(dp(24),0,dp(24),0);
+  EditText name=new EditText(this);name.setHint("场景名称");fields.addView(name);
+  EditText server=new EditText(this);server.setHint("服务器，例如 vpn.example.com");server.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);fields.addView(server);
+  EditText user=new EditText(this);user.setHint("账号");user.setSingleLine(true);user.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);fields.addView(user);
+  EditText password=new EditText(this);password.setHint("密码");password.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);password.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);fields.addView(password);
+  TextView hint=new TextView(this);hint.setText("保存后拨动拨盘连接。服务器证书会正常校验；账号密码仅保存在本机加密存储中。");fields.addView(hint);
+  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("AnyConnect").setView(fields).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+  dialog.setOnShowListener(d->{dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+   try{
+    ProfileStore store=new ProfileStore(this);String existing;
+    try{existing=store.load();}catch(java.io.FileNotFoundException missing){existing="";}
+    String updated=Libbox.addAnyConnectScenario(existing,name.getText().toString(),server.getText().toString(),user.getText().toString(),password.getText().toString());
+    store.save(updated);MobileSelection.invalidate();refreshSelection();password.setText("");dialog.dismiss();
+    Toast.makeText(this,"场景已保存，拨动拨盘开始连接",Toast.LENGTH_LONG).show();
+   }catch(Exception failure){Toast.makeText(this,"请检查必填项、服务器地址和本机存储",Toast.LENGTH_LONG).show();}
+  });});
+  dialog.setOnDismissListener(d->password.setText(""));dialog.show();
  }
  private void edit() {
   if(TunnelService.active){Toast.makeText(this,"请先断开再编辑配置",Toast.LENGTH_SHORT).show();return;}

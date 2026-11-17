@@ -1,0 +1,224 @@
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index 57b12e1..b729bb4 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -13,6 +13,7 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"reflect"
++	"runtime"
+ 	"sort"
+ 	"strings"
+ 	"sync"
+@@ -197,6 +198,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 	}
+ 	dialerQueryOptions := outboundDialer.(dialer.ResolveDialer).QueryOptions()
+ 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
++	var transportDialer N.Dialer = &endpointDialer{Dialer: outboundDialer, logger: logger}
++	if runtime.GOOS == "android" {
++		transportDialer = &androidEndpointDialer{Dialer: transportDialer, platform: platformInterface, network: service.FromContext[adapter.NetworkManager](ctx)}
++	}
+ 	return &Endpoint{
+ 		Adapter:           endpoint.NewAdapter(C.TypeTailscale, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, nil),
+ 		ctx:               ctx,
+@@ -219,7 +224,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 			AuthKey:       options.AuthKey,
+ 			ControlURL:    options.ControlURL,
+ 			AdvertiseTags: options.AdvertiseTags,
+-			Dialer:        &endpointDialer{Dialer: outboundDialer, logger: logger},
++			Dialer:        transportDialer,
+ 			LookupHook: func(ctx context.Context, host string) ([]netip.Addr, error) {
+ 				return dnsRouter.Lookup(ctx, host, dialerQueryOptions)
+ 			},
+@@ -277,25 +282,27 @@ func (t *Endpoint) start() error {
+ 		if err != nil {
+ 			return err
+ 		}
+-		netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
+-			return common.Map(t.network.InterfaceFinder().Interfaces(), func(it control.Interface) netmon.Interface {
+-				return netmon.Interface{
+-					Interface: &net.Interface{
+-						Index:        it.Index,
+-						MTU:          it.MTU,
+-						Name:         it.Name,
+-						HardwareAddr: it.HardwareAddr,
+-						Flags:        it.Flags,
+-					},
+-					AltAddrs: common.Map(it.Addresses, func(it netip.Prefix) net.Addr {
+-						return &net.IPNet{
+-							IP:   it.Addr().AsSlice(),
+-							Mask: net.CIDRMask(it.Bits(), it.Addr().BitLen()),
+-						}
+-					}),
+-				}
+-			}), nil
+-		})
++		if runtime.GOOS != "android" {
++			netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
++				return common.Map(t.network.InterfaceFinder().Interfaces(), func(it control.Interface) netmon.Interface {
++					return netmon.Interface{
++						Interface: &net.Interface{
++							Index:        it.Index,
++							MTU:          it.MTU,
++							Name:         it.Name,
++							HardwareAddr: it.HardwareAddr,
++							Flags:        it.Flags,
++						},
++						AltAddrs: common.Map(it.Addresses, func(it netip.Prefix) net.Addr {
++							return &net.IPNet{
++								IP:   it.Addr().AsSlice(),
++								Mask: net.CIDRMask(it.Bits(), it.Addr().BitLen()),
++							}
++						}),
++					}
++				}), nil
++			})
++		}
+ 	}
+ 	if t.systemInterface {
+ 		mtu := t.systemInterfaceMTU
+@@ -344,6 +351,9 @@ func (t *Endpoint) start() error {
+ 		t.systemDialer = systemDialer
+ 		t.server.TunDevice = wgTunDevice
+ 	}
++	if runtime.GOOS == "android" {
++		return nil
++	}
+ 	if t.network.AutoRedirectOutputMark() != 0 {
+ 		netns.SetControlFunc(t.network.AutoRedirectOutputMarkFunc())
+ 	} else if t.platformInterface != nil && t.platformInterface.UsePlatformNetworkInterfaces() {
+@@ -688,9 +698,11 @@ func (t *Endpoint) Close() error {
+ 		err = common.Close(common.PtrOrNil(t.server))
+ 		t.serverStarted = false
+ 	}
+-	netmon.RegisterInterfaceGetter(nil)
+-	netns.SetControlFunc(nil)
+-	netns.SetListenPacketFunc(nil)
++	if runtime.GOOS != "android" {
++		netmon.RegisterInterfaceGetter(nil)
++		netns.SetControlFunc(nil)
++		netns.SetListenPacketFunc(nil)
++	}
+ 	if t.fallbackTCPCloser != nil {
+ 		t.fallbackTCPCloser()
+ 		t.fallbackTCPCloser = nil
+diff --git a/protocol/tailscale/xdial_android_transport.go b/protocol/tailscale/xdial_android_transport.go
+new file mode 100644
+index 0000000..9e9bb68
+--- /dev/null
++++ b/protocol/tailscale/xdial_android_transport.go
+@@ -0,0 +1,59 @@
++//go:build with_gvisor
++
++package tailscale
++
++import (
++	"fmt"
++	"github.com/sagernet/sing-box/adapter"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/tailscale/net/netmon"
++	"net"
++	"net/netip"
++	"syscall"
++)
++
++// Android owns one adapter per endpoint. NetMon/NetNS retain this instance, so
++// retiring another endpoint cannot remove or replace its protection or facts.
++type androidEndpointDialer struct {
++	N.Dialer
++	platform adapter.PlatformInterface
++	network  adapter.NetworkManager
++}
++
++func (d *androidEndpointDialer) XDialSocketControl(_, _ string, raw syscall.RawConn) error {
++	if d.platform == nil || !d.platform.UsePlatformAutoDetectInterfaceControl() {
++		return fmt.Errorf("Android socket protection unavailable")
++	}
++	var controlErr error
++	if err := raw.Control(func(fd uintptr) { controlErr = d.platform.AutoDetectInterfaceControl(int(fd)) }); err != nil {
++		return err
++	}
++	return controlErr
++}
++func (d *androidEndpointDialer) XDialInterfaceState() (*netmon.State, error) {
++	if d.platform == nil || d.network == nil {
++		return nil, fmt.Errorf("Android network facts unavailable")
++	}
++	interfaces, err := d.platform.NetworkInterfaces()
++	if err != nil {
++		return nil, err
++	}
++	state := &netmon.State{Interface: map[string]netmon.Interface{}, InterfaceIPs: map[string][]netip.Prefix{}}
++	if def := d.network.DefaultNetworkInterface(); def != nil {
++		state.DefaultRouteInterface = def.Name
++		state.IsExpensive = def.Expensive
++	}
++	for _, it := range interfaces {
++		addresses := make([]net.Addr, 0, len(it.Addresses))
++		for _, prefix := range it.Addresses {
++			addresses = append(addresses, &net.IPNet{IP: prefix.Addr().AsSlice(), Mask: net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())})
++			if it.Flags&net.FlagUp != 0 && !prefix.Addr().IsLoopback() && !prefix.Addr().IsLinkLocalUnicast() {
++				state.HaveV4 = state.HaveV4 || prefix.Addr().Is4()
++				state.HaveV6 = state.HaveV6 || prefix.Addr().Is6()
++			}
++		}
++		state.Interface[it.Name] = netmon.Interface{Interface: &net.Interface{Index: it.Index, MTU: it.MTU, Name: it.Name, Flags: it.Flags, HardwareAddr: it.HardwareAddr}, AltAddrs: addresses}
++		state.InterfaceIPs[it.Name] = append([]netip.Prefix(nil), it.Addresses...)
++	}
++	return state, nil
++}
+diff --git a/protocol/tailscale/xdial_android_transport_test.go b/protocol/tailscale/xdial_android_transport_test.go
+new file mode 100644
+index 0000000..0017c38
+--- /dev/null
++++ b/protocol/tailscale/xdial_android_transport_test.go
+@@ -0,0 +1,49 @@
++//go:build with_gvisor
++
++package tailscale
++
++import (
++	"errors"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing/common/control"
++	"net"
++	"net/netip"
++	"testing"
++)
++
++type androidTestPlatform struct {
++	adapter.PlatformInterface
++	denied error
++	calls  int
++}
++
++func (p *androidTestPlatform) UsePlatformAutoDetectInterfaceControl() bool { return true }
++func (p *androidTestPlatform) AutoDetectInterfaceControl(int) error        { p.calls++; return p.denied }
++func (p *androidTestPlatform) NetworkInterfaces() ([]adapter.NetworkInterface, error) {
++	return []adapter.NetworkInterface{{Interface: control.Interface{Name: "os-underlay", Index: 77, MTU: 1400, Flags: net.FlagUp, Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.4/24")}}}}, nil
++}
++
++type androidTestNetwork struct{ adapter.NetworkManager }
++
++func (n *androidTestNetwork) DefaultNetworkInterface() *adapter.NetworkInterface {
++	return &adapter.NetworkInterface{Interface: control.Interface{Name: "os-underlay"}, Expensive: true}
++}
++func TestXDialAndroidTransportUsesOnlyOwnedFactsAndProtection(t *testing.T) {
++	p := &androidTestPlatform{denied: errors.New("denied")}
++	d := &androidEndpointDialer{platform: p, network: &androidTestNetwork{}}
++	state, err := d.XDialInterfaceState()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if state.DefaultRouteInterface != "os-underlay" || !state.HaveV4 || state.HaveV6 || !state.IsExpensive || state.Interface["os-underlay"].Index != 77 {
++		t.Fatal("OS facts lost")
++	}
++	listener := net.ListenConfig{Control: d.XDialSocketControl}
++	if _, err = listener.ListenPacket(t.Context(), "udp4", "127.0.0.1:0"); !errors.Is(err, p.denied) || p.calls != 1 {
++		t.Fatal("socket refusal not propagated", err)
++	}
++	d.platform = nil
++	if _, err = listener.ListenPacket(t.Context(), "udp4", "127.0.0.1:0"); err == nil {
++		t.Fatal("missing protection allowed socket")
++	}
++}

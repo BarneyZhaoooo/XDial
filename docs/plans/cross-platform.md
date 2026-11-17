@@ -24,8 +24,9 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
   Network。保护失败即拨号失败；候选 Box 和复用 Line 继承回调。Apple 保持原行为。
 - Android 每个 user/profile 只能有一个 VpnService，不能承诺与另一个 VPN 叠加。
   系统确认可能替换已有 VPN，验收只使用无现存 VPN 的隔离设备。
-- 当前 Android 开发检查点拒绝 AnyConnect/Tailscale，直到完成协议自建 socket
-  的防环路审计；不以普通代理的保护测试冒充所有协议已支持。
+- AnyConnect 已接入受保护的 TLS/CSTP/DTLS 与共享启动入口，待授权隔离企业联调。
+  Tailscale 的端点级保护契约已补齐，仍须完成 Android 专用登录/节点选择后解除产品限制；
+  不以普通代理或本地契约测试冒充企业 VPN 已通过。
 - 开发预览支持导入 runtime Profile、手动场景、连接前 SSID 匹配、撤权与清理；
   网络丢失保留连接意图/TUN，恢复后重建唯一核心。地区判断、连接中场景事务、
   登录和离线规则产品流程仍缺失，不得将此检查点称为 Android 完成交付。
@@ -91,3 +92,14 @@ cd android
 和 [ConnectivityManager](https://developer.android.com/reference/android/net/ConnectivityManager)。
 Windows/Linux 接入范围已向用户提出：优先原生窗口 + Wintun / Ubuntu TUN，或首版
 包含按应用透明接入与多发行版；这不阻塞 Android。
+
+
+## 2026-11-17 协议与账号阶段
+
+Android 原生账号密码表单追加 AnyConnect 线路/场景，保留现有配置；凭据仍由平台加密
+存储，选线与启动由共享 Go 负责。TLS、DTLS 和 Tailscale 端点保护审计见
+[协议边界验收](../verification/android-protocol-sockets.md)。AAR 已构建 arm64/x86_64，
+并不代表 x86_64 模拟器已经运行验收。Tailscale 登录、来源配置库、离线规则和发布仍继续。
+
+按用户最新要求，具体进展、测试数字和阶段提交只留本 XDial 任务及仓库，不再主动发往
+来源 Telegram 群或来源任务；仅用户询问或确需其提供信息/决策时联系。

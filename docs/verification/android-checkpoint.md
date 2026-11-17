@@ -90,3 +90,11 @@ App 验收。没有创建第二个 iOS uploader，没有修改既有自动化，
 运行、地区观测、离线规则、登录、AnyConnect/Tailscale 和连接中无缝场景切换。
 新网络恢复逻辑保持单个系统 TUN，但会重建数据核心，已有连接不保证续传。
 本节是新的阶段证据，不表示全部平台或 Android 产品闭环已完成。
+
+
+## 2026-11-17 后续：协议保护与账号表单
+
+见 [Android 协议套接字边界](android-protocol-sockets.md)。AnyConnect 保护与启动入口
+已接入，原生账号表单通过隔离模拟器错误路径和场景保留验证；切回 Direct 后 DNS/HTTPS
+仍通过。Tailscale scoped hooks 的多实例、拒绝回退、DERP proxy 测试通过，登录产品流程
+仍未交付。AAR 已实际同时包含 arm64-v8a、x86_64 两种 libgojni；未测试 x86_64 设备。

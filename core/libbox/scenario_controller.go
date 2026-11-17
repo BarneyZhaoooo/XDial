@@ -57,3 +57,8 @@ func (c *ConnectionController) CompleteAttempt(epoch int64, success, retryable b
 	c.controller.CompleteAttempt(epoch, success, retryable, nowMS)
 }
 func (c *ConnectionController) Snapshot() string { return c.controller.Snapshot() }
+
+// AddAnyConnectScenario returns a credential-bearing document for encrypted host storage.
+func AddAnyConnectScenario(profileJSON, name, server, username, password string) (string, error) {
+	return mobile.AddAnyConnectScenario(profileJSON, name, server, username, password)
+}
