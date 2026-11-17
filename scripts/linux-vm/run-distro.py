@@ -40,6 +40,10 @@ def run(a):
     payload.mkdir(); seed.mkdir()
     shutil.copy2(a.bundle, payload / 'service.tar.gz')
     shutil.copy2(a.tests, payload / 'service-tests')
+    if a.baseline:
+        shutil.copy2(a.baseline,payload / 'baseline.tar.gz')
+    if a.lifecycle_tests:
+        shutil.copy2(a.lifecycle_tests,payload / 'service-lifecycle-tests')
     (payload / 'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(payload.iterdir())))
     (payload / 'run.sh').write_text('''#!/bin/sh
 set -eu
@@ -49,13 +53,21 @@ set -eu
 cd /opt/xdial-test
 sha256sum -c SHA256SUMS
 tar -xzf service.tar.gz
+if [ -f baseline.tar.gz ]; then mkdir -m 0700 /opt/xdial-baseline; tar -xzf baseline.tar.gz -C /opt/xdial-baseline; fi
 install -m 0755 service-tests /service-tests
 if getent passwd 1001 || getent group 1001; then echo 'test UID already occupied'; exit 1; fi
 groupadd -g 1001 xdial-test
 useradd -u 1001 -g 1001 -M -s /usr/sbin/nologin xdial-test
 export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1
-/service-tests -test.v -test.run='^TestInstalledSystemdLifecycle$' -test.timeout=90s
+/service-tests -test.v -test.run='^TestInstalled(Systemd|Upgrade)Lifecycle$' -test.timeout=330s
+if [ -f service-lifecycle-tests ]; then
+ install -m 0755 service-lifecycle-tests /service-tests
+ /service-tests -test.v -test.run='^TestInstalledSystemdLifecycle$' -test.timeout=90s
+fi
 ''')
+    script = payload / 'run.sh'
+    script.write_text(script.read_text().replace('export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1',
+                      'export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1 XDIAL_UPGRADE_GROUP='+a.upgrade_group))
     (seed / 'meta-data').write_text('instance-id: xdial-disposable-distro\nlocal-hostname: xdial-disposable-distro\n')
     # All commands and root privileges are inside the disposable guest. Never
     # enable a password or SSH key, and never attach a network device.
@@ -93,7 +105,7 @@ runcmd:
                '-drive',f'file={work / "payload.iso"},media=cdrom,readonly=on,format=raw']
     try:
         with (work/'guest.log').open('wb') as log:
-            result = subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=480)
+            result = subprocess.run(command,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=570)
     except subprocess.TimeoutExpired:
         raise SystemExit('full guest timed out; QEMU killed and waited; see guest.log')
     finally:
@@ -107,14 +119,21 @@ runcmd:
     (work/'image.json').write_text(json.dumps(receipt,indent=2)+'\n')
     test_output=(work/'test.log').read_bytes()
     print(test_output.decode(errors='replace'))
-    if result.returncode or b'XDIAL_DISTRO_EXIT=0' not in test_output or b'XDIAL_DISTRO_SYSTEMD_OK' not in test_output:
+    if result.returncode or b'XDIAL_DISTRO_EXIT=0' not in test_output or (b'XDIAL_DISTRO_UPGRADE_OK' if a.baseline else b'XDIAL_DISTRO_SYSTEMD_OK') not in test_output:
         raise SystemExit('full distribution systemd test failed')
+    if a.lifecycle_tests and b'XDIAL_DISTRO_SYSTEMD_OK' not in test_output:
+        raise SystemExit('service lifecycle regression did not pass')
+    if a.baseline and ('XDIAL_DISTRO_UPGRADE_OK '+a.upgrade_group).encode() not in test_output:
+        raise SystemExit('requested upgrade group did not pass')
 
 if __name__ == '__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--tools',required=True,type=Path)
     p.add_argument('--image',required=True,type=Path)
     p.add_argument('--bundle',required=True,type=Path)
+    p.add_argument('--lifecycle-tests',type=Path)
+    p.add_argument('--baseline',type=Path)
+    p.add_argument('--upgrade-group',choices=('all','early','late'),default='all')
     p.add_argument('--tests',required=True,type=Path)
     p.add_argument('--output',required=True,type=Path)
     run(p.parse_args())

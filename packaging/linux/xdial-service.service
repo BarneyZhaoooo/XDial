@@ -3,7 +3,9 @@ Description=XDial authenticated transparent network service
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=15
 ExecStart=/usr/local/libexec/xdial-service serve --state /var/lib/xdial-service
 User=root
 Group=root

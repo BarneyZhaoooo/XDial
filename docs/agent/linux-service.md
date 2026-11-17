@@ -15,11 +15,39 @@ scripts/build-linux-service.sh amd64
 
 ## 明确的安装策略
 
-包中的 `install.sh` 只支持首次安装和精确移除。运行前由管理员审查并预留 **两个不同的单 bit mark、空路由表、规则优先级和 IPv4 loopback 监听端口**，选择一个允许控制服务的非 root UID。源码不默认占用固定资源。连接时仍会检查冲突，不能以管理员预留替代内核检查。
+包中的 `install.sh` 提供首次安装、升级、升级恢复和精确移除。运行前由管理员审查并预留 **两个不同的单 bit mark、空路由表、规则优先级和 IPv4 loopback 监听端口**，选择一个允许控制服务的非 root UID。源码不默认占用固定资源。连接时仍会检查冲突，不能以管理员预留替代内核检查。
 
-安装脚本参数为 `install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER`；不提供可误用于用户网络的固定资源示例。它验证包摘要、安装父目录、并发锁和策略格式，写入 root 私有 `/var/lib/xdial-service/policy.json`，安装 `/usr/local/libexec/xdial-service` 与 systemd unit，执行 daemon-reload，**不会启动服务**。首次安装失败回滚本事务文件。已有安装明确拒绝覆盖，后续升级事务尚待实现。
+安装脚本参数为 `install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER`；不提供可误用于用户网络的固定资源示例。它验证包摘要、安装父目录、并发锁和策略格式，写入 root 私有 `/var/lib/xdial-service/policy.json`，安装 `/usr/local/libexec/xdial-service` 与 systemd unit，执行 daemon-reload，**不会启动服务**。首次安装失败回滚本事务文件。已有安装必须使用独立的升级事务，不能重复 `install` 覆盖。
 
-审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。示例 unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除；Fedora/Arch、升级和默认系统 DNS 仍待验收，见[完整发行版证据](../verification/linux-distro-systemd.md)。
+审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除，见[完整发行版证据](../verification/linux-distro-systemd.md)。Fedora/Arch 和默认系统 DNS 仍待验收。
+
+## 升级事务
+
+管理员将审查过的新包解压到 root 所有且其他用户不可写的绝对目录，再从该包执行
+`./install.sh upgrade`。这不是用户控制接口：普通用户不能提交包路径或安装操作。
+包内 SHA256SUMS 用于完整性检查，不代替可信下载渠道或发行签名。
+
+升级核对已安装二进制、unit、安装摘要及文件元数据；发现替换、drop-in、非普通
+enabled/disabled 状态或已有恢复记录时拒绝。它保留 policy/cache 和 enablement，
+将旧/新文件及恢复记录写入 root 私有目录并 fsync，然后停止服务、恢复捕获事务、
+逐文件原子替换。原来运行中的服务重新启动后必须发出 systemd READY 通知才提交；
+原来停止的服务保持停止，不能把这种情况称为新版本启动已验收。重启从未连接开始，
+不恢复 VPN 连接意图。失败自动还原旧文件；回滚自身失败则保留记录供恢复。
+
+进程被强杀后，从同一审查过的新包执行 `./install.sh recover-upgrade`。未提交的
+事务还原旧版；已提交的事务核对新版本并清理备份。显式恢复保持服务停止，随后
+管理员可自行启动。仅有提交前暂存文件时，恢复只清理暂存，不停止未被修改的旧服务。
+未知文件、摘要或归属变化不会被覆盖或删除。重复恢复是幂等操作。
+
+安装器持全局安装锁和状态目录独占锁；连接/场景切换持共享状态锁。未完成记录在
+安装器退出后仍阻止新版服务的新连接，返回 `maintenance_required`；查询和主动断开不受此限制。
+`remove` 也参与这两个锁，并拒绝跳过未完成升级。升级可执行程序必须来自新包，
+不能依赖安装路径在半途已被替换后的程序。
+首次从没有维护锁的旧版迁移时，旧进程在被停止前仍遵守旧版请求协议；停止与恢复
+捕获完成后才替换文件，不能声称已给运行中的旧程序补上新锁。
+
+完整 Debian 已验证实际包命令、启动失败回滚、九处强杀、安装文件被外部替换时拒绝、
+维护期间用户断开、停止状态保留，以及最终包 TCP/DNS/卸载回归，见[升级证据](../verification/linux-upgrade.md)。
 
 ## 普通用户操作
 

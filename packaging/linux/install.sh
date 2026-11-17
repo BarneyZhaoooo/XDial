@@ -1,8 +1,21 @@
 #!/bin/sh
-# Explicit first-install/removal transaction. Never run as part of a build.
+# Explicit install/upgrade/removal transaction. Never run as part of a build.
 set -eu
 [ "$(id -u)" = 0 ] || { echo 'Run this reviewed installation as root.' >&2; exit 1; }
 cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# Before executing the package binary as root, require a protected bundle.
+# Checksums alone cannot close a writable-source replacement race.
+if [ "${1:-}" != remove ]; then
+ parent=$PWD
+ while :; do
+  [ -d "$parent" ] && [ ! -L "$parent" ] && [ "$(stat -c %u "$parent")" = 0 ] && [ "$((0$(stat -c %a "$parent") & 022))" = 0 ] || { echo 'Bundle ancestry must be root-owned and not group/world writable.' >&2; exit 1; }
+  [ "$parent" = / ] && break
+  parent=$(dirname "$parent")
+ done
+ for file in xdial-service xdial-service.service install.sh SHA256SUMS; do
+  [ -f "$file" ] && [ ! -L "$file" ] && [ "$(stat -c %u "$file")" = 0 ] && [ "$(stat -c %h "$file")" = 1 ] && [ "$((0$(stat -c %a "$file") & 022))" = 0 ] || { echo 'Unsafe bundle file.' >&2; exit 1; }
+ done
+fi
 # Serialize installation/removal independently of a connection's state lock.
 command -v flock >/dev/null
 [ -d /run ] && [ ! -L /run ] && [ "$(stat -c %u /run)" = 0 ] && [ "$((0$(stat -c %a /run) & 022))" = 0 ] || exit 1
@@ -14,6 +27,16 @@ umask 077
 exec 9>"$lock"
 flock -n 9 || { echo 'Another installation transaction is active.' >&2; exit 1; }
 case "${1:-}" in
+upgrade|recover-upgrade)
+ [ "$#" = 1 ] || exit 1
+ sha256sum -c SHA256SUMS
+ # The root Go maintenance entry reacquires this SAME lock and revalidates all
+ # fixed installed paths and the candidate before any mutation.
+ flock -u 9
+ exec 9>&-
+ if [ "$1" = upgrade ]; then exec ./xdial-service upgrade --bundle "$PWD"; fi
+ exec ./xdial-service recover-upgrade
+ ;;
 install)
  [ "$#" = 7 ] || { echo 'install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY IPV4_LOOPBACK:PORT' >&2; exit 1; }
  sha256sum -c SHA256SUMS
@@ -47,6 +70,18 @@ install)
  ;;
 remove)
  [ "$#" = 1 ] || exit 1
+ [ ! -e /var/lib/xdial-service/upgrade ] && [ ! -L /var/lib/xdial-service/upgrade ] || { echo "Recover the pending upgrade first." >&2; exit 1; }
+ # Serialize against an in-flight authenticated connect/switch as well.
+ for path in /var /var/lib /var/lib/xdial-service; do
+  [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %u "$path")" = 0 ] && [ "$((0$(stat -c %a "$path") & 022))" = 0 ] || exit 1
+ done
+ [ "$((0$(stat -c %a /var/lib/xdial-service) & 077))" = 0 ] || exit 1
+ state_lock=/var/lib/xdial-service/installation.lock
+ if [ -e "$state_lock" ] || [ -L "$state_lock" ]; then
+  [ -f "$state_lock" ] && [ ! -L "$state_lock" ] && [ "$(stat -c %u "$state_lock")" = 0 ] && [ "$(stat -c %h "$state_lock")" = 1 ] && [ "$((0$(stat -c %a "$state_lock") & 077))" = 0 ] || exit 1
+ fi
+ exec 8>"$state_lock"
+ flock -n 8 || { echo 'A connection transaction is active.' >&2; exit 1; }
  # Refuse a changed binary/unit; never remove an unrelated replacement.
  sha256sum -c /var/lib/xdial-service/package.sha256
  systemctl disable --now xdial-service
@@ -55,5 +90,5 @@ remove)
  systemctl daemon-reload
  echo 'Service removed. Root-owned policy/cache/journal directory retained for review.'
  ;;
-*) echo 'Use install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER, or remove.' >&2; exit 1;;
+*) echo 'Use install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER, upgrade, recover-upgrade, or remove.' >&2; exit 1;;
 esac

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/kafeifei/xdial/core/controlpipe"
 	"github.com/kafeifei/xdial/core/linuxcapture"
+	"github.com/kafeifei/xdial/core/linuxinstall"
 	"github.com/kafeifei/xdial/core/linuxservice"
 	"io"
 	"os"
@@ -29,6 +30,23 @@ func run() error {
 		return fmt.Errorf("usage: xdial-service serve|status|connect|switch|disconnect")
 	}
 	op := os.Args[1]
+	if op == "upgrade" || op == "recover-upgrade" {
+		f := flag.NewFlagSet(op, flag.ContinueOnError)
+		bundle := f.String("bundle", "", "root-owned reviewed bundle directory")
+		if e := f.Parse(os.Args[2:]); e != nil {
+			return e
+		}
+		if f.NArg() != 0 {
+			return fmt.Errorf("unexpected argument")
+		}
+		if op == "recover-upgrade" {
+			if *bundle != "" {
+				return fmt.Errorf("recovery does not accept a bundle")
+			}
+			return linuxinstall.Recover()
+		}
+		return linuxinstall.Upgrade(*bundle)
+	}
 	if op == "validate-policy" {
 		if len(os.Args) != 8 {
 			return fmt.Errorf("expected UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER")
@@ -68,6 +86,10 @@ func run() error {
 		s, e := linuxservice.Open(*state)
 		if e != nil {
 			return fmt.Errorf("service startup rejected: %w", e)
+		}
+		if e = notifyReady(); e != nil {
+			s.Close()
+			return fmt.Errorf("service readiness notification failed: %w", e)
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		defer cancel()

@@ -24,6 +24,7 @@ import (
 	"github.com/kafeifei/xdial/core/controlpipe"
 	"github.com/kafeifei/xdial/core/libbox"
 	"github.com/kafeifei/xdial/core/linuxcapture"
+	"github.com/kafeifei/xdial/core/linuxmaintenance"
 	"github.com/kafeifei/xdial/core/mobile"
 	"golang.org/x/sys/unix"
 )
@@ -250,6 +251,11 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 		}
 		return response("ok")
 	}
+	lease, err := linuxmaintenance.ConnectionLease(s.root)
+	if err != nil {
+		return response("maintenance_required")
+	}
+	defer lease.Close()
 	if s.networkFailed {
 		return response("network_observer_failed")
 	}

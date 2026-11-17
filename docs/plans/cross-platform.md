@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；隔离内核与完整 Debian systemd 生命周期通过；默认系统 DNS/其他发行版/升级待做 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；完整 Debian 安装、升级、回滚、强杀恢复与卸载通过；默认系统 DNS/其他发行版待做 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
@@ -358,3 +358,17 @@ systemd 安装包。已有 x64 包、unit、安装/移除脚本和来源摘要�
 本阶段只覆盖 Debian 的受控 resolver，不能当作默认 systemd-resolved、Fedora/Arch、
 升级或全平台完成。下一步继续受保护原生系统 DNS（保留 split DNS）、升级事务和
 其他发行版，Windows SCM/WFP 与移动端剩余项继续保留。没有共享宿主系统安装或改网。
+
+### 2026-11-17：Linux 升级闭环
+
+独立 root 安装命令已接持久备份/journal、停止捕获、原子替换、systemd READY 提交、
+失败回滚与强杀后显式恢复。新服务连接事务和安装共享维护锁；维护不能阻止用户断开，
+未完成记录阻止新服务再次连接。保留策略/缓存/enablement，不恢复 VPN 连接意图。
+完整 Debian 中用上阶段包作为旧版，实际包命令、可写来源拒绝、真实候选启动失败、
+九处子进程 SIGKILL、外部替换拒绝、恢复幂等与最终包透明 TCP/DNS/卸载均通过。
+详见[升级验收](../verification/linux-upgrade.md)，两组测试使用相同二进制。
+
+这仍是显式管理员 CLI 安装，不是签名自动更新器或完整桌面 UI。下一阶段优先补
+受保护的原生系统 DNS（包括真实 resolved/split DNS），再用完整 Fedora/Arch 来宾
+执行安装与升级；不能用同一个 Debian 镜像换标签。Windows SCM/WFP、Linux 协议
+租约/IPv6/既有 mark 共存、移动端和发布缺口保持原范围，避免重复已通过的同一路径。
