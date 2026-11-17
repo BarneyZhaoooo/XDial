@@ -138,8 +138,6 @@ struct HomeView: View {
         .task {
             autoPilot.onNetworkChange = { Task { await refreshAutoScenario(afterNetworkChange: true) } }
             autoPilot.start()
-            // 冷启动时隧道可能已经在跑，连接状态要等系统 VPN 配置读出来才准。
-            await app.refreshTunnelProfileStatusAndWait()
             await refreshAutoScenario()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -161,7 +159,10 @@ struct HomeView: View {
     /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就交给 VPN 扩展判断，
     /// 由它在不断开 VPN 的情况下切换（App 被挂起时它也照样判断）。
     private func refreshAutoScenario(afterNetworkChange: Bool = false) async {
-        guard autoScenario, !app.profile.scenarios.isEmpty else { return }
+        // 所有入口（首次显示、回到前台、换网络、开关、断开与点连接）都先读系统状态。
+        // 冷启动时扩展可能已经在跑，不能把 App 的初始 disconnected 当成真实状态。
+        await app.refreshTunnelProfileStatusAndWait()
+        guard !Task.isCancelled, autoScenario, !app.profile.scenarios.isEmpty else { return }
         if app.isConnected {
             // 网络变化时扩展自己已经在判断，这里只同步它的结论。
             if afterNetworkChange, app.tunnelScenarioState != nil {
