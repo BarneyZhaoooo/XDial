@@ -58,7 +58,7 @@ PATCHED_GO_ENV = GOWORK='$(PATCHED_WORKFILE)' GOFLAGS=
 SING_BOX_TEST_BINARY := $(abspath $(BUILD_DIR)/tools/sing-box)
 MACOS_ICON_GENERATOR := scripts/generate-macos-app-icon/main.swift
 MACOS_ICON_GENERATOR_BINARY := $(BUILD_DIR)/generate-app-icon
-MACOS_ICON_SOURCE := macos/Sources/XDial/AppIcon.swift macos/Sources/XDial/RotaryDial.swift
+MACOS_ICON_SOURCE := ios/XDialShared/DialGlyph.swift macos/Sources/XDial/AppIcon.swift macos/Sources/XDial/RotaryDial.swift
 MACOS_BRAND_PALETTE_SOURCE := macos/Sources/XDial/XDialBrandPalette.swift
 MOBILE_ICON_GENERATOR := scripts/generate-mobile-app-icons/main.swift
 MOBILE_ICON_GENERATOR_BINARY := $(BUILD_DIR)/generate-mobile-app-icons

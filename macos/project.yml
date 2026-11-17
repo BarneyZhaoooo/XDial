@@ -352,6 +352,7 @@ targets:
       - Tests
       - Shared
       - Sources/XDial/AppIcon.swift
+      - ../ios/XDialShared/DialGlyph.swift
       - Sources/XDial/AppDefaults.swift
       - Sources/XDial/ApplicationLaunchPolicy.swift
       - Sources/XDial/AppVersion.swift
