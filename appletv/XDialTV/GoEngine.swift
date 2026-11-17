@@ -54,6 +54,8 @@ final class GoEngine: ObservableObject, TunnelEngine {
     @Published private(set) var status: String = "disconnected"
     @Published var lastError: String?
     @Published var dataPathSummary: String?
+    /// 自检没通过、连接保留期间正在后台重测。重测不改变 status，首页据此显示「检测中」。
+    @Published var dataPathRechecking = false
     @Published private(set) var connectedAt: Date?
     var statusPublisher: AnyPublisher<String, Never> { $status.eraseToAnyPublisher() }
     private var automaticReconnectSuppressed = false

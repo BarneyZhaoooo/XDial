@@ -2,6 +2,59 @@ import XCTest
 @testable import XDial
 
 final class DataPathProbeTests: XCTestCase {
+    func testBackgroundConnectionDefersInitialAndRepeatedProbesUntilForeground() {
+        var policy = DataPathRecheckPolicy(isActive: false)
+        XCTAssertTrue(policy.shouldDeferProbe)
+        policy.markDegraded() // connected arrives while the app is already in background
+        XCTAssertNil(policy.nextDelay)
+        XCTAssertFalse(policy.beginScheduledRecheck())
+        policy.becameActive()
+        XCTAssertFalse(policy.shouldDeferProbe)
+        XCTAssertEqual(policy.nextDelay, 30)
+        policy.enteredBackground()
+        XCTAssertTrue(policy.shouldDeferProbe)
+        XCTAssertFalse(policy.beginScheduledRecheck())
+        XCTAssertEqual(policy.attempts, 0)
+    }
+
+    func testOnlyStartedRetriesConsumeBudgetAndStopAfterThree() {
+        var policy = DataPathRecheckPolicy(isActive: true)
+        policy.markDegraded()
+        for delay: UInt64 in [30, 120, 300] {
+            XCTAssertEqual(policy.nextDelay, delay)
+            // Reading / scheduling / cancelling a wait never consumes a retry.
+            XCTAssertEqual(policy.nextDelay, delay)
+            XCTAssertTrue(policy.beginScheduledRecheck())
+        }
+        XCTAssertNil(policy.nextDelay)
+        XCTAssertFalse(policy.beginScheduledRecheck())
+        XCTAssertEqual(policy.attempts, 3)
+        policy.becameActive()
+        XCTAssertEqual(policy.attempts, 0)
+        XCTAssertEqual(policy.nextDelay, 30)
+    }
+
+    func testBackgroundAndDisconnectResetRetryBudget() {
+        var policy = DataPathRecheckPolicy(isActive: true)
+        policy.markDegraded()
+        XCTAssertTrue(policy.beginScheduledRecheck())
+        policy.enteredBackground()
+        XCTAssertNil(policy.nextDelay)
+        XCTAssertFalse(policy.beginScheduledRecheck())
+        XCTAssertEqual(policy.attempts, 1)
+        policy.becameActive()
+        XCTAssertEqual(policy.nextDelay, 30)
+        XCTAssertTrue(policy.beginScheduledRecheck())
+        policy.clearDegraded() // disconnect or successful verification cancels pending work
+        XCTAssertEqual(policy.attempts, 0)
+        XCTAssertNil(policy.nextDelay)
+        XCTAssertFalse(policy.beginScheduledRecheck())
+        policy.becameActive()
+        XCTAssertNil(policy.nextDelay) // foreground cannot revive a disconnected connection
+        policy.markDegraded() // only a new connected verification failure can enable retries
+        XCTAssertEqual(policy.nextDelay, 30)
+    }
+
     func testStandaloneAcceptancePlanUsesVisibleCurrentRouteBinding() throws {
         var profile = Profile.bootstrap()
         profile.lines.append(Line(

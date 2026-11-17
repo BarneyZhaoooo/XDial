@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import Libbox
 import Security
+import UIKit
 // NetworkExtension 的类型(NETunnelProviderManager 等)还没有做 Sendable 审计,
 // 完成 handler 里从系统线程切回 @MainActor 时 Swift 6 严格并发检查会报「sending
 // 风险」。@preconcurrency 是 Apple 系统框架里这类未审计类型的标准处理方式。
@@ -917,10 +918,49 @@ final class TunnelProviderSession: TunnelSession {
 /// 连接验收没通过、但隧道保留时，写在 dataPathSummary 开头的标记，首页据此提示。
 let dataPathDegradedPrefix = "自检未通过，连接已保留："
 
+/// 前后台与补测预算由同一个值状态管理；计时任务只执行这里允许的下一次补测。
+/// 安排计时不消耗次数，真正开始补测才消耗；后台及断开会取消外部计时任务。
+struct DataPathRecheckPolicy {
+    static let delays: [UInt64] = [30, 120, 300]
+    private(set) var isActive: Bool
+    private(set) var attempts = 0
+    private(set) var isDegraded = false
+
+    init(isActive: Bool) { self.isActive = isActive }
+
+    var shouldDeferProbe: Bool { !isActive }
+    var nextDelay: UInt64? {
+        guard isActive, isDegraded, attempts < Self.delays.count else { return nil }
+        return Self.delays[attempts]
+    }
+
+    mutating func enteredBackground() { isActive = false }
+    mutating func becameActive() {
+        isActive = true
+        resetBudget()
+    }
+    mutating func resetBudget() { attempts = 0 }
+    mutating func markDegraded() { isDegraded = true }
+    mutating func clearDegraded() {
+        isDegraded = false
+        resetBudget()
+    }
+    mutating func beginScheduledRecheck() -> Bool {
+        guard nextDelay != nil else { return false }
+        attempts += 1
+        return true
+    }
+}
+
 @MainActor
 final class TunnelManager: ObservableObject, TunnelManaging {
     /// 手机网络经常高延迟或受限，验收失败时保留隧道而不是主动断开。
     static let keepsTunnelWhenAcceptanceFails = true
+    /// 一次验收最多给多久（等用户登录 Tailscale 的时间不算在内）。
+    static let dataPathWatchdogSeconds: UInt64 = 90
+    /// 自检没通过、连接保留后，App 在前台时按这些间隔（秒）自动再测；用完就停，
+    /// 等下次回到前台、手动「重新检测」或系统重连时再从头开始。
+    static let degradedRecheckDelays = DataPathRecheckPolicy.delays
 
 
     private static let configGenerationQueue = TunnelConfigGenerationQueue()
@@ -946,6 +986,15 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private var dataPathProbeTask: Task<Void, Never>?
     private var dataPathProbeID: UUID?
     private var dataPathVerified = false
+    /// 正在进行的验收是对已保留连接的补测：不把首页拉回「检查中」，失败也不断开。
+    private var dataPathProbeIsRecheck = false
+    /// 验收正在跑的步骤，超时时写进诊断，说明停在了哪一步。
+    private var dataPathProbeStage: String?
+    /// Tailscale 等用户登录期间验收会长时间挂着，这时切到后台（去浏览器登录）不能暂停它。
+    private var dataPathAwaitingTailscaleLogin = false
+    private var dataPathRecheckTask: Task<Void, Never>?
+    private var recheckPolicy = DataPathRecheckPolicy(isActive: false)
+    private var appLifecycleSubscriptions: Set<AnyCancellable> = []
     private var startOperationState = TunnelStartOperationState()
     private var activeStartAttemptID: String?
     private(set) var activeAcceptancePlan: TunnelAcceptancePlan?
@@ -970,6 +1019,113 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                       connection === self.manager?.connection else { return }
                 self.applyConnectionStatus()
             }
+        recheckPolicy = DataPathRecheckPolicy(isActive: UIApplication.shared.applicationState == .active)
+        observeAppLifecycle()
+    }
+
+    /// 验收探针跑在主 App 里。App 切到后台会被系统挂起，正在跑的请求会超时或失败，
+    /// 回来时看门狗多半已经到点，于是把能用的连接误判成「连接验收超时」。
+    /// 所以进后台时暂停验收（连接照常保留），回到前台再从头测。
+    private func observeAppLifecycle() {
+        NotificationCenter.default
+            .publisher(for: UIApplication.didEnterBackgroundNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleAppDidEnterBackground() }
+            .store(in: &appLifecycleSubscriptions)
+        NotificationCenter.default
+            .publisher(for: UIApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleAppDidBecomeActive() }
+            .store(in: &appLifecycleSubscriptions)
+    }
+
+    private func handleAppDidEnterBackground() {
+        recheckPolicy.enteredBackground()
+        dataPathRecheckTask?.cancel()
+        dataPathRecheckTask = nil
+        guard dataPathProbeID != nil,
+              !dataPathAwaitingTailscaleLogin,
+              let connection = manager?.connection,
+              connection.status == .connected else { return }
+        dataPathProbeTask?.cancel()
+        appLog("DataPathProbe: paused, app entered background at \(dataPathProbeStage ?? "start")")
+        // 补测被打断时保留上一次没通过的原因；首次验收被打断则说明是暂停而不是失败。
+        settleDegraded(
+            summary: dataPathProbeIsRecheck
+                ? nil
+                : "App 切到了后台，自检暂停；回到前台会自动重新检测",
+            connection: connection
+        )
+    }
+
+    private func handleAppDidBecomeActive() {
+        recheckPolicy.becameActive()
+        recheckDegradedDataPath(resetBackoff: true)
+    }
+
+    func recheckDataPath() {
+        recheckDegradedDataPath(resetBackoff: true)
+    }
+
+    /// 只补测「已连接、自检没通过、当前没有验收在跑」的连接。resetBackoff 用于用户
+    /// 主动触发（回到前台、点重新检测），让自动补测的间隔从头算。
+    private func recheckDegradedDataPath(resetBackoff: Bool) {
+        guard !recheckPolicy.shouldDeferProbe,
+              recheckPolicy.isDegraded, !dataPathVerified, dataPathProbeID == nil,
+              let connection = manager?.connection,
+              connection.status == .connected else { return }
+        if resetBackoff {
+            recheckPolicy.resetBudget()
+            dataPathRecheckTask?.cancel()
+            dataPathRecheckTask = nil
+        }
+        verifyDataPath(for: connection, isRecheck: true)
+    }
+
+    private func scheduleDegradedRecheck() {
+        dataPathRecheckTask?.cancel()
+        dataPathRecheckTask = nil
+        guard let delay = recheckPolicy.nextDelay else { return }
+        dataPathRecheckTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.dataPathRecheckTask = nil
+            guard self.recheckPolicy.beginScheduledRecheck() else { return }
+            self.recheckDegradedDataPath(resetBackoff: false)
+        }
+    }
+
+    /// 连接离开 connected 时，补测状态随之作废；下次连上会做完整验收。
+    private func resetDegradedRecheck() {
+        recheckPolicy.clearDegraded()
+        dataPathProbeIsRecheck = false
+        dataPathProbeStage = nil
+        dataPathAwaitingTailscaleLogin = false
+        dataPathRecheckTask?.cancel()
+        dataPathRecheckTask = nil
+        engine?.dataPathRechecking = false
+    }
+
+    /// 验收没通过（或到点、或因进后台暂停）但保留隧道：首页显示已连接并提示自检未通过，
+    /// 随后在前台按退避间隔自动补测。summary 为 nil 时沿用当前的未通过原因。
+    private func settleDegraded(summary: String?, connection: NEVPNConnection) {
+        dataPathProbeTask = nil
+        dataPathProbeID = nil
+        dataPathVerified = false
+        dataPathProbeIsRecheck = false
+        dataPathProbeStage = nil
+        dataPathAwaitingTailscaleLogin = false
+        activeStartAttemptID = nil
+        startWatchdogTask?.cancel()
+        startWatchdogTask = nil
+        armSystemOnDemandIfReady()
+        engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
+        if let summary {
+            engine?.dataPathSummary = dataPathDegradedPrefix + summary
+        }
+        engine?.dataPathRechecking = false
+        recheckPolicy.markDegraded()
+        scheduleDegradedRecheck()
     }
 
     /// 绑定引擎(若 init 时未传)。绑定后立即把当前 session 注入。
@@ -1337,6 +1493,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             dataPathProbeTask = nil
             dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             observedSystemStatus = .invalid
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
@@ -1348,29 +1505,39 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         case .connected:
             if dataPathVerified {
                 engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
+            } else if previousStatus == .connected && recheckPolicy.isDegraded {
+                // 连接一直在，只是又收到一次状态通知：按补测处理，不把首页拉回「检查中」。
+                recheckDegradedDataPath(resetBackoff: false)
             } else if previousStatus != .connected || dataPathProbeTask == nil {
                 verifyDataPath(for: connection)
             }
         case .connecting:
+            dataPathProbeTask?.cancel()
+            dataPathProbeTask = nil
+            dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             engine?.applySystemStatus("connecting")
         case .disconnecting:
             dataPathProbeTask?.cancel()
             dataPathProbeTask = nil
             dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             engine?.applySystemStatus("disconnecting")
         case .reasserting:
             dataPathProbeTask?.cancel()
             dataPathProbeTask = nil
             dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             engine?.applySystemStatus("reconnecting", connectedAt: connection.connectedDate)
         case .disconnected, .invalid:
             dataPathProbeTask?.cancel()
             dataPathProbeTask = nil
             dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
         @unknown default:
@@ -1378,6 +1545,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             dataPathProbeTask = nil
             dataPathProbeID = nil
             dataPathVerified = false
+            resetDegradedRecheck()
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
         }
@@ -1386,22 +1554,47 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     /// 系统状态 connected 只是控制面信号。只有主 App 的真实 HTTPS 请求通过后，
     /// 才允许引擎/UI 进入 connected；失败会保留具体层级错误并立即断开，避免手机
     /// 留在“图标已连但无法上网”的坏状态。
-    private func verifyDataPath(for connection: NEVPNConnection) {
+    ///
+    /// isRecheck 用于自检没通过、连接已保留后的补测：首页保持「已连接」并显示检测中，
+    /// 通过就收起提示，没通过就更新原因、继续按退避补测。
+    private func verifyDataPath(for connection: NEVPNConnection, isRecheck: Bool = false) {
         dataPathProbeTask?.cancel()
         // 控制面已经 connected，从这里开始给数据面验收一个独立时限。
         // 不能继续消耗 AnyConnect 握手前就开始的 45 秒，否则慢网会在
         // 线路已通、正验收分流时被误判为启动超时。
         startWatchdogTask?.cancel()
+        // 系统可能在 App 已经进入后台后才连上；这条路径没有新的后台通知。
+        // 首次验收、手动补测、重复 connected 通知统一在此延期，不启动探针或看门狗。
+        if recheckPolicy.shouldDeferProbe {
+            settleDegraded(
+                summary: isRecheck ? nil : "App 在后台，自检暂停；回到前台会自动重新检测",
+                connection: connection
+            )
+            return
+        }
+        // 任何入口开始验收都要收回旧补测计时，避免运行中耗掉下一次预算。
+        dataPathRecheckTask?.cancel()
+        dataPathRecheckTask = nil
         let probeID = UUID()
         dataPathProbeID = probeID
+        dataPathProbeIsRecheck = isRecheck
+        dataPathProbeStage = nil
+        dataPathAwaitingTailscaleLogin = false
         let attemptID = activeStartAttemptID
         let acceptancePlan = activeAcceptancePlan
         dataPathVerified = false
-        engine?.dataPathSummary = acceptancePlan?.requiresAnyConnect == true
-            ? "正在检测 Direct、AnyConnect 与分流规则"
-            : "正在检测活动线路、域名解析与分流规则"
-        engine?.applySystemStatus("checking", connectedAt: connection.connectedDate)
-        appLog("DataPathProbe: begin")
+        if isRecheck {
+            engine?.dataPathRechecking = true
+            appLog("DataPathProbe: recheck begin")
+        } else {
+            recheckPolicy.clearDegraded()
+            engine?.dataPathRechecking = false
+            engine?.dataPathSummary = acceptancePlan?.requiresAnyConnect == true
+                ? "正在检测 Direct、AnyConnect 与分流规则"
+                : "正在检测活动线路、域名解析与分流规则"
+            engine?.applySystemStatus("checking", connectedAt: connection.connectedDate)
+            appLog("DataPathProbe: begin")
+        }
 
         armDataPathWatchdog(
             probeID: probeID,
@@ -1443,29 +1636,24 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                   connection.status == .connected else { return }
 
             self.dataPathProbeTask = nil
-            self.engine?.dataPathSummary = outcome.summary
             if outcome.isUsable {
+                self.engine?.dataPathSummary = outcome.summary
                 self.dataPathProbeID = nil
                 self.dataPathVerified = true
+                self.resetDegradedRecheck()
                 self.activeStartAttemptID = nil
                 self.startWatchdogTask?.cancel()
                 self.startWatchdogTask = nil
                 self.armSystemOnDemandIfReady()
                 self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
                 appLog("DataPathProbe: passed \(outcome.logSummary)")
-            } else if Self.keepsTunnelWhenAcceptanceFails {
+            } else if Self.keepsTunnelWhenAcceptanceFails || self.dataPathProbeIsRecheck {
                 // 机上 Wi-Fi、弱信号等高延迟或受限网络里，验收探针常常超时，但隧道本身已经在转发
                 // 流量。主动断开会把能用的连接断掉，所以保留连接，只记下未通过的原因供首页提示。
-                self.dataPathProbeID = nil
-                self.dataPathVerified = false
-                self.activeStartAttemptID = nil
-                self.startWatchdogTask?.cancel()
-                self.startWatchdogTask = nil
-                self.armSystemOnDemandIfReady()
-                self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
-                self.engine?.dataPathSummary = dataPathDegradedPrefix + outcome.summary
                 appLog("DataPathProbe: degraded, keeping tunnel \(outcome.logSummary)")
+                self.settleDegraded(summary: outcome.summary, connection: connection)
             } else {
+                self.engine?.dataPathSummary = outcome.summary
                 self.dataPathVerified = false
                 appLog("DataPathProbe: failed \(outcome.logSummary)")
                 let baseMessage = outcome.failureMessage
@@ -1517,24 +1705,22 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     ) {
         startWatchdogTask?.cancel()
         startWatchdogTask = Task { @MainActor [weak self, weak connection] in
-            try? await Task.sleep(nanoseconds: 90_000_000_000)
+            try? await Task.sleep(nanoseconds: Self.dataPathWatchdogSeconds * 1_000_000_000)
             guard !Task.isCancelled, let self, let connection,
                   self.dataPathProbeID == probeID else { return }
             self.dataPathProbeTask?.cancel()
             self.dataPathProbeTask = nil
-            if Self.keepsTunnelWhenAcceptanceFails, connection.status == .connected {
-                self.dataPathProbeID = nil
-                self.dataPathVerified = false
-                self.activeStartAttemptID = nil
-                self.startWatchdogTask = nil
-                self.armSystemOnDemandIfReady()
-                self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
-                self.engine?.dataPathSummary = dataPathDegradedPrefix + "连接验收超时"
-                appLog("DataPathProbe: watchdog expired, keeping tunnel")
+            // 只写「超时」看不出原因：带上到点时停在哪一步。
+            let timeoutSummary = self.dataPathProbeStage.map { "连接验收超时（停在：\($0)）" }
+                ?? "连接验收超时"
+            if (Self.keepsTunnelWhenAcceptanceFails || self.dataPathProbeIsRecheck),
+               connection.status == .connected {
+                appLog("DataPathProbe: watchdog expired, keeping tunnel: \(timeoutSummary)")
+                self.settleDegraded(summary: timeoutSummary, connection: connection)
                 return
             }
             self.applyProbeFailure(
-                baseMessage: "连接验收超时",
+                baseMessage: timeoutSummary,
                 diagnostics: TunnelDiagnosticFormatter.persistedSummary(
                     matchingAttemptID: attemptID
                 ),
@@ -1566,6 +1752,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     ) async -> TailscaleReadiness {
         let tags = plan.generatedTailscaleTargets.map(\.tag)
         guard !tags.isEmpty else { return .ready }
+        dataPathProbeStage = "等待 Tailscale 启动"
 
         var enteredActionRequired = false
         var transientPolls = 0
@@ -1652,6 +1839,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             }
 
             if allRunning {
+                dataPathAwaitingTailscaleLogin = false
                 if enteredActionRequired {
                     engine?.dataPathSummary = "Tailscale 已登录，正在重新执行完整连接验收"
                     engine?.applySystemStatus("checking", connectedAt: connection.connectedDate)
@@ -1666,6 +1854,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
             if needsLogin {
                 enteredActionRequired = true
+                dataPathAwaitingTailscaleLogin = true
+                dataPathProbeStage = "等待登录 Tailscale"
                 transientPolls = 0
                 startWatchdogTask?.cancel()
                 startWatchdogTask = nil
@@ -1766,28 +1956,54 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         var addresses: [String: String] = [:]
         var unavailable: [TunnelAcceptanceTarget] = []
         var probeFailures: [String] = []
-        for target in plan.targets {
-            guard !Task.isCancelled else {
-                return ProbeOutcome(
-                    isUsable: false, summary: "", failureMessage: "", logSummary: "cancelled"
-                )
+        // 各线路同时试拨：一条慢线路不再把后面几条和分流测试一起拖进看门狗。
+        // 线路探针直接经指定 outbound 出去、不走路由匹配，不影响下面的分流命中计数。
+        var results: [String: OutboundAddressProbeResult] = [:]
+        var pendingLabels = plan.targets.map(\.label)
+        if !Task.isCancelled { dataPathProbeStage = Self.lineProbeStage(pendingLabels) }
+        await withTaskGroup(of: (TunnelAcceptanceTarget, OutboundAddressProbeResult).self) { group in
+            for target in plan.targets {
+                group.addTask { [weak self] in
+                    guard let self else {
+                        return (target, OutboundAddressProbeResult(address: nil, failure: "线路探针不可用"))
+                    }
+                    return (target, await self.requestOutboundAddress(outboundTag: target.tag))
+                }
             }
-            let probe = await requestOutboundAddress(outboundTag: target.tag)
-            if let address = probe.address {
+            for await (target, probe) in group {
+                results[target.tag] = probe
+                if let index = pendingLabels.firstIndex(of: target.label) {
+                    pendingLabels.remove(at: index)
+                }
+                if !Task.isCancelled, !pendingLabels.isEmpty {
+                    dataPathProbeStage = Self.lineProbeStage(pendingLabels)
+                }
+            }
+        }
+        guard !Task.isCancelled else {
+            return ProbeOutcome(
+                isUsable: false, summary: "", failureMessage: "", logSummary: "cancelled"
+            )
+        }
+        for target in plan.targets {
+            let probe = results[target.tag]
+            if let address = probe?.address {
                 addresses[target.tag] = address
             } else {
                 unavailable.append(target)
-                if let failure = probe.failure {
+                if let failure = probe?.failure {
                     probeFailures.append("\(target.label)：\(failure)")
                 }
             }
         }
+        dataPathProbeStage = "测试分流与域名解析"
         let routingBefore = await requestRoutingProbeSnapshot()
         let routed = await DataPathProbe.run(
             directLineEgressIP: nil,
             anyConnectLineEgressIP: nil,
             includeSplitTarget: plan.currentRouteTag != nil
         )
+        if !Task.isCancelled { dataPathProbeStage = "读取分流命中计数" }
         let routingAfter = await requestRoutingProbeSnapshot()
         let routingEvidenceOK = routingBefore.flatMap { before in
             routingAfter.map {
@@ -1842,6 +2058,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         )
     }
 
+    static func lineProbeStage(_ pendingLabels: [String]) -> String {
+        "试拨线路，等待 " + pendingLabels.joined(separator: "、")
+    }
+
     /// 直接让 libbox 通过指定 outbound 访问出口地址，这一层绕过 route matcher，
     /// 只回答“这条线路本身通不通”。后续主 App 的 URLSession 探针才回答
     /// “配置里的分流规则有没有把系统流量送到它”。
@@ -1857,9 +2077,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
         return await withCheckedContinuation { continuation in
             let oneShot = OneShotContinuation<OutboundAddressProbeResult>(continuation)
-            // 取消旧验收时，provider 中已经开始的一条最多还会占用 7s。
-            // 留出“一条旧任务 + 本任务”的上界，不把排队当成线路超时。
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 22) {
+            // provider 并行执行线路探针，单条最多 10s；多留几秒给进程间消息往返。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) {
                 oneShot.finish(OutboundAddressProbeResult(address: nil, failure: "线路探针超时"))
             }
             do {
