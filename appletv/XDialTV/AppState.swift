@@ -270,6 +270,26 @@ protocol TunnelManaging: AnyObject {
 
     /// 连接保留但自检没通过时，立即从头再测一次；其余状态下什么也不做。
     func recheckDataPath()
+
+    #if os(iOS)
+    /// 为可能被选中的场景生成启动包，连同判断规则写进场景目录；返回目录修订号。
+    /// keepingOthers：只替换 inputs 里的场景，目录里其他场景保留。
+    func rebuildScenarioCatalog(
+        inputs: [ScenarioCatalogInput],
+        policy: ScenarioAutoPolicy,
+        keepingOthers: Bool
+    ) async -> String?
+    /// 只更新场景目录里的判断规则（例如关掉「自动」）。目录不存在时返回 false。
+    func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool
+    /// 请 VPN 扩展在不断开系统 VPN 的情况下切换到目录里的场景。
+    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply
+    /// 请 VPN 扩展按当前网络判断一次（必要时自动切换），返回扩展的场景状态。
+    func requestScenarioEvaluation() async -> ScenarioEvaluationReply
+    /// 向正在运行的 VPN 扩展读取场景状态；扩展不可用或是旧版本时返回 nil。
+    func requestScenarioState() async -> TunnelScenarioState?
+    /// 扩展换了场景以后，改用新场景的验收计划并重新检测数据路径。
+    func adoptSwitchedScenario(_ scenarioID: String)
+    #endif
 }
 
 /// 一次出口地区查询的结果；查到时 code 非空，否则 failure 说明原因。
@@ -302,7 +322,49 @@ extension TunnelManaging {
     func directExitCountry() async -> ExitCountryProbeResult {
         ExitCountryProbeResult(code: nil, failure: "VPN 扩展不可用")
     }
+
+    #if os(iOS)
+    func rebuildScenarioCatalog(
+        inputs: [ScenarioCatalogInput],
+        policy: ScenarioAutoPolicy,
+        keepingOthers: Bool
+    ) async -> String? { nil }
+    func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool { false }
+    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply { .unsupported }
+    func requestScenarioEvaluation() async -> ScenarioEvaluationReply { .unsupported }
+    func requestScenarioState() async -> TunnelScenarioState? { nil }
+    func adoptSwitchedScenario(_ scenarioID: String) {}
+    #endif
 }
+
+#if os(iOS)
+/// 场景目录里一个场景的生成输入。profileJSON 是把该场景设为当前场景后的运行配置。
+struct ScenarioCatalogInput: Sendable {
+    let scenarioID: String
+    let scenarioName: String
+    let profileJSON: String
+    let anyConnect: AnyConnectCredentials?
+    let allowInsecure: Bool
+    let acceptancePlanJSON: String
+}
+
+/// VPN 扩展对一次判断请求的答复。
+enum ScenarioEvaluationReply: Sendable, Equatable {
+    case evaluated(TunnelScenarioState)
+    /// 扩展是旧版本，不认识这条命令。
+    case unsupported
+    /// 扩展没有及时回应或暂时不可用。
+    case unavailable
+}
+
+/// VPN 扩展对一次场景切换请求的答复。
+enum ScenarioSwitchReply: Sendable, Equatable {
+    case switched(TunnelScenarioState)
+    case failed(String, TunnelScenarioState?)
+    /// 扩展是旧版本，不认识这条命令。
+    case unsupported
+}
+#endif
 
 private let appOSLog = OSLog(subsystem: "com.kafeifei.xdial.mobile", category: "app")
 
@@ -505,6 +567,15 @@ final class AppState: ObservableObject {
     private var autoReconnectAttempt = 0
     private var autoReconnectTask: Task<Void, Never>?
     private var interruptedTailscaleSetupRecoveryPending = false
+
+    #if os(iOS)
+    /// iOS 主屏提供的自动选场景规则（「自动」开关、各场景登记的 Wi-Fi、打包注入的地区表）。
+    var scenarioAutoPolicyProvider: (@MainActor (Profile) -> ScenarioAutoPolicy)?
+    /// 正在运行的 VPN 扩展报告的场景状态（判断经过、建议、最近一次切换）。
+    @Published private(set) var tunnelScenarioState: TunnelScenarioState?
+    @Published private(set) var isSwitchingScenarioInTunnel = false
+    private var scenarioCatalogTask: Task<Void, Never>?
+    #endif
 
     func tr(_ zh: String, _ en: String) -> String {
         language == .zh ? zh : en
@@ -1154,6 +1225,9 @@ final class AppState: ObservableObject {
             // Tailscale 配置会话运行的是隔离副本，不代表用户当前场景的数据面已通过验收。
             // 只有正式连接成功后，才把当前场景实际使用的线路标记为已验证。
             markUsedLinesVerified()
+            #if os(iOS)
+            refreshScenarioCatalog()
+            #endif
             return
         }
 
@@ -2887,3 +2961,189 @@ enum ScenarioTemplate: String, CaseIterable {
         }
     }
 }
+
+#if os(iOS)
+// MARK: - 隧道内场景切换（iOS）
+
+/// 请 VPN 扩展判断的结果。
+enum TunnelScenarioEvaluationResult: Equatable {
+    case handled
+    /// 扩展是旧版本：调用方自己判断，必要时断开重连。
+    case unsupported
+    /// 没连接，或扩展暂时没有回应：这次什么也不做。
+    case unavailable
+}
+
+/// 一次在隧道内切换场景的结果。
+enum InTunnelScenarioSwitchResult: Equatable {
+    case switched
+    case failed
+    /// 没连接、没有扩展，或扩展是旧版本：调用方改用断开重连。
+    case unavailable
+}
+
+extension AppState {
+    /// 连接成功后，为可能被自动选中的场景生成启动包，交给 VPN 扩展备用。
+    func refreshScenarioCatalog() {
+        guard let tunnelManager, let snapshot = runningProfileSnapshot,
+              let policy = scenarioAutoPolicyProvider?(snapshot) else { return }
+        let inputs = scenarioCatalogInputs(base: snapshot, policy: policy)
+        scenarioCatalogTask?.cancel()
+        scenarioCatalogTask = Task { @MainActor [weak self] in
+            _ = await tunnelManager.rebuildScenarioCatalog(inputs: inputs, policy: policy, keepingOthers: false)
+            guard !Task.isCancelled, let self else { return }
+            self.scenarioCatalogTask = nil
+            await self.refreshTunnelScenarioState()
+        }
+    }
+
+    /// 「自动」开关变了：扩展马上按新规则行事，关掉以后不会再自动切换。
+    func updateScenarioAutoPolicy() {
+        guard let tunnelManager,
+              let policy = scenarioAutoPolicyProvider?(runningProfileSnapshot ?? profile) else { return }
+        _ = tunnelManager.updateScenarioCatalogPolicy(policy)
+    }
+
+    /// 已连接时不断开系统 VPN 地切换场景。尚未应用的配置改动随新场景一起生效。
+    func switchScenarioInTunnel(to id: String) async -> InTunnelScenarioSwitchResult {
+        guard let tunnelManager, isConnected, runningProfileSnapshot != nil,
+              !isSwitchingScenarioInTunnel,
+              let policy = scenarioAutoPolicyProvider?(profile) else { return .unavailable }
+        guard let scenario = profile.scenarios.first(where: { $0.id == id }) else { return .failed }
+        let issues = configurationIssues(for: scenario)
+        guard issues.isEmpty else {
+            engine.lastError = issues.prefix(3).joined(separator: tr("；", "; "))
+            return .failed
+        }
+        isSwitchingScenarioInTunnel = true
+        defer { isSwitchingScenarioInTunnel = false }
+        let base = profile
+        scenarioCatalogTask?.cancel()
+        scenarioCatalogTask = nil
+        // 先只生成目标场景，切完再按新配置补齐其他场景。
+        guard let target = scenarioCatalogInput(for: id, in: base),
+              let revision = await tunnelManager.rebuildScenarioCatalog(
+                  inputs: [target], policy: policy, keepingOthers: true
+              ) else {
+            engine.lastError = tr("无法准备新场景的连接配置", "Couldn't prepare the new scenario")
+            return .failed
+        }
+        switch await tunnelManager.requestScenarioSwitch(to: id, revision: revision) {
+        case .switched(let state):
+            engine.lastError = nil
+            adoptTunnelScenario(state, base: base)
+            refreshScenarioCatalog()
+            return .switched
+        case .failed(let message, let state):
+            if let state { tunnelScenarioState = state }
+            engine.lastError = userFacingConnectionText(message)
+            return .failed
+        case .unsupported:
+            return .unavailable
+        }
+    }
+
+    /// App 回到前台、打开「自动」或网络变化时：请扩展按当前网络判断一次。
+    func requestTunnelScenarioEvaluation() async -> TunnelScenarioEvaluationResult {
+        guard isConnected, let tunnelManager else { return .unavailable }
+        switch await tunnelManager.requestScenarioEvaluation() {
+        case .evaluated(let state):
+            adoptTunnelScenario(state, base: nil)
+            return .handled
+        case .unsupported:
+            return .unsupported
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
+    /// 扩展通知场景状态变了，或 App 刚回到前台：向扩展读一次并同步。
+    func refreshTunnelScenarioState() async {
+        guard isConnected, let tunnelManager,
+              let state = await tunnelManager.requestScenarioState() else { return }
+        adoptTunnelScenario(state, base: nil)
+    }
+
+    /// 把扩展正在运行的场景同步到 Profile 与运行快照，并改用新场景的验收计划。
+    private func adoptTunnelScenario(_ state: TunnelScenarioState, base: Profile?) {
+        tunnelScenarioState = state
+        guard isConnected, let running = state.runningScenarioID,
+              profile.scenarios.contains(where: { $0.id == running }) else { return }
+        let snapshotScenario = runningProfileSnapshot?.activeScenarioID
+        if var snapshot = base ?? runningProfileSnapshot {
+            snapshot.activeScenarioID = running
+            runningProfileSnapshot = snapshot
+        }
+        if profile.activeScenarioID != running {
+            profile.activeScenarioID = running
+            save()
+        }
+        updatePendingRuntimeChanges()
+        if base != nil || snapshotScenario != running {
+            markUsedLinesVerified()
+            tunnelManager?.adoptSwitchedScenario(running)
+        }
+    }
+
+    /// 目录里放哪些场景：当前场景、登记了 Wi-Fi 的场景、地区表里的场景。
+    private func scenarioCatalogInputs(
+        base: Profile,
+        policy: ScenarioAutoPolicy
+    ) -> [ScenarioCatalogInput] {
+        var ids: [String] = []
+        func add(_ id: String) {
+            guard !id.isEmpty, !ids.contains(id), base.scenarios.contains(where: { $0.id == id }) else { return }
+            ids.append(id)
+        }
+        add(base.activeScenarioID)
+        policy.wifiRules.forEach { add($0.scenarioID) }
+        policy.regionScenarios.values.sorted().forEach(add)
+        return ids.prefix(ScenarioSwitchCatalog.maxEntries).compactMap {
+            scenarioCatalogInput(for: $0, in: base)
+        }
+    }
+
+    private func scenarioCatalogInput(for scenarioID: String, in base: Profile) -> ScenarioCatalogInput? {
+        guard let scenario = base.scenarios.first(where: { $0.id == scenarioID }),
+              configurationIssues(for: scenario).isEmpty else { return nil }
+        var candidate = base
+        candidate.activeScenarioID = scenarioID
+        let referenced = effectiveReferencedLineIDs(in: scenario)
+        let anyConnectLines = candidate.lines.filter {
+            referenced.contains($0.id) && $0.enabled && $0.type == "vpn"
+        }
+        var anyConnect: AnyConnectCredentials?
+        var allowInsecure = false
+        if !anyConnectLines.isEmpty {
+            guard anyConnectLines.count == 1, let line = anyConnectLines.first,
+                  isUsableRouteLine(line) else { return nil }
+            anyConnect = AnyConnectCredentials(
+                server: line.vpnServer,
+                username: line.vpnUsername,
+                password: line.vpnPassword
+            )
+            allowInsecure = line.allowInsecure
+        }
+        guard let data = try? JSONEncoder().encode(candidate),
+              let profileJSON = String(data: data, encoding: .utf8),
+              let plan = try? TunnelAcceptancePlan.make(
+                  profile: candidate, profileJSON: profileJSON, anyConnect: anyConnect
+              ),
+              let planData = try? JSONEncoder().encode(plan),
+              let planJSON = String(data: planData, encoding: .utf8) else { return nil }
+        _ = BundledRuleSets.seedCache(
+            for: candidate,
+            basePath: FileManager.default
+                .containerURL(forSecurityApplicationGroupIdentifier: XDialIdentity.appGroup)?.path ?? ""
+        )
+        return ScenarioCatalogInput(
+            scenarioID: scenarioID,
+            scenarioName: scenario.name,
+            profileJSON: profileJSON,
+            anyConnect: anyConnect,
+            allowInsecure: allowInsecure,
+            acceptancePlanJSON: planJSON
+        )
+    }
+}
+#endif

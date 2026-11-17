@@ -129,6 +129,10 @@ type Libbox struct {
 	switchCleanupMu          sync.Mutex
 	debugRoutingProbeEnabled bool
 	routingProbe             *routingProbeTracker
+	// tunHandover selects the Packet Tunnel switch contract (tun_handover.go).
+	// activeTUN is the TUN inbound currently opened by the active generation.
+	tunHandover bool
+	activeTUN   *tunInboundSpec
 	// traffic 是跨 Box 代共享的全线路累计流量，见 traffic_counter.go。
 	traffic               trafficCounter
 	stateLocks            []*os.File
@@ -225,6 +229,9 @@ type preparedBoxSwitch struct {
 	tailscaleCapability       pooledTailscaleRuntime
 	reusedLineIDs             []string
 	networkReadiness          *lineNetworkGeneration
+	// tun is the detached TUN inbound this candidate opens at Commit when the
+	// Packet Tunnel handover contract is enabled.
+	tun *tunInboundSpec
 }
 
 // retiredBoxGeneration is the source generation retained after an atomic
@@ -1288,6 +1295,7 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Add(1)
 	platform := l.platform
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	tunHandover := l.tunHandover
 	stablePacketIngress := l.stablePacketIngress
 	nativeFlowIngress := l.nativeFlowIngress
 	l.lastError = ""
@@ -1315,6 +1323,7 @@ func (l *Libbox) coldStart(
 		ingress             *packetIngress
 		packetOptions       *option.Inbound
 		routingProbe        *routingProbeTracker
+		tunSpec             *tunInboundSpec
 	)
 	if err := baseCtx.Err(); err != nil {
 		startErr = err
@@ -1400,6 +1409,9 @@ func (l *Libbox) coldStart(
 		ctx,
 		adapter.PlatformInterface(platform),
 	)
+	if tunHandover {
+		ctx = handoverBoxContext(ctx)
+	}
 	if startErr == nil {
 		startErrorCode = ErrCodeConfig
 		var options option.Options
@@ -1420,7 +1432,10 @@ func (l *Libbox) coldStart(
 		}
 		if startErr != nil {
 			startErr = fmt.Errorf("parse sing-box config: %w", startErr)
-		} else {
+		} else if tunHandover {
+			tunSpec, startErr = takeTUNInbound(&options, false)
+		}
+		if startErr == nil {
 			startErrorCode = ErrCodeEngine
 			instance, startErr = box.New(box.Options{
 				Options: options,
@@ -1476,6 +1491,7 @@ func (l *Libbox) coldStart(
 			l.box = instance
 			l.packetIngress = ingress
 			l.running = true
+			l.activeTUN = tunSpec
 			l.runtimeCtx = ctx
 			l.runtimeCancel = cancel
 			l.routingProbe = routingProbe
@@ -1905,12 +1921,13 @@ func (l *Libbox) prepareSwitchContext(
 	if err := stdjson.Unmarshal([]byte(configJSON), &ingressCheck); err != nil {
 		return fmt.Errorf("invalid switch configuration")
 	}
+	l.mu.Lock()
 	for _, inbound := range ingressCheck.Inbounds {
-		if inbound.Type == "tun" {
+		if inbound.Type == "tun" && !l.tunHandover {
+			l.mu.Unlock()
 			return fmt.Errorf("switch candidate requires an independently owned flow ingress")
 		}
 	}
-	l.mu.Lock()
 	if l.nativeFlowIngress && len(ingressCheck.Inbounds) != 0 {
 		l.mu.Unlock()
 		return fmt.Errorf("native flow candidate must not create a listener")
@@ -1979,6 +1996,7 @@ func (l *Libbox) prepareSwitchContext(
 	}()
 	l.switchPreparationCancel = cancel
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	tunHandover := l.tunHandover
 	// Stop cancels preparation and waits for this borrower before it closes any
 	// Box or invokes the pool-wide StopAll teardown boundary.
 	l.switchPreparationUsers.Add(1)
@@ -2100,6 +2118,10 @@ func (l *Libbox) prepareSwitchContext(
 		ctx,
 		adapter.PlatformInterface(candidatePlatform),
 	)
+	if tunHandover {
+		ctx = handoverBoxContext(ctx)
+	}
+	var tunSpec *tunInboundSpec
 
 	if err == nil {
 		var options option.Options
@@ -2112,6 +2134,9 @@ func (l *Libbox) prepareSwitchContext(
 		}
 		if err == nil {
 			err = prepareSwitchCacheFile(&options)
+		}
+		if err == nil && tunHandover {
+			tunSpec, err = takeTUNInbound(&options, true)
 		}
 		if err == nil {
 			var instance *box.Box
@@ -2152,6 +2177,7 @@ func (l *Libbox) prepareSwitchContext(
 						tailscaleCapability:       candidateTailscale,
 						reusedLineIDs:             reusedLineIDs,
 						networkReadiness:          firstLineNetworkGeneration(networkGenerations),
+						tun:                       tunSpec,
 					}
 					if candidate.networkReadiness != nil {
 						candidate.networkReadiness.install(candidateLineRuntimeGeneration, candidateAnyConnect, candidateTailscale)
@@ -2534,6 +2560,11 @@ func (l *Libbox) CommitPreparedSwitch() error {
 	sourceTailscaleCapability := l.activeTailscaleCapability
 	sourceTailscaleRuntimeIdentity := l.tailscaleRuntimeIdentity
 	sourceTailscaleEndpointTag := l.tailscaleEndpointTag
+	sourceTUN := l.activeTUN
+	if (candidate.tun == nil) != (sourceTUN == nil) {
+		l.mu.Unlock()
+		return fmt.Errorf("switch TUN handover state is inconsistent")
+	}
 
 	l.switchCommitInProgress = true
 	l.switchCommitDone = make(chan struct{})
@@ -2566,6 +2597,30 @@ func (l *Libbox) CommitPreparedSwitch() error {
 		l.mu.Unlock()
 		return err
 	}
+	if candidate.tun != nil {
+		// switchCommitInProgress keeps Stop, Abort and new borrowers out while
+		// the inbound is moved without holding l.mu.
+		l.mu.Unlock()
+		err := moveTUNInbound(
+			sourceBox, sourceRuntimeCtx, sourceTUN,
+			candidate.box, candidate.runtimeCtx, candidate.tun,
+		)
+		l.mu.Lock()
+		if err != nil {
+			l.restorePreparedSwitchAfterCommitFailureLocked(candidate)
+			if errors.Is(err, errTUNHandoverLost) {
+				l.lastError = err.Error()
+				cb := l.cb
+				l.mu.Unlock()
+				if cb != nil {
+					cb.OnError(ErrCodeEngine, err.Error())
+				}
+				return err
+			}
+			l.mu.Unlock()
+			return err
+		}
+	}
 	retired := &retiredBoxGeneration{
 		box:                   sourceBox,
 		runtimeCtx:            sourceRuntimeCtx,
@@ -2577,7 +2632,27 @@ func (l *Libbox) CommitPreparedSwitch() error {
 		candidate.lineRuntimeGeneration,
 	); err != nil {
 		// Leave the source published and make the candidate abortable again.
+		if candidate.tun != nil {
+			l.mu.Unlock()
+			moveErr := moveTUNInbound(
+				candidate.box, candidate.runtimeCtx, candidate.tun,
+				sourceBox, sourceRuntimeCtx, sourceTUN,
+			)
+			l.mu.Lock()
+			if moveErr != nil {
+				err = fmt.Errorf("%w; return TUN: %w", err, moveErr)
+			}
+		}
 		l.restorePreparedSwitchAfterCommitFailureLocked(candidate)
+		if errors.Is(err, errTUNHandoverLost) {
+			l.lastError = err.Error()
+			cb := l.cb
+			l.mu.Unlock()
+			if cb != nil {
+				cb.OnError(ErrCodeEngine, err.Error())
+			}
+			return err
+		}
 		l.mu.Unlock()
 		return err
 	}
@@ -2593,6 +2668,7 @@ func (l *Libbox) CommitPreparedSwitch() error {
 	l.stateLocks = candidate.stateLocks
 	l.activeLineRuntimeGeneration = candidate.lineRuntimeGeneration
 	l.activeNetworkReadiness = candidate.networkReadiness
+	l.activeTUN = candidate.tun
 	l.boxGeneration++
 
 	var monitoredSession *session.ConnSession
@@ -3290,6 +3366,7 @@ func (l *Libbox) detachRunningLocked() (
 	l.runtimeCtx = nil
 	l.runtimeCancel = nil
 	l.routingProbe = nil
+	l.activeTUN = nil
 	l.running = false
 	l.dnsJSON = ""
 	l.generation++

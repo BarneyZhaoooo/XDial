@@ -7,7 +7,25 @@ import WidgetKit
 /// 后台启动 App，因此状态不能只挂在视图的 StateObject 上。
 @MainActor
 enum MobileAppRuntime {
-    static let state: AppState = makeState()
+    static let state: AppState = {
+        let state = makeState()
+        // 已连接期间由 VPN 扩展按这份规则判断，App 被挂起时也照样生效。
+        state.scenarioAutoPolicyProvider = { profile in
+            ScenarioAutoPolicy.make(
+                profile: profile,
+                enabled: ScenarioAutoPilot.isAutoEnabled,
+                regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:]
+            )
+        }
+        scenarioStateObserver = DarwinNotificationObserver(
+            name: TunnelScenarioStateStore.changedNotification
+        ) {
+            Task { await state.refreshTunnelScenarioState() }
+        }
+        return state
+    }()
+    /// VPN 扩展在后台切换场景后，App 若在运行就立即同步。
+    private static var scenarioStateObserver: DarwinNotificationObserver?
     /// 实时活动（锁屏与灵动岛）的同步器，App 启动时创建。
     static var connectionActivity: ConnectionActivityController?
 

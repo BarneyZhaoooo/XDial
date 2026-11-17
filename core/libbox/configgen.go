@@ -1131,6 +1131,80 @@ func activeRouteRuleSetTags(configJSON []byte) ([]string, error) {
 	return tags, nil
 }
 
+// neSession is the switch-capable form of GenerateNEConfig. Besides the
+// sing-box configuration it carries the opaque Line runtime identities that
+// let a Packet Tunnel Provider start pool-owned AnyConnect / Tailscale
+// capabilities and later borrow them from a staged Scenario switch.
+//
+// The identities are Provider-memory-only: the host may keep the whole
+// session in the shared Keychain beside the on-demand start envelope, but it
+// must never log them or put them into diagnostics.
+type neSession struct {
+	ConfigJSON            string            `json:"config_json"`
+	LineRuntimeIdentities map[string]string `json:"line_runtime_identities"`
+	AnyConnect            *neSessionLine    `json:"anyconnect,omitempty"`
+	Tailscale             *neSessionLine    `json:"tailscale,omitempty"`
+}
+
+// neSessionLine names the single AnyConnect or Tailscale Line used by the
+// active Scenario. Credentials stay with the host's existing start contract.
+type neSessionLine struct {
+	LineID          string `json:"line_id"`
+	RuntimeIdentity string `json:"runtime_identity"`
+}
+
+// GenerateNESession compiles the active Scenario like GenerateNEConfig and
+// returns a JSON neSession. iOS uses it for every start so that the running
+// generation's Line capabilities are reusable by a later in-tunnel switch.
+func GenerateNESession(profileJSON string, vpnServerIP string, basePath string) (string, error) {
+	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
+	if err != nil {
+		return "", err
+	}
+	data, err := generateNEConfigData(profile, vpnServerIP, basePath, config.PlatformNE)
+	if err != nil {
+		return "", err
+	}
+	plan, err := config.BuildConnectionPlan(profile)
+	if err != nil {
+		return "", err
+	}
+	identities, err := activeLineRuntimeIdentities(profile, plan)
+	if err != nil {
+		return "", err
+	}
+	session := neSession{
+		ConfigJSON:            string(data),
+		LineRuntimeIdentities: identities,
+	}
+	lineFor := func(lineID string) (*neSessionLine, error) {
+		identity := identities[lineID]
+		if identity == "" {
+			return nil, fmt.Errorf("active Line %q has no runtime identity", lineID)
+		}
+		return &neSessionLine{LineID: lineID, RuntimeIdentity: identity}, nil
+	}
+	if line := profile.ActiveVPNLine(); line != nil {
+		if session.AnyConnect, err = lineFor(line.ID); err != nil {
+			return "", err
+		}
+	}
+	tailscaleLine, err := config.ActiveTailscaleLine(profile)
+	if err != nil {
+		return "", err
+	}
+	if tailscaleLine != nil {
+		if session.Tailscale, err = lineFor(tailscaleLine.ID); err != nil {
+			return "", err
+		}
+	}
+	encoded, err := json.Marshal(session)
+	if err != nil {
+		return "", fmt.Errorf("encode NetworkExtension session: %w", err)
+	}
+	return string(encoded), nil
+}
+
 // GenerateAndroidConfig accepts network facts and reads validated offline caches.
 // Network preparation requires Libbox.PrepareAndroidConfig and its protector.
 func GenerateAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
@@ -1158,27 +1232,38 @@ func generatePacketTunnelConfigWithFetcher(profileJSON, basePath string, generat
 	if err != nil {
 		return "", err
 	}
+	data, err := generatePacketTunnelConfigData(profile, basePath, generate, fetch)
+	return string(data), err
+}
+
+func generateNEConfigData(profile *config.Profile, vpnServerIP, basePath string, platform config.Platform) ([]byte, error) {
+	return generatePacketTunnelConfigData(profile, basePath, func(profile *config.Profile) ([]byte, error) {
+		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
+	}, subscription.FetchStrictBytes)
+}
+
+func generatePacketTunnelConfigData(profile *config.Profile, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) ([]byte, error) {
 	ruleDir, err := prepareNERuleSetDirectory(basePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := materializeNERuleSets(profile, basePath, fetch); err != nil {
-		return "", err
+		return nil, err
 	}
 	// socksPort 在 NE 模式下不生效(vpn 出口固定用自研 type:"vpn",见
 	// generator.go 里的 NetworkExtension 分支),这里固定传 0。
 	data, err := generate(profile)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	data, err = materializeGeneratedNERuleSets(data, ruleDir, fetch)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(data) > maxNEConfigBytes {
-		return "", fmt.Errorf("generated NetworkExtension config exceeds %d-byte limit", maxNEConfigBytes)
+		return nil, fmt.Errorf("generated NetworkExtension config exceeds %d-byte limit", maxNEConfigBytes)
 	}
-	return string(data), nil
+	return data, nil
 }
 
 // GenerateAndroidTailscaleSetupConfig uses the same compiler-owned Direct DNS
