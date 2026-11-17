@@ -209,14 +209,36 @@ func systemctl(args ...string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+// vendorServiceDropIns is the distribution's type-wide service.d directory.
+// Such files apply to every service equally before and after the upgrade
+// (Fedora ships 10-timeout-abort.conf there). Unit-specific or prefix drop-ins
+// and anything under /etc, /run or /usr/local are administrator or runtime
+// overrides and still require explicit review.
+const vendorServiceDropIns = "/usr/lib/systemd/system/service.d/"
+
+func reviewDropIns(paths string, safe func(string) error) error {
+	for _, path := range strings.Fields(paths) {
+		if filepath.Clean(path) != path || !strings.HasPrefix(path, vendorServiceDropIns) ||
+			strings.Contains(strings.TrimPrefix(path, vendorServiceDropIns), "/") || !strings.HasSuffix(path, ".conf") {
+			return fmt.Errorf("unit override %q requires explicit review before upgrade", path)
+		}
+		if e := safe(path); e != nil {
+			return fmt.Errorf("vendor drop-in %q is not a root-owned regular file: %w", path, e)
+		}
+	}
+	return nil
+}
 func unitState() (active bool, enabled string, e error) {
 	fragment, err := systemctl("show", "--property=FragmentPath", "--value", "xdial-service")
 	if err != nil || fragment != unitPath {
 		return false, "", errors.New("installed unit identity differs")
 	}
 	drop, err := systemctl("show", "--property=DropInPaths", "--value", "xdial-service")
-	if err != nil || drop != "" {
+	if err != nil {
 		return false, "", errors.New("unit overrides require explicit review before upgrade")
+	}
+	if err = reviewDropIns(drop, func(path string) error { _, e := read(path, 65536, false); return e }); err != nil {
+		return false, "", err
 	}
 	enabled, err = systemctl("is-enabled", "xdial-service")
 	if enabled != "enabled" && enabled != "disabled" {

@@ -98,10 +98,14 @@ func TestInstalledResolvedLifecycle(t *testing.T) {
 		cmdOK(t, "ip", "link", "set", peer, "netns", ns)
 		cmdOK(t, "ip", "addr", "add", network+"1/24", "dev", name)
 		cmdOK(t, "ip", "link", "set", name, "up")
-		cmdOK(t, "ip", "netns", "exec", ns, "ip", "addr", "add", network+"2/24", "dev", peer)
-		cmdOK(t, "ip", "netns", "exec", ns, "ip", "link", "set", peer, "up")
-		cmdOK(t, "ip", "netns", "exec", ns, "ip", "link", "set", "lo", "up")
-		c := exec.Command("ip", "netns", "exec", ns, "/service-tests", "-test.run=^TestResolvedDNSChild$", "-test.v")
+		// Enter only the network namespace. ip netns exec also remounts sysfs,
+		// which the Fedora cloud-init domain correctly disallows and this DNS
+		// fixture does not need. Keep that domain and SELinux enforcing intact.
+		netns := "--net=/run/netns/" + ns
+		cmdOK(t, "nsenter", netns, "ip", "addr", "add", network+"2/24", "dev", peer)
+		cmdOK(t, "nsenter", netns, "ip", "link", "set", peer, "up")
+		cmdOK(t, "nsenter", netns, "ip", "link", "set", "lo", "up")
+		c := exec.Command("nsenter", netns, "/service-tests", "-test.run=^TestResolvedDNSChild$", "-test.v")
 		c.Env = append(os.Environ(), "XDIAL_RESOLVER_TEST_ADDR="+network+"2", fmt.Sprintf("XDIAL_RESOLVER_TEST_ANSWER=192.0.2.%d", (i+1)*10))
 		pipe, e := c.StdoutPipe()
 		if e != nil {

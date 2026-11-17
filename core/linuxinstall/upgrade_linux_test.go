@@ -149,8 +149,23 @@ func TestUpgradeCrashChild(t *testing.T) {
 func TestInstalledUpgradeLifecycle(t *testing.T) {
 	guest(t)
 	group := os.Getenv("XDIAL_UPGRADE_GROUP")
-	if group != "" && group != "all" && group != "early" && group != "late" {
+	if group != "" && group != "all" && group != "early" && group != "late" && group != "normal" {
 		t.Fatal("unknown upgrade test group")
+	}
+	// The upgrade fixture exercises wire DNS, not a native NSS IPC adapter.
+	nss, e := os.ReadFile("/etc/nsswitch.conf")
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { os.WriteFile("/etc/nsswitch.conf", nss, 0644) })
+	lines := strings.Split(string(nss), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "hosts:") {
+			lines[i] = "hosts: files dns"
+		}
+	}
+	if e := os.WriteFile("/etc/nsswitch.conf", []byte(strings.Join(lines, "\n")), 0644); e != nil {
+		t.Fatal(e)
 	}
 	command(t, "modprobe", "nft_tproxy")
 	command(t, "modprobe", "tcp_diag")
@@ -259,6 +274,9 @@ func TestInstalledUpgradeLifecycle(t *testing.T) {
 		return
 	}
 	for _, point := range []string{"staged", "prepared", "stopped", "binary", "unit", "manifest", "ready", "committed", "cleanup"} {
+		if group == "normal" {
+			break
+		} // Explicit normal/rollback subset; not crash coverage.
 		early := point == "staged" || point == "prepared" || point == "stopped" || point == "binary"
 		if (group == "early" && !early) || (group == "late" && early) {
 			continue

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot a verified full Debian disk in disposable, unprivileged QEMU TCG.
+"""Boot a verified full distribution in disposable, unprivileged QEMU TCG.
 
 No NIC, host mount, SSH, KVM or host configuration changes. Test inputs are
 read-only ISO images. The writable overlay is deleted after QEMU exits.
@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,14 +21,18 @@ def run(a):
     root = tools / 'root'
     image = a.image.resolve()
     receipt = json.loads((image / 'image.json').read_text())
-    if receipt['file'] != 'debian-13-generic-amd64.qcow2':
+    names = {'debian': r'debian-13-generic-amd64\.qcow2',
+             'fedora': r'Fedora-Cloud-Base-Generic-[0-9.]+-[0-9.]+\.x86_64\.qcow2',
+             'arch': r'Arch-Linux-x86_64-cloudimg-[0-9.]+\.qcow2'}
+    if receipt.get('distro', 'debian') != a.distro or not re.fullmatch(names[a.distro], receipt['file']):
         raise SystemExit('unexpected image filename')
     base = image / receipt['file']
-    h = hashlib.sha512()
+    algorithm = 'sha512' if a.distro == 'debian' else 'sha256'
+    h = hashlib.new(algorithm)
     with base.open('rb') as f:
         for block in iter(lambda: f.read(1024*1024), b''):
             h.update(block)
-    if h.hexdigest() != receipt['sha512']:
+    if h.hexdigest() != receipt[algorithm]:
         raise SystemExit('base image no longer matches verified receipt')
     if not (tools / 'packages.json').is_file():
         raise SystemExit('missing tool verification receipt')
@@ -50,6 +55,15 @@ set -eu
 [ "$(cat /sys/class/dmi/id/product_name)" = XDial-isolated-distro ]
 [ "$(cat /proc/1/comm)" = systemd ]
 [ "$(id -u)" = 0 ]
+. /etc/os-release
+[ "$ID" = XDIAL_EXPECTED_DISTRO ] || { echo 'wrong distribution'; exit 1; }
+cat /etc/os-release
+uname -r
+if [ "$ID" = fedora ]; then
+ [ "$(cat /sys/fs/selinux/enforce)" = 1 ] || { echo 'Fedora must retain SELinux enforcing'; exit 1; }
+ getenforce
+ id -Z
+fi
 cd /opt/xdial-test
 sha256sum -c SHA256SUMS
 tar -xzf service.tar.gz
@@ -59,14 +73,16 @@ if getent passwd 1001 || getent group 1001; then echo 'test UID already occupied
 groupadd -g 1001 xdial-test
 useradd -u 1001 -g 1001 -M -s /usr/sbin/nologin xdial-test
 export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1
-/service-tests -test.v -test.run='^(TestNSSIngressAdmission|TestInstalled(Systemd|Upgrade|Resolved)Lifecycle)$' -test.timeout=330s
+/service-tests -test.v -test.run='XDIAL_TEST_PATTERN' -test.timeout=330s
 if [ -f service-lifecycle-tests ]; then
  install -m 0755 service-lifecycle-tests /service-tests
  /service-tests -test.v -test.run='^TestInstalledSystemdLifecycle$' -test.timeout=90s
 fi
+if [ \"$ID\" = fedora ]; then [ \"$(cat /sys/fs/selinux/enforce)\" = 1 ]; fi
 ''')
     script = payload / 'run.sh'
-    script.write_text(script.read_text().replace('export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1',
+    pattern = '^(TestConfigWatchSymlinkTargets|TestNSSIngressAdmission|TestInstalled(Systemd|Upgrade' + ('|Resolved' if a.require_resolved else '') + ')Lifecycle)$'
+    script.write_text(script.read_text().replace('XDIAL_EXPECTED_DISTRO', a.distro).replace('XDIAL_TEST_PATTERN', pattern).replace('export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1',
                       'export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1 XDIAL_UPGRADE_GROUP='+a.upgrade_group))
     (seed / 'meta-data').write_text('instance-id: xdial-disposable-distro\nlocal-hostname: xdial-disposable-distro\n')
     # All commands and root privileges are inside the disposable guest. Never
@@ -74,6 +90,17 @@ fi
     (seed / 'user-data').write_text('''#cloud-config
 ssh_pwauth: false
 disable_root: true
+# This guest deliberately has no NIC/NTP. Arch cloud-final orders itself after
+# time-sync.target; stop only its wait job, without claiming remote clock sync.
+# No product unit or security enforcement is changed by this harness exception.
+bootcmd:
+  - |
+    . /etc/os-release
+    if [ "$ID" = arch ]; then
+      systemctl show systemd-time-wait-sync.service -p ActiveState -p Before
+      systemctl stop systemd-time-wait-sync.service
+      echo XDIAL_OFFLINE_GUEST_NO_NTP_WAIT
+    fi
 runcmd:
   - |
     systemctl stop serial-getty@hvc0.service
@@ -92,7 +119,12 @@ runcmd:
     for directory,label in ((seed,'cidata'),(payload,'XDIALTEST')):
         subprocess.run([str(iso),'-quiet','-output',str(work/(directory.name+'.iso')),'-volid',label,'-joliet','-rock',str(directory)],env=env,check=True)
     overlay = work / 'guest.qcow2'
-    subprocess.run([str(root/'usr/bin/qemu-img'),'create','-f','qcow2','-F','qcow2','-b',str(base),str(overlay),'8G'],env=env,check=True)
+    # Do not shrink a distribution image whose virtual size exceeds Debian's.
+    info = json.loads(subprocess.check_output([str(root/'usr/bin/qemu-img'),'info','--output=json',str(base)],env=env))
+    size = max(8 * 1024 ** 3, info['virtual-size'])
+    if size > 64 * 1024 ** 3:
+        raise SystemExit('unexpected virtual image size')
+    subprocess.run([str(root/'usr/bin/qemu-img'),'create','-f','qcow2','-F','qcow2','-b',str(base),str(overlay),str(size)],env=env,check=True)
     command = [str(root/'usr/bin/qemu-system-x86_64'),'-machine','accel=tcg','-cpu','max',
                '-smp','2','-m','2048','-nodefaults','-no-user-config','-display','none',
                '-serial','stdio','-device','virtio-serial-pci',
@@ -131,11 +163,12 @@ runcmd:
 if __name__ == '__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--tools',required=True,type=Path)
+    p.add_argument('--distro',choices=('debian','fedora','arch'),default='debian')
     p.add_argument('--image',required=True,type=Path)
     p.add_argument('--bundle',required=True,type=Path)
     p.add_argument('--lifecycle-tests',type=Path)
     p.add_argument('--baseline',type=Path)
-    p.add_argument('--upgrade-group',choices=('all','early','late'),default='all')
+    p.add_argument('--upgrade-group',choices=('all','early','late','normal'),default='all')
     p.add_argument('--require-resolved',action='store_true')
     p.add_argument('--tests',required=True,type=Path)
     p.add_argument('--output',required=True,type=Path)

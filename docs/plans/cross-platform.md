@@ -391,3 +391,14 @@ Fedora/Arch 仍须真实完整镜像，不能复用 Debian 验收标签；Window
 
 本阶段保存为 `1d418cb`，随后以 `bc9c8e9` 合入新主线 `878e455`；合并后的
 受影响 iOS/tvOS 再构建通过。三个远端测试/工具目录已清理并读回不存在，未推送或开 PR。
+
+### 2026-11-18：Fedora 45 / Arch 完整来宾验收
+
+官方 Fedora 45 Cloud（SELinux 全程 Enforcing）与 Arch cloud image 经 HTTPS manifest
+SHA256 校验后，以只读 base + 一次性 overlay 启动，保留各自内核、systemd 与安全策略。
+两者的安装、resolved 分域 DNS（含 NSS/nscd 运行中变化断开）、生命周期、正常升级与
+启动失败回滚均通过。Fedora 暴露两个产品缺口并已修复：NSS 配置位于符号链接目标目录时
+监视遗漏（改为订阅链接路径的父目录与最终 inode），以及发行版全局 `service.d` drop-in
+使升级被拒（只放行 `/usr/lib/systemd/system/service.d/*.conf` 的 root 文件）。
+证据见[多发行版验收](../verification/linux-multidistro.md)。强杀矩阵仍只有 Debian；
+原生 NSS 调用者归因、Windows SCM/WFP 与其余目标继续推进。

@@ -19,7 +19,7 @@ scripts/build-linux-service.sh amd64
 
 安装脚本参数为 `install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER`；不提供可误用于用户网络的固定资源示例。它验证包摘要、安装父目录、并发锁和策略格式，写入 root 私有 `/var/lib/xdial-service/policy.json`，安装 `/usr/local/libexec/xdial-service` 与 systemd unit，执行 daemon-reload，**不会启动服务**。首次安装失败回滚本事务文件。已有安装必须使用独立的升级事务，不能重复 `install` 覆盖。
 
-审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除，见[完整发行版证据](../verification/linux-distro-systemd.md)。Fedora/Arch 和原生 NSS 路径仍待验收。
+审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除，见[完整发行版证据](../verification/linux-distro-systemd.md)。Fedora 45（SELinux Enforcing）与 Arch 的安装、resolved 分域 DNS、生命周期、正常升级与启动失败回滚已在完整来宾验收，见[多发行版](../verification/linux-multidistro.md)；原生 NSS 路径仍待实现。
 
 ## 升级事务
 
@@ -27,7 +27,8 @@ scripts/build-linux-service.sh amd64
 `./install.sh upgrade`。这不是用户控制接口：普通用户不能提交包路径或安装操作。
 包内 SHA256SUMS 用于完整性检查，不代替可信下载渠道或发行签名。
 
-升级核对已安装二进制、unit、安装摘要及文件元数据；发现替换、drop-in、非普通
+升级核对已安装二进制、unit、安装摘要及文件元数据；发现替换、drop-in（仅放行发行版
+`/usr/lib/systemd/system/service.d/*.conf` 这类对所有 service 生效的 root 文件）、非普通
 enabled/disabled 状态或已有恢复记录时拒绝。它保留 policy/cache 和 enablement，
 将旧/新文件及恢复记录写入 root 私有目录并 fsync，然后停止服务、恢复捕获事务、
 逐文件原子替换。原来运行中的服务重新启动后必须发出 systemd READY 通知才提交；

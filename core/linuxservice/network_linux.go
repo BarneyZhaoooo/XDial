@@ -4,8 +4,10 @@ package linuxservice
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/kafeifei/xdial/core/libbox"
@@ -71,6 +73,13 @@ func (s *Service) observeNetwork() error {
 			if broken {
 				s.networkFailed = true
 			}
+			// Re-arm configuration chains after rename or symlink replacement.
+			// Add watches before reading facts so the new target cannot change
+			// unnoticed between admission and subscription.
+			if !broken && s.watchResolver() != nil {
+				broken = true
+				s.networkFailed = true
+			}
 			if s.core != nil {
 				_, _, identity, e := s.networkFacts()
 				if broken || e != nil || identity != s.underlay || resolverIngressReady() != nil {
@@ -122,11 +131,66 @@ func (s *Service) watchResolver() error {
 	if e := s.watchNSSCache(); e != nil {
 		return e
 	}
-	path, e := filepath.EvalSymlinks("/etc/resolv.conf")
-	if e != nil {
-		return e
+	for _, path := range []string{"/etc/resolv.conf", "/etc/nsswitch.conf"} {
+		if e := watchConfigPath(s.watcher, path); e != nil {
+			return e
+		}
 	}
-	return s.watcher.Add(filepath.Dir(path))
+	return nil
+}
+
+// Fedora's nsswitch.conf can point into authselect. Observe every traversed
+// parent, symlink and final inode, not just /etc or the final target directory.
+// Watch-before-lstat also covers replacement while resolving the chain. Old
+// watches are retained until service shutdown; bounded growth fails closed.
+func watchConfigPath(w *fsnotify.Watcher, path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("absolute configuration path required")
+	}
+	pending := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
+	parent := "/"
+	links := 0
+	add := func(path string) error {
+		watches := w.WatchList()
+		for _, existing := range watches {
+			if existing == path {
+				return nil
+			}
+		}
+		if len(watches) >= 64 {
+			return errors.New("configuration watch bound exceeded")
+		}
+		return w.Add(path)
+	}
+	for len(pending) > 0 {
+		if e := add(parent); e != nil {
+			return e
+		}
+		next := filepath.Join(parent, pending[0])
+		pending = pending[1:]
+		st, e := os.Lstat(next)
+		if e != nil {
+			return e
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			links++
+			if links > 40 {
+				return errors.New("configuration symlink bound exceeded")
+			}
+			target, e := os.Readlink(next)
+			if e != nil {
+				return e
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(parent, target)
+			}
+			pending = append(strings.Split(strings.TrimPrefix(filepath.Clean(target), "/"), "/"), pending...)
+			parent = "/"
+			continue
+		}
+		parent = next
+	}
+	return add(parent)
 }
 
 func (s *Service) watchNSSCache() error {
