@@ -121,6 +121,17 @@ enum ProfileDocumentService {
         }.value
     }
 
+    /// Downloads a source the way it declares: URLSession for Direct, otherwise
+    /// the body and its referenced rule sources only through the explicit Line.
+    @MainActor
+    static func read(source: ProfileSource, profileID: String, state: AppState) async throws -> Profile {
+        guard !source.usesDirectAcquisition, let lineID = source.fetchLineID else {
+            return try await read(content: "", url: source.url, profileID: profileID, nodesOnly: source.nodesOnly)
+        }
+        return try await ProfileSourceLineFetcher.importProfile(
+            source: source, lineID: lineID, profileID: profileID, state: state)
+    }
+
     static func importDocument(_ text: String, profileID: String, nodesOnly: Bool = false) throws -> Profile {
         var error: NSError?
         let result = LibboxImportProfile(text, "auto", profileID, nodesOnly, &error)
@@ -155,8 +166,7 @@ extension AppState {
         Task {
             defer { refreshingProfileIDs.remove(id) }
             do {
-                try source.validateLegacyAcquisition()
-                let incoming = try await ProfileDocumentService.read(content: "", url: source.url, profileID: id, nodesOnly: source.nodesOnly)
+                let incoming = try await ProfileDocumentService.read(source: source, profileID: id, state: self)
                 guard let index = profileLibrary.profiles.firstIndex(where: { $0.id == id }),
                       profileLibrary.profiles[index].source == source else { return }
                 let previous = profileLibrary

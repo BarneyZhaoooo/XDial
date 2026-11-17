@@ -51,18 +51,11 @@ func (l *Libbox) newAndroidAcquisition(parent context.Context, profile *config.P
 	if err != nil {
 		return nil, err
 	}
-	var target struct {
-		DNS struct {
-			Final string `json:"final"`
-		} `json:"dns"`
-		Route struct {
-			Final string `json:"final"`
-		} `json:"route"`
+	outboundTag, resolverTag, err := resourceAcquisitionTags(data)
+	if err != nil {
+		return nil, err
 	}
-	if json.Unmarshal(data, &target) != nil || target.DNS.Final == "" || target.Route.Final == "" {
-		return nil, fmt.Errorf("resource Line has no exact transport")
-	}
-	return l.newAndroidResourceTransport(parent, data, target.Route.Final, target.DNS.Final)
+	return l.newAndroidResourceTransport(parent, data, outboundTag, resolverTag)
 }
 
 func (l *Libbox) newAndroidResourceTransport(parent context.Context, data []byte, outboundTag, resolverTag string) (*androidBootstrap, error) {
@@ -76,6 +69,14 @@ func (l *Libbox) newAndroidResourceTransport(parent context.Context, data []byte
 		return nil, fmt.Errorf("protected network unavailable")
 	}
 	ctx := service.ContextWith[adapter.PlatformInterface](boxContext(parent), platform)
+	return newResourceBox(ctx, data, outboundTag, resolverTag)
+}
+
+// newResourceBox starts one isolated resource capability: no ingress, cache or
+// user Scenario. DNS and numeric dialing both belong to outboundTag's exact Line.
+// ctx decides socket ownership: Android supplies its protecting platform; Apple
+// callers run where XDial capture cannot see these sockets.
+func newResourceBox(ctx context.Context, data []byte, outboundTag, resolverTag string) (*androidBootstrap, error) {
 	options, err := jsonext.UnmarshalExtendedContext[option.Options](ctx, data)
 	if err != nil {
 		return nil, err

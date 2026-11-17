@@ -990,6 +990,14 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private var dataPathProbeIsRecheck = false
     /// 验收正在跑的步骤，超时时写进诊断，说明停在了哪一步。
     private var dataPathProbeStage: String?
+    private var probeStartedAt = ProcessInfo.processInfo.systemUptime
+    private var probeCheckpoints: [String] = []
+
+    private func recordProbeCheckpoint(_ detail: String) {
+        guard !Task.isCancelled else { return }
+        let elapsed = ProcessInfo.processInfo.systemUptime - probeStartedAt
+        probeCheckpoints.append(String(format: "+%.1fs %@", elapsed, detail))
+    }
     /// Tailscale 等用户登录期间验收会长时间挂着，这时切到后台（去浏览器登录）不能暂停它。
     private var dataPathAwaitingTailscaleLogin = false
     private var dataPathRecheckTask: Task<Void, Never>?
@@ -1577,6 +1585,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         dataPathRecheckTask = nil
         let probeID = UUID()
         dataPathProbeID = probeID
+        probeStartedAt = ProcessInfo.processInfo.systemUptime
+        probeCheckpoints.removeAll()
         dataPathProbeIsRecheck = isRecheck
         dataPathProbeStage = nil
         dataPathAwaitingTailscaleLogin = false
@@ -1711,8 +1721,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             self.dataPathProbeTask?.cancel()
             self.dataPathProbeTask = nil
             // 只写「超时」看不出原因：带上到点时停在哪一步。
-            let timeoutSummary = self.dataPathProbeStage.map { "连接验收超时（停在：\($0)）" }
+            self.recordProbeCheckpoint("本轮验收计时到期（限时 \(Self.dataPathWatchdogSeconds)s）")
+            let timeline = self.probeCheckpoints.joined(separator: " → ")
+            let stageSummary = self.dataPathProbeStage.map { "连接验收超时（停在：\($0)）" }
                 ?? "连接验收超时"
+            let timeoutSummary = stageSummary + "；验收经过：" + timeline
             if (Self.keepsTunnelWhenAcceptanceFails || self.dataPathProbeIsRecheck),
                connection.status == .connected {
                 appLog("DataPathProbe: watchdog expired, keeping tunnel: \(timeoutSummary)")
@@ -1945,6 +1958,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let summary: String
         let failureMessage: String
         let logSummary: String
+
+        static let cancelled = ProbeOutcome(
+            isUsable: false, summary: "", failureMessage: "", logSummary: "cancelled"
+        )
     }
 
     private struct OutboundAddressProbeResult: Sendable {
@@ -1958,6 +1975,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         var probeFailures: [String] = []
         // 各线路同时试拨：一条慢线路不再把后面几条和分流测试一起拖进看门狗。
         // 线路探针直接经指定 outbound 出去、不走路由匹配，不影响下面的分流命中计数。
+        recordProbeCheckpoint("开始线路试拨")
         var results: [String: OutboundAddressProbeResult] = [:]
         var pendingLabels = plan.targets.map(\.label)
         if !Task.isCancelled { dataPathProbeStage = Self.lineProbeStage(pendingLabels) }
@@ -1981,9 +1999,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             }
         }
         guard !Task.isCancelled else {
-            return ProbeOutcome(
-                isUsable: false, summary: "", failureMessage: "", logSummary: "cancelled"
-            )
+            return .cancelled
         }
         for target in plan.targets {
             let probe = results[target.tag]
@@ -1996,15 +2012,31 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 }
             }
         }
+        recordProbeCheckpoint("线路试拨成功 \(addresses.count)/\(plan.targets.count)")
+        dataPathProbeStage = "读取测试前分流命中计数"
+        let baseline = await requestRoutingProbeSnapshot()
+        guard !Task.isCancelled else {
+            return .cancelled
+        }
+        recordProbeCheckpoint("测试前计数：" + baseline.detail)
         dataPathProbeStage = "测试分流与域名解析"
-        let routingBefore = await requestRoutingProbeSnapshot()
         let routed = await DataPathProbe.run(
             directLineEgressIP: nil,
             anyConnectLineEgressIP: nil,
             includeSplitTarget: plan.currentRouteTag != nil
         )
-        if !Task.isCancelled { dataPathProbeStage = "读取分流命中计数" }
-        let routingAfter = await requestRoutingProbeSnapshot()
+        guard !Task.isCancelled else {
+            return .cancelled
+        }
+        let direct = routed.routedDirectEgressIP == nil ? "未取得出口" : "取得出口"
+        let current = plan.currentRouteTag == nil ? "跳过"
+            : (routed.routedAnyConnectEgressIP == nil ? "未取得出口" : "取得出口")
+        recordProbeCheckpoint("直连测试 \(direct)，当前线路测试 \(current)，域名请求\(routed.hostnameOK ? "成功" : "失败")")
+        dataPathProbeStage = "读取测试后分流命中计数"
+        let final = await requestRoutingProbeSnapshot()
+        guard !Task.isCancelled else { return .cancelled }
+        let routingBefore = baseline.snapshot
+        let routingAfter = final.snapshot
         let routingEvidenceOK = routingBefore.flatMap { before in
             routingAfter.map {
                 if let currentRouteTag = plan.currentRouteTag {
@@ -2036,6 +2068,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         if !routingEvidenceOK {
             // 「路由命中未通过」时把依据写出来：两个测试地址各被记到几次、走的哪条线路，
             // 以及测试请求有没有收到回应。否则只凭「未通过」三个字分不出是没记到还是走错了。
+            recordProbeCheckpoint("测试后计数：" + final.detail)
+            failureDetails += "；验收经过：" + probeCheckpoints.joined(separator: " → ")
             failureDetails += routingHitDetail(
                 before: routingBefore,
                 after: routingAfter,
@@ -2172,30 +2206,49 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
     }
 
-    private func requestRoutingProbeSnapshot() async -> RoutingProbeSnapshot? {
-        guard let session = providerSession else { return nil }
+    enum SnapshotRead: Sendable {
+        case success(RoutingProbeSnapshot)
+        case failure(String)
+
+        var snapshot: RoutingProbeSnapshot? {
+            if case let .success(value) = self { return value }
+            return nil
+        }
+
+        var detail: String {
+            if case let .failure(reason) = self { return reason }
+            return "已读取"
+        }
+
+        static func decode(_ data: Data?) -> Self {
+            guard let data else { return .failure("扩展返回空回包") }
+            guard let response = try? JSONDecoder().decode(DaemonResponse.self, from: data)
+            else { return .failure("扩展回包格式异常") }
+            guard let ok = response.ok else { return .failure("扩展回包缺少状态") }
+            guard ok else { return .failure("扩展报告读取失败") }
+            guard let raw = response.data,
+                  let snapshot = try? JSONDecoder().decode(RoutingProbeSnapshot.self, from: Data(raw.utf8))
+            else { return .failure("计数数据格式异常") }
+            return .success(snapshot)
+        }
+    }
+
+    private func requestRoutingProbeSnapshot() async -> SnapshotRead {
+        guard let session = providerSession else { return .failure("扩展会话不可用") }
         let request = Data("{\"cmd\":\"routing-probe-snapshot\"}".utf8)
-        let raw: String? = await withCheckedContinuation { continuation in
-            let oneShot = OneShotContinuation<String?>(continuation)
+        return await withCheckedContinuation { continuation in
+            let oneShot = OneShotContinuation<SnapshotRead>(continuation)
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
-                oneShot.finish(nil)
+                oneShot.finish(.failure("3 秒内未收到计数回包"))
             }
             do {
                 try session.sendProviderMessage(request) { responseData in
-                    guard let responseData,
-                          let response = try? JSONDecoder().decode(DaemonResponse.self, from: responseData),
-                          response.ok == true else {
-                        oneShot.finish(nil)
-                        return
-                    }
-                    oneShot.finish(response.data)
+                    oneShot.finish(.decode(responseData))
                 }
             } catch {
-                oneShot.finish(nil)
+                oneShot.finish(.failure("计数请求发送失败"))
             }
         }
-        guard let raw, let data = raw.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(RoutingProbeSnapshot.self, from: data)
     }
 
     private func requestProviderDiagnostics(

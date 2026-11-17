@@ -159,6 +159,11 @@ type transparentProxyIngress struct {
 	// A compiler-owned acquisition capability reuses exact-Line DNS policy,
 	// but has no listener and receives Android's OS-selected network via callbacks.
 	androidResource bool
+	// Apple resource sessions run where XDial capture cannot see their sockets
+	// (the app with no transaction, or the transparent-proxy Provider). They
+	// keep the OS's complete Underlay routing: auto_detect_interface would skip
+	// a gateway-less utun default route and bypass an external VPN.
+	osRoutedResource bool
 	// Native desktop ingress has no SOCKS listener/metadata credentials. Its
 	// compiler lowers application selectors to sing-box OS process predicates.
 	nativeFlow bool
@@ -723,6 +728,8 @@ func generateSingBox(
 	if platform == PlatformTransparentProxy && transparentIngress.nativeFlow {
 		// Linux bypass-mark sockets retain the kernel's complete destination-
 		// specific Underlay routing, rather than binding all destinations to one NIC.
+	} else if platform == PlatformTransparentProxy && transparentIngress.androidResource && transparentIngress.osRoutedResource {
+		// The OS routing table selects the Underlay for every destination.
 	} else if platform == PlatformTransparentProxy && transparentIngress.androidResource {
 		route["auto_detect_interface"] = true
 	} else if platform == PlatformMacOS || platform == PlatformTransparentProxy {

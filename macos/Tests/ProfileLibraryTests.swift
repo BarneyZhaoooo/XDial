@@ -54,20 +54,20 @@ final class ProfileLibraryTests: XCTestCase {
         XCTAssertEqual(try updated(fresh).load(), library)
     }
 
-    func testExplicitAcquisitionLineSurvivesRoundTripAndCannotFallBack() throws {
+    func testExplicitAcquisitionLineSurvivesRoundTrip() throws {
         let legacy = ProfileSource(url: "https://example.com/config")
-        XCTAssertNoThrow(try legacy.validateLegacyAcquisition())
-        for line in ["direct", "proxy-fixture"] {
+        XCTAssertTrue(legacy.usesDirectAcquisition)
+        for (line, direct) in [("direct", true), ("proxy-fixture", false)] {
             var source = legacy
             source.fetchLineID = line
             let restored = try JSONDecoder().decode(ProfileSource.self, from: JSONEncoder().encode(source))
             XCTAssertEqual(restored.fetchLineID, line)
-            XCTAssertThrowsError(try restored.validateLegacyAcquisition())
+            XCTAssertEqual(restored.usesDirectAcquisition, direct)
         }
         let oldJSON = #"{"url":"https://example.com/config","nodesOnly":false,"format":"auto","refreshInterval":86400}"#
         let restored = try JSONDecoder().decode(ProfileSource.self, from: Data(oldJSON.utf8))
         XCTAssertNil(restored.fetchLineID)
-        XCTAssertNoThrow(try restored.validateLegacyAcquisition())
+        XCTAssertTrue(restored.usesDirectAcquisition)
     }
 
     func testWriterMustHoldSharedFileLock() throws {

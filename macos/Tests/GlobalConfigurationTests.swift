@@ -85,6 +85,26 @@ final class GlobalConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try library.removingProfile("source-b"))
     }
 
+    func testSubscriptionFetchLineIsAProtectedDependency() throws {
+        var library = try legacy([source(), source("source-b")]).validated()
+        let fetchLine = library.profiles[1].profile.lines.first { $0.type == "trojan" }!.id
+        library.profiles[0].source?.fetchLineID = fetchLine
+        try library.validateReferences()
+        var dropped = library
+        dropped.profiles[1].profile.lines.removeAll { $0.id == fetchLine }
+        dropped.groups = dropped.groups.map { group in
+            var group = group
+            group.groupMembers.removeAll { $0 == fetchLine }
+            if group.groupDefault == fetchLine { group.groupDefault = group.groupMembers.first ?? "" }
+            return group
+        }
+        XCTAssertThrowsError(try dropped.validateReferences(allowEmptyGroups: true)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("获取线路"), error.localizedDescription)
+        }
+        dropped.profiles[0].source?.fetchLineID = "direct"
+        XCTAssertNoThrow(try dropped.validateReferences(allowEmptyGroups: true))
+    }
+
     func testRefreshPreservesEntireSceneChoiceProbeAndManualMembers() throws {
         var library = try legacy([source()]).validated()
         library.profiles[0].profile.lines.append(Line(id: "manual", name: "Manual", type: "trojan"))

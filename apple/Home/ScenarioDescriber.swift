@@ -25,8 +25,13 @@ enum ScenarioDescriber {
                     isChinese: isChinese
                   ),
                   bound.key != defaultTarget?.key else { continue }
-            let name = rule.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            var name = rule.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
+            #if os(macOS)
+            if !binding.conditionIDs.isEmpty {
+                name += isChinese ? "（部分匹配）" : " (partial match)"
+            }
+            #endif
             if let index = groups.firstIndex(where: { $0.target.key == bound.key }) {
                 groups[index].rules.append(name)
             } else {
