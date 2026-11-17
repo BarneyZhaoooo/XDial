@@ -782,6 +782,14 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
     }
 
+    func directCountry(transactionID: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            sendProviderDiagnostics(.init(cmd: .probeDirectCountry, transactionID: transactionID), timeout: 7) { result in
+                continuation.resume(returning: (try? result.get())?.directCountry)
+            }
+        }
+    }
+
     func probeLineOutboundAddress(
         transactionID: String,
         lineID: String,

@@ -46,7 +46,7 @@ ACCEPTANCE_FEED_PREFIX = "https://xindong.github.io/xdial-updates/"
 ACCEPTANCE_ARCHIVES = "https://github.com/xindong/xdial-updates/releases/download"
 # What a Release build embeds for a preset configuration package
 # (macos/project.yml); the beta contract rejects a bundle that carries either.
-PRIVATE_CONFIGURATION_VARIABLES = ("XDIAL_RULE_SET_PRESETS_FILE", "XDIAL_SEED_PROFILE_FILE")
+PRIVATE_CONFIGURATION_VARIABLES = ("XDIAL_RULE_SET_PRESETS_FILE", "XDIAL_SEED_PROFILE_FILE", "XDIAL_IOS_PRIVATE_CONFIG_DIR")
 PRIVATE_CONFIGURATION_PATH = "macos/PrivateConfig"
 # The preference behind "接收 beta 版本"; a client without it cannot open step 1.
 BETA_SWITCH_KEY = "xdial.update.channel"
@@ -144,7 +144,7 @@ def private_configuration(commits: list, environment: dict) -> list:
     found = [f"${name}" for name in PRIVATE_CONFIGURATION_VARIABLES if environment.get(name)]
     for commit in dict.fromkeys(commits):
         found += git("ls-tree", "-r", "--name-only", commit, "--",
-                     PRIVATE_CONFIGURATION_PATH).splitlines()
+                     PRIVATE_CONFIGURATION_PATH, "ios/PrivateConfig").splitlines()
     return found
 
 

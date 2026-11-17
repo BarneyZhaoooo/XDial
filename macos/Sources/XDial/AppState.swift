@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import Network
 import Libbox
 import ServiceManagement
 import SwiftUI
@@ -33,8 +34,87 @@ final class AppState: ObservableObject {
     @Published private(set) var wifiSSIDAccessState:
         WiFiSSIDAccessState = .checking
 
+    var regionScenarioTargets: [String: String] = [:]
+    @Published private(set) var exitCountry: String?
+    @Published private(set) var surveyingRegion = false
+    private let scenarioPathMonitor = NWPathMonitor()
+    private var scenarioSwitchGuard = ScenarioAutoSwitchGuard()
+    private var currentScenarioNetwork: String {
+        ScenarioNetworkIdentity.key(path: scenarioPathSignature, ssid: currentSSID)
+    }
+    private var regionSurveyStatus: String?
+    private var scenarioPathSignature: String?
+    private var regionSurvey: Task<Void, Never>?
+    @Published var automaticScenario = xdialDefaults.object(forKey: "xdial.auto-scenario") as? Bool ?? true {
+        didSet {
+            guard oldValue != automaticScenario else { return }
+            xdialDefaults.set(automaticScenario, forKey: "xdial.auto-scenario")
+            supersedeAutomaticScenarioSwitchForNewEpoch()
+            cancelNetworkEpochQuietWindow()
+            refreshRegionSelection()
+            if automaticScenario { activateScenarioForCurrentSSIDIfNeeded(forceMatching: true) }
+        }
+    }
+
+    func refreshAutomaticScenario() {
+        refreshRegionSelection()
+        activateScenarioForCurrentSSIDIfNeeded(forceMatching: true)
+    }
+
+    private func observeScenarioPath() {
+        guard !regionScenarioTargets.isEmpty else { return }
+        scenarioPathMonitor.pathUpdateHandler = { [weak self] path in
+            let physical = path.availableInterfaces.filter { [.wifi, .wiredEthernet, .cellular].contains($0.type) }
+            let signature = "\(path.status) \(physical.map(\.name).sorted()) \(path.gateways)"
+            Task { @MainActor [weak self] in
+                guard let self, self.scenarioPathSignature != signature else { return }
+                self.scenarioPathSignature = signature
+                self.refreshRegionSelection()
+            }
+        }
+        scenarioPathMonitor.start(queue: DispatchQueue(label: "xdial.scenario-path"))
+    }
+
+    private func refreshRegionSelection() {
+        regionSurvey?.cancel()
+        exitCountry = nil
+        surveyingRegion = false
+        guard automaticScenario, !regionScenarioTargets.isEmpty,
+              currentSSID.flatMap({ profile.scenario(matchingSSID: $0) }) == nil else { return }
+        surveyingRegion = true
+        regionSurvey = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
+            let code: String?
+            guard initialStatusSynchronized else {
+                surveyingRegion = false
+                return
+            }
+            if let transaction = TransparentProxyManager.shared.committedProviderTransactionID {
+                code = await TransparentProxyManager.shared.directCountry(transactionID: transaction)
+            } else if engine.status == "disconnected" {
+                code = await UnderlayCountryLookup.lookup().code
+            } else {
+                code = nil
+            }
+            guard !Task.isCancelled else { return }
+            surveyingRegion = false
+            exitCountry = code
+            activateScenarioForCurrentSSIDIfNeeded()
+            runLaunchAutoConnectIfNeeded()
+        }
+    }
+
+    private func regionMatch() -> String? {
+        guard automaticScenario,
+              let target = ScenarioAutoDecision.regionPick(countryCode: exitCountry, regionScenarios: regionScenarioTargets,
+                                                            scenarioIDs: profile.scenarios.map(\.id))?.scenarioID,
+              scenarioSwitchGuard.mayAutoSwitch(to: target, network: currentScenarioNetwork) else { return nil }
+        return target
+    }
+
     var requiresSSIDAccess: Bool {
-        profile.usesSSIDScenarioMatching
+        automaticScenario && profile.usesSSIDScenarioMatching
     }
 
     @Published var helperInstalled: Bool = false
@@ -619,6 +699,10 @@ final class AppState: ObservableObject {
                     guard let self else { return }
                     let status = self.engine.status
                     let report = self.engine.connectionReport
+                    if self.initialStatusSynchronized, self.regionSurveyStatus != status {
+                        self.regionSurveyStatus = status
+                        self.refreshRegionSelection()
+                    }
                     if self.initialStatusSynchronized {
                         self.synchronizeConnectionDesiredState(
                             runtimeStatus: status,
@@ -681,6 +765,7 @@ final class AppState: ObservableObject {
         // 启动时只读取授权状态。位置授权弹窗必须由安装窗口或设置页中
         // 可见、前台的用户动作触发，不能在菜单栏进程初始化时裸请求。
         wifiSSIDMonitor.start()
+        observeScenarioPath()
         configurationChanges.load(
             runtimeConfigurationSignature()
         )
@@ -704,6 +789,7 @@ final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.initialStatusSynchronized = true
+                self.refreshRegionSelection()
                 self.synchronizeConnectionDesiredState(
                     runtimeStatus: self.engine.status,
                     report: self.engine.connectionReport
@@ -959,7 +1045,7 @@ final class AppState: ObservableObject {
             runtimeStatus: engine.status,
             report: engine.connectionReport
         )
-        guard launchAutoConnectPending else { return }
+        guard launchAutoConnectPending, !surveyingRegion || updateRelaunchDecision != nil else { return }
 
         if AutomaticConnectionPolicy.holdsConnectionIntent(
             runtimeStatus: engine.status
@@ -1487,7 +1573,7 @@ final class AppState: ObservableObject {
         cancelNetworkEpochQuietWindow()
         _ = enqueueScenarioSwitch(
             to: activeScenario.id,
-            requiresUnderlayRefresh: true
+            requiresUnderlayRefresh: false
         )
     }
 
@@ -1500,8 +1586,12 @@ final class AppState: ObservableObject {
             connectScenario(id)
         } else {
             ssidScenarioSelection.noteManualSelection()
-            // An idle selection supersedes any parked recovery and its old target.
-            disconnect()
+            // Cancel parked recovery, but an ordinary idle selection has no
+            // connection lifecycle to stop.
+            if connectionDesired.wantsConnection || engine.isAutomaticRecoveryParked {
+                disconnect()
+            }
+            launchAutoConnectPending = false
             _ = persistActiveScenario(id)
         }
     }
@@ -1753,6 +1843,9 @@ final class AppState: ObservableObject {
                 )
                 configDirtyFlag = configurationChanges.isDirty
                 if let automaticIntent = inFlight.automaticIntent {
+                    if inFlight.sourceScenarioID != targetScenarioID {
+                        scenarioSwitchGuard.note(from: inFlight.sourceScenarioID, to: targetScenarioID, network: currentScenarioNetwork)
+                    }
                     finishAutomaticScenarioSwitchIntent(
                         automaticIntent,
                         outcome: .succeeded
@@ -1781,24 +1874,6 @@ final class AppState: ObservableObject {
                 }
             }
         case let .failure(error):
-            if !cancellationWasRequested,
-               scenarioSwitchGeneration == generation,
-               ScenarioSwitchFailureCode.requiresFullReconnect(
-                   (error as? ProviderScenarioSwitchRejectedError)?.code
-               ) {
-                if let automaticIntent = inFlight.automaticIntent {
-                    finishAutomaticScenarioSwitchIntent(
-                        automaticIntent,
-                        outcome: .succeeded
-                    )
-                }
-                reconnectFully(
-                    to: targetScenarioID,
-                    profileID: inFlight.targetProfileID,
-                    reason: (error as? ProviderScenarioSwitchRejectedError)?.code ?? ""
-                )
-                return
-            }
             // The Provider contract guarantees that a failed/aborted staged
             // switch leaves the source transaction committed. Do not persist
             // the target Scenario or replace the source report.
@@ -1869,24 +1944,6 @@ final class AppState: ObservableObject {
             return
         }
         driveScenarioSwitchIfPossible()
-    }
-
-    /// 无法保留旧连接的切换：放弃 Switch，断开旧连接后完整连接目标场景。
-    /// 中间会短暂断网，这是用户（或其 Wi-Fi 规则）选择目标场景的代价。
-    private func reconnectFully(
-        to targetScenarioID: String,
-        profileID: String,
-        reason: String
-    ) {
-        scenarioSwitchTargetID = nil
-        scenarioSwitchTargetProfileID = nil
-        scenarioSwitchRequiresUnderlayRefresh = false
-        engine.lastError = nil
-        profileLibrary.activeProfileID = profileID
-        profile = profileLibrary.runtimeRecord.profile
-        guard persistActiveScenario(targetScenarioID) else { return }
-        appLog("Scenario switch to \(targetScenarioID) needs a full reconnect: \(reason)")
-        connect()
     }
 
     /// An automatic network epoch's Switch finally failed, so the committed
@@ -2161,6 +2218,7 @@ final class AppState: ObservableObject {
             )
             installation.present()
         }
+        refreshRegionSelection()
         activateScenarioForCurrentSSIDIfNeeded()
     }
 
@@ -2193,12 +2251,12 @@ final class AppState: ObservableObject {
             == .evaluateCurrentPath else {
             return
         }
-        guard wifiSSIDAccessState == .ready else { return }
+        guard automaticScenario else { return }
         let rawMatch = currentSSID.flatMap {
             profile.scenario(matchingSSID: $0)?.id
         }
         if let activeIntent = activeNetworkEpochScenarioSwitchIntent,
-           rawMatch != activeIntent.desiredScenarioID {
+           (rawMatch ?? regionMatch()) != activeIntent.desiredScenarioID {
             supersedeAutomaticScenarioSwitchForNewEpoch()
         }
         let currentDesiredScenarioID = scenarioSwitchTargetID
@@ -2207,19 +2265,25 @@ final class AppState: ObservableObject {
             ?? profile.activeScenarioID
         // Behind the sleep gate: a Wi-Fi drop during sleep is a power
         // lifecycle boundary, not the user leaving that Wi-Fi.
-        let matchedScenarioID = ssidScenarioSelection.observe(
+        let wifiMatch = ssidScenarioSelection.observe(
             ssid: currentSSID,
             link: currentWiFiLink,
             matchedScenarioID: rawMatch,
             forceMatching: forceMatching
         )
+        let matchedScenarioID = rawMatch == nil ? regionMatch() : wifiMatch
+        if engine.status == "disconnected", !automaticScenarioChangeKeepsConnection,
+           let target = matchedScenarioID, target != profile.activeScenarioID {
+            _ = persistActiveScenario(target)
+            return
+        }
         recordSSIDSelectionReason(
             ssid: currentSSID,
             link: currentWiFiLink,
             rawMatch: rawMatch,
             allowedMatch: matchedScenarioID
         )
-        if rawMatch == nil, currentSSID != nil {
+        if rawMatch == nil, matchedScenarioID == nil, currentSSID != nil {
             supersedeAutomaticScenarioSwitchForNewEpoch()
             networkEpochSwitchCoordinator.noteUnmatchedSSID()
         }
@@ -2353,12 +2417,12 @@ final class AppState: ObservableObject {
                     self.currentSSID = wifi.ssid
                     self.currentWiFiLink = wifi.link
                     self.wifiSSIDAccessState = wifi.accessState
-                    let rawMatch = wifi.ssid.flatMap {
+                    let rawMatch = self.automaticScenario ? wifi.ssid.flatMap {
                         self.profile.scenario(matchingSSID: $0)?.id
-                    }
+                    } : nil
                     if let activeIntent = self
                         .activeNetworkEpochScenarioSwitchIntent,
-                       rawMatch != activeIntent.desiredScenarioID {
+                       (rawMatch ?? self.regionMatch()) != activeIntent.desiredScenarioID {
                         self.supersedeAutomaticScenarioSwitchForNewEpoch()
                     }
                     let currentDesiredScenarioID =
@@ -2366,18 +2430,19 @@ final class AppState: ObservableObject {
                         ?? self.connectionDesired.scenarioID
                         ?? self.engine.connectionReport?.scenario.id
                         ?? self.profile.activeScenarioID
-                    let matchedScenarioID = self.ssidScenarioSelection.observe(
+                    let wifiMatch = self.ssidScenarioSelection.observe(
                         ssid: wifi.ssid,
                         link: wifi.link,
                         matchedScenarioID: rawMatch
                     )
+                    let matchedScenarioID = rawMatch == nil ? self.regionMatch() : wifiMatch
                     self.recordSSIDSelectionReason(
                         ssid: wifi.ssid,
                         link: wifi.link,
                         rawMatch: rawMatch,
                         allowedMatch: matchedScenarioID
                     )
-                    if rawMatch == nil, wifi.ssid != nil {
+                    if rawMatch == nil, matchedScenarioID == nil, wifi.ssid != nil {
                         self.supersedeAutomaticScenarioSwitchForNewEpoch()
                         self.networkEpochSwitchCoordinator
                             .noteUnmatchedSSID()
@@ -2780,18 +2845,13 @@ final class AppState: ObservableObject {
         // 先把所有 ASCII 字段做一次全角→半角清洗（兜底）
         for i in normalized.lines.indices {
             normalized.lines[i].vpnServer = normalized.lines[i].vpnServer.normalizedASCII()
-            normalized.lines[i].vpnUsername = normalized.lines[i].vpnUsername.normalizedASCII()
-            normalized.lines[i].vpnPassword = normalized.lines[i].vpnPassword.normalizedASCII()
             normalized.lines[i].trojanServer = normalized.lines[i].trojanServer.normalizedASCII()
-            normalized.lines[i].trojanPassword = normalized.lines[i].trojanPassword.normalizedASCII()
             normalized.lines[i].trojanSNI = normalized.lines[i].trojanSNI.normalizedASCII()
             normalized.lines[i].ssServer = normalized.lines[i].ssServer.normalizedASCII()
             normalized.lines[i].ssMethod = normalized.lines[i].ssMethod.normalizedASCII()
-            normalized.lines[i].ssPassword = normalized.lines[i].ssPassword.normalizedASCII()
             normalized.lines[i].vmessServer = normalized.lines[i].vmessServer.normalizedASCII()
             normalized.lines[i].vmessUUID = normalized.lines[i].vmessUUID.normalizedASCII()
             normalized.lines[i].anytlsServer = normalized.lines[i].anytlsServer.normalizedASCII()
-            normalized.lines[i].anytlsPassword = normalized.lines[i].anytlsPassword.normalizedASCII()
             normalized.lines[i].anytlsSNI = normalized.lines[i].anytlsSNI.normalizedASCII()
         }
         for i in normalized.ruleSets.indices {

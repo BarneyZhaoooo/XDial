@@ -384,6 +384,22 @@ final class HomeViewUITests: XCTestCase {
         }
     }
 
+    func testHomeAccountProvidesNativeCredentialFields() {
+        let app = launchApp(extraArguments: ["-XDialUITestingIncompleteLine"])
+        let account = app.buttons["home-account"]
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        account.tap()
+        let username = app.textFields["sign-in-username"]
+        let password = app.secureTextFields["sign-in-password"]
+        XCTAssertTrue(username.waitForExistence(timeout: 3))
+        XCTAssertTrue(password.exists)
+        username.tap()
+        username.typeText("fixture")
+        password.tap()
+        password.typeText("fixture-secret")
+        XCTAssertGreaterThan(secureValueLength(password), 0)
+    }
+
     func testAnyConnectCredentialsPersistAfterSaveAndRestart() {
         let app = launchApp()
         openAnyConnectEditor(in: app)

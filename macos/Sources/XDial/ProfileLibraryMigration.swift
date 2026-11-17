@@ -46,13 +46,17 @@ enum ProfileLibraryMigration {
         return try library(with: ProfileRecord(id: id, name: "默认配置", profile: convertProfile(original, id)))
     }
 
+    static func starterLibrary() throws -> ProfileLibrary {
+        try library(with: ProfileRecord(name: "默认配置", profile: .bootstrap()))
+    }
+
     /// An empty library is created from the seed as is: its Scenarios keep their own names.
     static func seedLibrary(
         _ seed: SeedProfile?,
+        id: String = UUID().uuidString.lowercased(),
         importDocument: (String, String) throws -> Profile
     ) throws -> ProfileLibrary? {
         guard let seed else { return nil }
-        let id = UUID().uuidString.lowercased()
         let imported = try importDocument(seed.text, id)
         return try library(with: ProfileRecord(id: id, name: seed.name, profile: imported, baseline: imported))
     }
@@ -71,6 +75,47 @@ enum ProfileLibraryMigration {
         try result.insert(ProfileRecord(id: id, name: name, profile: imported, baseline: imported))
         result.editingProfileID = library.editingProfileID
         return result
+    }
+
+    /// Apply one mobile seed revision using the existing global resource owners.
+    /// Existing routes, credentials and the selected Scenario are user choices.
+    static func addingMobileSeed(_ incoming: Profile, named name: String, id: String,
+                                 to original: ProfileLibrary) throws -> ProfileLibrary {
+        var library = original
+        if !library.profiles.contains(where: { $0.id == id }) {
+            library.profiles.append(ProfileRecord(id: id, name: name, profile: Profile()))
+        }
+        var draft = library.snapshot()
+        var lineIDs: [String: String] = [:]
+        for line in incoming.lines where line.type == "vpn" && !line.vpnServer.isEmpty {
+            if !draft.lines.contains(where: { $0.id == line.id }),
+               let saved = draft.lines.first(where: { $0.enabled && $0.type == "vpn" &&
+                   $0.vpnServer.caseInsensitiveCompare(line.vpnServer) == .orderedSame }) {
+                lineIDs[line.id] = saved.id
+            }
+        }
+        let seed = ProfileLibrary.remap(incoming, using: lineIDs)
+        for line in seed.lines where !draft.lines.contains(where: { $0.id == line.id }) {
+            draft.lines.append(line)
+        }
+        for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
+            draft.ruleSets.append(rule)
+        }
+        var claimed = Set(draft.scenarios.flatMap(\.matchSSIDs))
+        for var scene in seed.scenarios where !draft.scenarios.contains(where: { $0.id == scene.id }) {
+            scene.matchSSIDs.removeAll { !claimed.insert($0).inserted }
+            draft.scenarios.append(scene)
+            library.scenarioSources[scene.id] = id
+        }
+        let order = Set(seed.scenarios.map(\.id))
+        draft.scenarios = seed.scenarios.compactMap { source in draft.scenarios.first { $0.id == source.id } }
+            + draft.scenarios.filter { !order.contains($0.id) }
+        if draft.activeScenarioID.isEmpty { draft.activeScenarioID = seed.activeScenarioID }
+        library.applyDraft(draft, editingProfileID: id)
+        if let index = library.profiles.firstIndex(where: { $0.id == id }) {
+            library.profiles[index].baseline = seed
+        }
+        return try library.validated()
     }
 
     /// A newer seed overwrites the content it owns, like a subscription refresh, but
@@ -144,8 +189,19 @@ struct SeedProfile: Equatable {
     let name: String
     let text: String
 
+    var revision: Int?
+    var sourceScenarioIDs: [String] = []
+    var regions: [String: String] = [:]
+
+    func regionTargets(in imported: Profile) -> [String: String] {
+        guard sourceScenarioIDs.count == imported.scenarios.count else { return [:] }
+        let ids = Dictionary(uniqueKeysWithValues: zip(sourceScenarioIDs, imported.scenarios.map(\.id)))
+        return regions.compactMapValues { ids[$0] }
+    }
+
     var digest: String {
-        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        if let revision { return "mobile-v1-\(revision)" }
+        return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     static func load(
@@ -161,6 +217,32 @@ struct SeedProfile: Equatable {
         let name = file.deletingPathExtension().lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         guard data.count <= 4 * 1024 * 1024, let text = String(data: data, encoding: .utf8), !name.isEmpty else {
             throw ProfileLibraryError.invalid("预置配置必须为有名称的 UTF-8 文本，且不能超过 4 MiB")
+        }
+        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           root["format"] as? String == "xdial-mobile-seed" {
+            guard root["schema_version"] as? Int == 1, (root["revision"] as? Int ?? 0) > 0,
+                  let object = root["profile"] as? [String: Any],
+                  let scenarios = object["scenarios"] as? [[String: Any]] else {
+                throw ProfileLibraryError.invalid("无效的预置场景")
+            }
+            let ids = scenarios.compactMap { $0["id"] as? String }
+            let regions: [String: String]
+            if let raw = root["region_scenarios"] {
+                guard let entries = raw as? [String: String] else { throw ProfileLibraryError.invalid("无效的地区对应表") }
+                var normalized: [String: String] = [:]
+                for (key, id) in entries {
+                    let code = key.trimmingCharacters(in: .whitespaces).uppercased()
+                    guard normalized.updateValue(id, forKey: code) == nil else { throw ProfileLibraryError.invalid("重复的地区") }
+                }
+                regions = normalized
+            } else { regions = [:] }
+            guard ids.count == scenarios.count, ids.allSatisfy({ !$0.isEmpty }), Set(ids).count == ids.count,
+                  regions.allSatisfy({ (key, id) in
+                      (key == "*" || (key.count == 2 && key.allSatisfy { $0.isASCII && $0.isLetter })) && ids.contains(id)
+                  }) else { throw ProfileLibraryError.invalid("无效的地区与场景对应表") }
+            let profile = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            return SeedProfile(name: name, text: String(decoding: profile, as: UTF8.self),
+                               revision: root["revision"] as? Int, sourceScenarioIDs: ids, regions: regions)
         }
         return SeedProfile(name: name, text: text)
     }

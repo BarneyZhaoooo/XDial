@@ -1055,8 +1055,8 @@ extension Profile {
 }
 
 extension Profile {
-    /// Current edited leaves for testing, so a changed child cannot borrow an old runtime measurement.
-    func latencyTestLines(for roots: [Line]) -> [Line] {
+    /// Resolve each leaf once in the current catalog, including nested groups.
+    func leafLines(for roots: [Line]) -> [Line] {
         let catalog = Dictionary(lines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var seen: Set<String> = []
         var result: [Line] = []

@@ -87,7 +87,7 @@ extension AppState {
                 seeded = try ProfileLibraryMigration.seedLibrary(seed) {
                     try ProfileDocumentService.importDocument($0, profileID: $1)
                 }
-                return seeded
+                return try seeded ?? ProfileLibraryMigration.starterLibrary()
             }
             profileLibrary = loaded
             profile = loaded.snapshot()
@@ -102,6 +102,28 @@ extension AppState {
         }
     }
 
+    func restoreDefaultConfiguration() {
+        guard engine.status == "disconnected", !isBusy, profileLibraryLoaded else { return }
+        do {
+            let seed = try SeedProfile.load()
+            let ledger = try SeedProfileLedger.load()
+            let id = seed.flatMap { ledger.entries[$0.name]?.profileID } ?? UUID().uuidString.lowercased()
+            let fresh = try ProfileLibraryMigration.seedLibrary(seed, id: id) {
+                try ProfileDocumentService.importDocument($0, profileID: $1)
+            } ?? ProfileLibraryMigration.starterLibrary()
+            try profileLibraryStore.save(fresh)
+            profileLibrary = fresh
+            profile = fresh.snapshot()
+            browsedProfileID = fresh.activeProfileID
+            profilePersistenceError = nil
+            profileOperationError = nil
+            regionScenarioTargets = [:]
+            if let seed { applySeedProfile(seed, createdProfileID: id) }
+            automaticScenario = true
+            refreshAutomaticScenario()
+        } catch { profileOperationError = error.localizedDescription }
+    }
+
     /// The seed joins the shared library once and later builds overwrite what it owns.
     /// A seed Profile the user deleted is not added again.
     private func applySeedProfile(_ seed: SeedProfile, createdProfileID: String?) {
@@ -109,18 +131,24 @@ extension AppState {
         do { ledger = try SeedProfileLedger.load() }
         catch { profileOperationError = "无法读取预置配置记录：\(error.localizedDescription)"; return }
         let entry = ledger.entries[seed.name]
-        guard entry?.digest != seed.digest else { return }
+
         let profileID = createdProfileID ?? entry?.profileID ?? UUID().uuidString.lowercased()
+        if !seed.regions.isEmpty,
+           let imported = try? ProfileDocumentService.importDocument(seed.text, profileID: profileID) {
+            regionScenarioTargets = seed.regionTargets(in: imported)
+        }
+        guard entry?.digest != seed.digest else { return }
         if createdProfileID == nil {
             let original = profileLibrary
             do {
-                if entry != nil {
-                    guard original.profiles.contains(where: { $0.id == profileID }) else { return }
-                    let incoming = try ProfileDocumentService.importDocument(seed.text, profileID: profileID)
+                if entry != nil && !original.profiles.contains(where: { $0.id == profileID }) { return }
+                let incoming = try ProfileDocumentService.importDocument(seed.text, profileID: profileID)
+                if seed.revision != nil {
+                    profileLibrary = try ProfileLibraryMigration.addingMobileSeed(incoming, named: seed.name, id: profileID, to: original)
+                } else if entry != nil {
                     profileLibrary = try ProfileLibraryMigration.refreshingSeed(incoming, profileID: profileID,
                                                                                 named: seed.name, in: original)
                 } else {
-                    let incoming = try ProfileDocumentService.importDocument(seed.text, profileID: profileID)
                     profileLibrary = try ProfileLibraryMigration.merging(incoming, named: seed.name, id: profileID, into: original)
                 }
             } catch {

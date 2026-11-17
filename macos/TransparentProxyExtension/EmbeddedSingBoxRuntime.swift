@@ -338,6 +338,7 @@ final class EmbeddedSingBoxRuntime {
     private var observedNetworkSnapshot: InterfaceSnapshot?
     private var observedNetworkEpochID: String?
     private var backgroundCancellation: ConnectionCancellation?
+    private let acquisitionLock = NSLock()
     private var acquisitionEngine: LibboxLibbox?
     private struct PreparedSwitchState {
         let id: UUID
@@ -719,12 +720,22 @@ final class EmbeddedSingBoxRuntime {
             networkSnapshot: networkSnapshot,
             directIPv6Available: directIPv6Available
         )
-        // A cold URL RuleSet acquisition may own a process-singleton Line.
-        // Until that acquisition can borrow the active capability, starting a
-        // second helper session would violate D30/D38. Keep the committed
-        // generation live and report this candidate as unsupported instead.
-        guard (bootstrap.preflightSessions ?? []).isEmpty else {
-            throw RuntimeError.switchRuleSetPreflightUnavailable
+        for session in bootstrap.preflightSessions ?? [] {
+            try checkCancellation(cancellation)
+            if session.lineID == "direct" && sourceSession.networkEpochID == networkEpochID {
+                for refresh in session.refreshes {
+                    try checkCancellation(cancellation)
+                    try instance.refreshRuleSet(encodedRuleSetRefreshRequest(refresh))
+                }
+            } else {
+                // Isolated fetches may coexist with the active Box, except for
+                // adapters that own process-wide protocol state.
+                guard session.anyConnect == nil, session.tailscale == nil else {
+                    throw RuntimeError.switchRuleSetPreflightUnavailable
+                }
+                try runRuleSetAcquisitionSession(session, networkSnapshot: networkSnapshot,
+                                                 reporter: reporter, cancellation: cancellation)
+            }
         }
 
         let preparationCallback = PreparationCallback(reporter: reporter)
@@ -1245,7 +1256,8 @@ final class EmbeddedSingBoxRuntime {
         basePath: URL,
         port: UInt16,
         networkSnapshot: InterfaceSnapshot,
-        directIPv6Available: Bool
+        directIPv6Available: Bool,
+        useBundledRules: Bool = true
     ) throws -> RuleSetBootstrapEnvelope {
         var generationError: NSError?
         let username = UUID().uuidString
@@ -1280,7 +1292,39 @@ final class EmbeddedSingBoxRuntime {
         else {
             throw RuntimeError.invalidSessionEnvelope
         }
+        if useBundledRules, installBundledRules(for: bootstrap, basePath: basePath) {
+            // Re-run the Go cache validator and freshness policy on the signed copies.
+            return try generateRuleSetBootstrap(profileJSON: profileJSON, basePath: basePath, port: port,
+                                                networkSnapshot: networkSnapshot, directIPv6Available: directIPv6Available,
+                                                useBundledRules: false)
+        }
         return bootstrap
+    }
+
+    private func installBundledRules(for bootstrap: RuleSetBootstrapEnvelope, basePath: URL) -> Bool {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("SeedProfile/RuleSets"),
+              let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
+              let files = try? JSONDecoder().decode([String: String].self, from: data) else { return false }
+        let cache = basePath.appendingPathComponent("xdial-rule-sets", isDirectory: true)
+        var installed = false
+        for refresh in (bootstrap.preflightSessions ?? []).flatMap(\.refreshes) where refresh.storedFormat == "binary" {
+            let target = URL(fileURLWithPath: refresh.localPath)
+            guard target.deletingLastPathComponent().standardizedFileURL.path == cache.standardizedFileURL.path,
+                  let name = files[refresh.url], name.hasSuffix(".srs"), name == (name as NSString).lastPathComponent,
+                  !FileManager.default.fileExists(atPath: target.path) else { continue }
+            do {
+                try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true,
+                                                       attributes: [.posixPermissions: 0o700])
+                // Publish the complete resource once. A concurrent refresh may already own the cache entry.
+                let staging = cache.appendingPathComponent(UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: staging) }
+                try FileManager.default.copyItem(at: folder.appendingPathComponent(name), to: staging)
+                try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-172_800)], ofItemAtPath: staging.path)
+                try FileManager.default.linkItem(at: staging, to: target)
+                installed = true
+            } catch { continue }
+        }
+        return installed
     }
 
     private func decodeSessionEnvelope(
@@ -1867,6 +1911,9 @@ final class EmbeddedSingBoxRuntime {
         cancellation: ConnectionCancellation,
         continueAfterRefreshFailure: Bool = false
     ) throws {
+        acquisitionLock.lock()
+        defer { acquisitionLock.unlock() }
+        try checkCancellation(cancellation)
         let bootstrapCallback = BootstrapEngineCallback(logger: logger)
         guard let instance = LibboxNew(bootstrapCallback) else {
             throw RuntimeError.unavailable
@@ -2042,6 +2089,14 @@ final class EmbeddedSingBoxRuntime {
         } else { groupTag = "" }
         try engine.testLineLatency(tag, groupTag: groupTag, timeoutMS: 5_000, ret0_: &delay)
         return try lineLatencySnapshot(session: session)
+    }
+
+    func probeDirectCountry() throws -> String {
+        guard let engine = currentEngine() else { throw RuntimeError.diagnosticsUnavailable }
+        var error: NSError?
+        let code = engine.probeOutboundCountry("direct", timeoutMS: 5_000, error: &error)
+        if let error { throw error }
+        return code
     }
 
     func probeLineOutboundAddress(

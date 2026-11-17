@@ -137,15 +137,11 @@ final class AutomaticScenarioSwitchRetryPolicyTests: XCTestCase {
         )
     }
 
-    func testOnlyStructurallyImpossibleSwitchesFallBackToFullReconnect() {
-        // The Provider passes these through unchanged.
-        for code in ["switch-anyconnect-rebuild-required", "switch-rule-set-preflight-unavailable"] {
+    func testUnsupportedCandidatesRemainTerminalForTheCurrentEpoch() {
+        for code in [ScenarioSwitchFailureCode.anyConnectRebuildRequired, ScenarioSwitchFailureCode.ruleSetPreflightUnavailable] {
+            var retry = AutomaticScenarioSwitchRetryState()
             XCTAssertEqual(AutomaticLineReadinessFailurePolicy.switchCode(for: code), code)
-            XCTAssertTrue(ScenarioSwitchFailureCode.requiresFullReconnect(code))
-        }
-        for code in [nil, "line-readiness-transient", "line-readiness-terminal",
-                     "scenario-switch-prepare-failed", "switch-cancelled", "switch-timeout"] {
-            XCTAssertFalse(ScenarioSwitchFailureCode.requiresFullReconnect(code), "\(code ?? "nil")")
+            XCTAssertNil(retry.scheduleRetry(failureCode: code))
         }
     }
 }

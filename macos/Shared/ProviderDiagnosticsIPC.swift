@@ -7,6 +7,7 @@ enum ProviderDiagnosticsCommand: String, Codable {
     case routingProbeSnapshot = "routing-probe-snapshot"
     case beginRouteProbe = "begin-route-probe"
     case applicationAttributionSnapshot = "application-attribution-snapshot"
+    case probeDirectCountry = "probe-direct-country"
     case trafficSnapshot = "traffic-snapshot"
 }
 
@@ -247,6 +248,7 @@ struct ProviderDiagnosticsData: Codable, Equatable {
     let begunRouteProbe: ProviderBegunRouteProbe?
     let applicationAttribution:
         ProviderApplicationAttributionSnapshot?
+    let directCountry: String?
     let traffic: ProviderTrafficSnapshot?
 
     enum CodingKeys: String, CodingKey {
@@ -255,6 +257,7 @@ struct ProviderDiagnosticsData: Codable, Equatable {
         case lineOutboundAddress = "line_outbound_address"
         case begunRouteProbe = "begun_route_probe"
         case applicationAttribution = "application_attribution"
+        case directCountry = "direct_country"
         case traffic
     }
 
@@ -265,6 +268,7 @@ struct ProviderDiagnosticsData: Codable, Equatable {
         begunRouteProbe: ProviderBegunRouteProbe? = nil,
         applicationAttribution:
             ProviderApplicationAttributionSnapshot? = nil,
+        directCountry: String? = nil,
         traffic: ProviderTrafficSnapshot? = nil
     ) {
         self.lineLatencies = lineLatencies
@@ -272,6 +276,7 @@ struct ProviderDiagnosticsData: Codable, Equatable {
         self.lineOutboundAddress = lineOutboundAddress
         self.begunRouteProbe = begunRouteProbe
         self.applicationAttribution = applicationAttribution
+        self.directCountry = directCountry
         self.traffic = traffic
     }
 }
@@ -507,7 +512,7 @@ enum ProviderDiagnosticsCodec {
 
         var allowedKeys = baseKeys
         switch command {
-        case .applicationAttributionSnapshot, .trafficSnapshot, .lineLatencySnapshot:
+        case .probeDirectCountry, .applicationAttributionSnapshot, .trafficSnapshot, .lineLatencySnapshot:
             break
         case .routingProbeSnapshot:
             allowedKeys.insert("probe_id")
@@ -540,7 +545,7 @@ enum ProviderDiagnosticsCodec {
             throw ProviderDiagnosticsCodecError.invalidRequest
         }
         switch request.cmd {
-        case .applicationAttributionSnapshot, .trafficSnapshot, .lineLatencySnapshot:
+        case .probeDirectCountry, .applicationAttributionSnapshot, .trafficSnapshot, .lineLatencySnapshot:
             break
         case .routingProbeSnapshot:
             guard
