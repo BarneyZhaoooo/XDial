@@ -47,6 +47,8 @@ public final class MainActivity extends Activity {
   Button tailscale=new Button(this);tailscale.setText("Tailscale 账号与出口节点");layout.addView(tailscale);tailscale.setOnClickListener(v->tailscale());
   Button config = new Button(this); config.setText("导入运行 Profile"); layout.addView(config);
   config.setOnClickListener(v -> edit());
+  Button rules=new Button(this);rules.setText("规则与离线副本");layout.addView(rules);
+  rules.setOnClickListener(v->startActivity(new Intent(this,OfflineRulesActivity.class)));
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
   details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS","验证安全存储"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":index==1?"probe":"identity-test"));}).show());
   TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景与连接前 Wi-Fi 匹配；AnyConnect 支持账号密码，支持 Tailscale 浏览器登录与出口选择；真实企业网络联调、地区判断和连接中切换仍待完成。"); layout.addView(notice);

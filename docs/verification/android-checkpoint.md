@@ -177,3 +177,31 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
 
 用户无需额外开通 Tailscale；没有隔离 tailnet 凭据时保留真实认证出口未验证，继续其他
 独立功能。此阶段仍为开发验收，不代表 Android 产品或全平台完成。
+
+## 2026-11-17 原生离线规则管理
+
+- 新增共享 `ListOfflineRuleSets / ImportOfflineRuleSet / RemoveOfflineRuleSet`：复用运行时
+  RuleSet 身份、URL、格式构成的缓存键，支持 SRS、source JSON 和域名/CIDR 文本。
+  内容大小和语义先校验，再原子替换；失败保留旧副本。来源在文件选择期间变化则拒绝，
+  不按任意路径读写；列表不返回 URL、缓存路径或规则内容，浏览不创建资源或发请求。
+- Android 原生“规则与离线副本”页面显示无副本、有效、较旧、无效；提供系统文件
+  选择器、source/text 粘贴和带说明的移除操作。导入不改规则来源或绑定，连接期间只读。
+  文件读取在后台且最多 1 MiB；不申请广泛存储权限，不保存 content URI 的长期权限。
+- arm64 模拟器用浏览器下载同一公开 SRS 到 Downloads；VPN 未连接。插件切到断网后，
+  在界面移除旧副本并读回“尚无离线副本”，通过 ACTION_OPEN_DOCUMENT 选择设备中的
+  `geosite-category-ads-all.srs`，读回“副本已校验并保存”及有效 8.18 kB 副本。
+  已实际经过文件提供者读取，未使用 adb、宿主复制容器或伪造文件选择回调。
+- 恢复网络后连接 One；准备保护 socket 0 次、总保护 3 次、失败 0 次，普通未 protect
+  App socket UDP DNS/NXDOMAIN 和 HTTPS 200/正文通过。连接期间页面显示只读提示。
+  最终主动断开，设备网络恢复；公开下载文件留在隔离设备 Downloads 供后续验收。
+- 契约测试验证错误版本/无效/超限输入保留原副本、URL/格式变化拒绝、路径注入拒绝、
+  过期/损坏状态、文本转换、真实 SRS 编解码、未绑定规则不会因导入激活。
+  Offline/Android 定向 race 通过；libbox/mobile/subscription 常规测试通过。config 首次
+  测试命令漏带 build/tools 中的 sing-box，补齐 PATH 后全量通过；不将失败运行写成通过。
+  public-content-gate、双 ABI AAR/APK 与 Apple 六个构建目标通过，未执行新增 XCTest。
+- APK SHA-256：`709bf77e3346071888af4268149162d493053c47001a054ceba8183858ca4f7d`，
+  插件核对 matchesLocal=true。构建日志在 `build/android/offline-*`，本阶段仍仅本地安装。
+
+待继续：非 Direct 获取 Line、提交后的过期刷新、配置来源库、地区观察、连接中场景
+事务、后台/撤权更完整的验收及事件驱动分发。Windows/Linux 按应用透明接入与多发行版
+目标不变。未认证的企业 VPN 和 Tailscale 实际出口仍无流量联调证据。
