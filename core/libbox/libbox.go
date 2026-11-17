@@ -94,21 +94,22 @@ var anyConnectReconnectDelays = [...]time.Duration{
 }
 
 type Libbox struct {
-	stablePacketIngress  bool
-	nativeFlowIngress    bool
-	androidSwitchCancel  context.CancelFunc
-	androidRefreshCancel context.CancelFunc
-	packetIngress        *packetIngress
-	mu                   sync.Mutex
-	cb                   Callback
-	vpn                  vpnClient
-	bridge               *engine.VPNBridge
-	box                  *box.Box
-	running              bool
-	platform             *xdPlatformInterface
-	lastError            string
-	dnsJSON              string
-	session              *session.ConnSession
+	stablePacketIngress       bool
+	nativeFlowIngress         bool
+	nativeFlowConfigValidator func(string) error
+	androidSwitchCancel       context.CancelFunc
+	androidRefreshCancel      context.CancelFunc
+	packetIngress             *packetIngress
+	mu                        sync.Mutex
+	cb                        Callback
+	vpn                       vpnClient
+	bridge                    *engine.VPNBridge
+	box                       *box.Box
+	running                   bool
+	platform                  *xdPlatformInterface
+	lastError                 string
+	dnsJSON                   string
+	session                   *session.ConnSession
 	// generation scopes the process-global AnyConnect session monitor. A Box
 	// switch that reuses that session must not change it.
 	generation uint64
@@ -1250,6 +1251,14 @@ func (l *Libbox) coldStart(
 	if l.running {
 		return failLocked(ErrCodeState, fmt.Errorf("already running"))
 	}
+	if l.nativeFlowConfigValidator != nil {
+		if anyConnectConfig != nil || runtimeIdentity != "" || tailscaleLineID != "" || tailscaleRuntimeIdentity != "" {
+			return failLocked(ErrCodeConfig, fmt.Errorf("native adapter protocol socket capability is unavailable"))
+		}
+		if err := l.nativeFlowConfigValidator(configJSON); err != nil {
+			return failLocked(ErrCodeConfig, err)
+		}
+	}
 
 	// A new full lifecycle never inherits capability state from an earlier
 	// failed Start/retry. Only pool leases, not a startup-time Line list, decide
@@ -1905,6 +1914,16 @@ func (l *Libbox) prepareSwitchContext(
 	if l.nativeFlowIngress && len(ingressCheck.Inbounds) != 0 {
 		l.mu.Unlock()
 		return fmt.Errorf("native flow candidate must not create a listener")
+	}
+	if l.nativeFlowConfigValidator != nil {
+		if targetAnyConnectConfig != nil || anyConnectRuntimeIdentity != "" || tailscaleLineID != "" || tailscaleRuntimeIdentity != "" {
+			l.mu.Unlock()
+			return fmt.Errorf("native adapter protocol socket capability is unavailable")
+		}
+		if err := l.nativeFlowConfigValidator(configJSON); err != nil {
+			l.mu.Unlock()
+			return err
+		}
 	}
 	if !l.running || l.box == nil || l.runtimeCtx == nil {
 		l.mu.Unlock()

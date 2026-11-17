@@ -56,6 +56,9 @@ func (l *Libbox) SetNativeFlowIngress(enabled bool) error {
 	if enabled && l.stablePacketIngress {
 		return fmt.Errorf("packet ingress is already selected")
 	}
+	if !enabled && l.nativeFlowConfigValidator != nil {
+		return fmt.Errorf("configured native adapter requires native flow ingress")
+	}
 	l.nativeFlowIngress = enabled
 	return nil
 }

@@ -297,6 +297,13 @@ Box 与候选 Box；平台只提供原始端点和 OS 进程事实，出口/DNS/
 系统回调锁，不能从关闭回调同步重入等待该流退出的生命周期操作。此接口的存在
 不代表 OS 拦截器或安装事务已就绪。见 [原生流入口](core/libbox/native_flow.go)。
 
+Linux TProxy 适配独立持有稳定 sing-box listener/UDP NAT，内核原目标进入同一
+generation Router；进程事实由 sing-box 从 OS 查询。捕获 mark 与核心/透明回包的
+绕过 mark 必须由权限事务独立预留，配置和候选均验证完整保护；协议自建 socket
+未具备受保护租约时拒绝，不回退其他线路。监听器 API 不自动改系统规则；撤销捕获
+必须先于关闭入口。隔离来宾已证明 IPv4 TCP/UDP/DNS 与真实进程规则，生产权限
+事务和多发行版验收仍缺。见 [Linux 透明入口验收](docs/verification/linux-transparent-guest.md)。
+
 
 ### 5.4 网络变化与恢复
 

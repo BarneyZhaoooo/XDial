@@ -3,6 +3,7 @@ package libbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
@@ -23,12 +24,14 @@ import (
 // packetIngress owns the only packet reader. Traffic Boxes own DNS, route and
 // protocol decisions; replacing one never replaces this ingress's gVisor stack.
 type packetIngress struct {
-	template []byte
-	disabled bool
-	mu       sync.Mutex
-	current  *packetGeneration
-	box      *box.Box
-	cancel   context.CancelFunc
+	template               []byte
+	disabled               bool
+	mu                     sync.Mutex
+	current                *packetGeneration
+	box                    *box.Box
+	cancel                 context.CancelFunc
+	nativeListener         io.Closer
+	nativeListenerStarting bool
 }
 
 type packetGeneration struct {
@@ -116,6 +119,13 @@ func (p *packetIngress) close() {
 		return
 	}
 	p.swap(nil).close()
+	p.mu.Lock()
+	native := p.nativeListener
+	p.nativeListener = nil
+	p.mu.Unlock()
+	if native != nil {
+		native.Close()
+	}
 	p.cancel()
 	if p.box != nil {
 		p.box.Close()

@@ -8,12 +8,17 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | TProxy IPv4 TCP/UDP/DNS、真实进程规则与事务已在隔离内核通过；权限安装/多发行版缺失 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
 | 安全配置 | 共享 Profile/Keychain | Keychain | Keychain | Keystore AES-GCM + AtomicFile；身份持久化/篡改拒绝已验 | 缺失 | 缺失 |
 | 发布 | 已有 | 既有事件驱动 TestFlight | 已有构建 | 双 ABI 本地测试包与事件 CI 已实现；稳定签名/受限分发待接入 | 缺失 | 缺失 |
+
+Linux 最新系统证据见 [隔离来宾验收](../verification/linux-transparent-guest.md)：真实
+nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。仍需生产权限事务、
+IPv6、多发行版和原生 UI；下一阶段进入安装/崩溃恢复及 Windows 原生命名管道/WFP
+边界，不以本轮测试来宾替代完整桌面交付。
 
 ## 边界决策
 
