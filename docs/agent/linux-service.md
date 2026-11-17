@@ -19,7 +19,7 @@ scripts/build-linux-service.sh amd64
 
 安装脚本参数为 `install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER`；不提供可误用于用户网络的固定资源示例。它验证包摘要、安装父目录、并发锁和策略格式，写入 root 私有 `/var/lib/xdial-service/policy.json`，安装 `/usr/local/libexec/xdial-service` 与 systemd unit，执行 daemon-reload，**不会启动服务**。首次安装失败回滚本事务文件。已有安装明确拒绝覆盖，后续升级事务尚待实现。
 
-审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。示例 unit 需要 systemd；它还没有在完整 Debian/Fedora/Arch guest 中执行，不能宣称多发行版安装已经验收。
+审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。示例 unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除；Fedora/Arch、升级和默认系统 DNS 仍待验收，见[完整发行版证据](../verification/linux-distro-systemd.md)。
 
 ## 普通用户操作
 
@@ -48,4 +48,13 @@ IPC 使用 Unix seqpacket。每条消息验证内核 SCM_CREDENTIALS，连接时
 - 当前仅支持 `/etc/resolv.conf` 一个非 loopback IPv4 nameserver。systemd-resolved stub、search/split/multiple DNS 需受保护原生后端；明确拒绝，不能改用公共 DNS 规避。DNS/接口事实变化事件先断开，尚无自动恢复。
 - 仅允许经过共享编译和验证的离线规则缓存；尚无服务缓存导入/在线资源事务。客户端本地 file URL 和 NativeOptions 文件访问能力被拒绝，不能让 root 读取用户指定私有文件。
 - AnyConnect/Tailscale 协议套接字与冷资源租约、IPv6、现有 mark/iptables 共存、GUI、完整配置库接线、多发行版安装/更新仍待完成。保留这些目标，不能将当前拒绝当作最终产品取舍。
-- systemd unit、安装脚本是可审查产物；独立服务可执行文件的隔离内核验证不等同 systemd/发行版安装验证。
+- systemd unit 需要 `CAP_NET_BIND_SERVICE`，用于透明 UDP 回包绑定原目标的特权端口（如 DNS 53）；完整 Debian 负面/正面对照已验证。安装脚本不改变系统低端口阈值。
+
+### 原生 DNS 后端接入前的审查结论
+
+当前锁定 sing-box 的 `dns/transport/local/local_resolved_linux.go` 会读取默认接口的
+resolved Link DNS，并为其创建绑定该接口的 transport；不能把直接启用这个 `local`
+实现当作保留整个 Underlay 的 split DNS。后续后端必须保留系统 resolver 的原生
+解析语义，同时保护 resolver 自身的出站依赖、观察其生命周期，避免捕获后递归。
+Debian 完整来宾已含真实 systemd-resolved，可在同样隔离条件下进一步验收，不需要
+修改共享宿主的 resolver。

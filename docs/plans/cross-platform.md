@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；隔离内核通过；systemd/多发行版验收待做 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；隔离内核与完整 Debian systemd 生命周期通过；默认系统 DNS/其他发行版/升级待做 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
@@ -344,3 +344,17 @@ search/split/multiple DNS 扁平化。网络事件使捕获退出，尚未自动
 systemd 安装包。已有 x64 包、unit、安装/移除脚本和来源摘要；没有执行共享宿主
 安装、公开分发或推送。下一步做完整发行版来宾中的原生 DNS/安装/升级/卸载，
 并推进 Windows SCM/WFP；不以这个 Ubuntu 内核服务替代多发行版和完整原生产品。
+
+
+### 2026-11-17：完整 Debian systemd 安装验收
+
+完整 Debian 13.7 官方镜像已实际启动自己的内核/systemd，以包内脚本安装、启动、
+重启、强杀恢复、连接中卸载。真实 UID 1001 请求与透明 TCP/DNS 通过；首次安装
+默认不启动、重复安装不覆盖策略、重启回未连接、卸载保留策略且无捕获残留通过。
+完整系统暴露 unit 缺少低端口权限，已补 `CAP_NET_BIND_SERVICE`；负面对照证明
+只有去掉该权限时 TCP/上游 DNS 可达但透明 DNS 回包失败。
+
+[详细收据](../verification/linux-distro-systemd.md) 区分完整发行版和旧 initramfs，
+本阶段只覆盖 Debian 的受控 resolver，不能当作默认 systemd-resolved、Fedora/Arch、
+升级或全平台完成。下一步继续受保护原生系统 DNS（保留 split DNS）、升级事务和
+其他发行版，Windows SCM/WFP 与移动端剩余项继续保留。没有共享宿主系统安装或改网。

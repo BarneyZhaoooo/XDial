@@ -43,7 +43,9 @@ func TestResolverAdmission(t *testing.T) {
 func isolated(t *testing.T) {
 	t.Helper()
 	b, _ := os.ReadFile("/proc/cmdline")
-	if os.Getenv("XDIAL_ISOLATED_VM") != "1" || !bytes.Contains(b, []byte("xdial_isolated_vm=transparent")) {
+	dmi, _ := os.ReadFile("/sys/class/dmi/id/product_name")
+	fullGuest := os.Getenv("XDIAL_DISTRO_VM") == "1" && strings.TrimSpace(string(dmi)) == "XDial-isolated-distro"
+	if os.Getenv("XDIAL_ISOLATED_VM") != "1" || (!bytes.Contains(b, []byte("xdial_isolated_vm=transparent")) && !fullGuest) {
 		t.Skip("isolated kernel guest only")
 	}
 }

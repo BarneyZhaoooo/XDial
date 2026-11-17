@@ -10,10 +10,10 @@ python3 - <<'PY'
 import subprocess,re,pathlib,json,os,hashlib
 root=pathlib.Path.cwd()
 env=dict(os.environ,LC_ALL='C')
-plan=subprocess.check_output(['apt-get','-s','-o','Debug::NoLocking=true','--no-install-recommends','install','qemu-system-x86'],text=True,env=env)
+plan=subprocess.check_output(['apt-get','-s','-o','Debug::NoLocking=true','--no-install-recommends','install','qemu-system-x86','qemu-utils','genisoimage'],text=True,env=env)
 (root/'apt-simulation.txt').write_text(plan)
 packages={m.group(1):m.group(2) for m in re.finditer(r'^Inst (\S+)(?: \[[^\]]+\])? \((\S+)',plan,re.M)}
-for name in ['qemu-system-x86','qemu-system-common','qemu-system-data','seabios','busybox-static','nftables','iproute2','kmod','linux-image-6.8.0-149-generic','linux-modules-6.8.0-149-generic']:
+for name in ['qemu-system-x86','qemu-utils','genisoimage','qemu-system-common','qemu-system-data','seabios','busybox-static','nftables','iproute2','kmod','linux-image-6.8.0-149-generic','linux-modules-6.8.0-149-generic']:
  policy=subprocess.check_output(['apt-cache','policy',name],text=True,env=env)
  m=re.search(r'Candidate: (\S+)',policy)
  if not m or m.group(1)=='(none)':raise SystemExit('missing candidate '+name)
