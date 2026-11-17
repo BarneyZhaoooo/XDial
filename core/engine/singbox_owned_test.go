@@ -24,6 +24,8 @@ type ownedReady struct {
 	Args    []string `json:"args"`
 }
 
+var prepareOwnedFixture = func(mode, path string) {}
+
 // A native executable fixture with a real loopback listener. No VPN, adapter,
 // system DNS, external server, production config or process-name kill is used.
 func TestMain(m *testing.M) {
@@ -58,6 +60,7 @@ func runOwnedFixture() int {
 	if json.Unmarshal(raw, &config) != nil {
 		return 82
 	}
+	prepareOwnedFixture(config.Mode, os.Args[3])
 	if config.Mode == "exit" {
 		fmt.Fprintln(os.Stderr, "fixture startup failure")
 		return 17

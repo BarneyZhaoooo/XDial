@@ -276,3 +276,10 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
 - 后续必须补本地服务对端鉴权（当前非 macOS `peerAllowed` 直接放行），再接入
   Windows WFP/应用识别与 Linux 透明入口和多发行版安装。Ubuntu 当前禁止用户
   网络命名空间，不绕过权限改变测试机网络。进程生命周期已实做，桌面产品仍未完成。
+- Linux 主动退出另经原机补验：SIGTERM 允许完成清理，无响应才超时强制结束；
+  父进程崩溃仍立即回收。最终 Ubuntu 五项通过，Windows 四项通过。
+- 已定位后续共享核心的 Windows 编译边界：libbox 普遍 `!windows`，平台 TUN
+  使用 Dup/Close，身份锁使用 Flock；应拆出 OS 适配后复用现有流入口和事务，不能
+  复制第二套路由核心。sing-box 已有 Windows/Linux process searcher，应用身份
+  优先接原生事实/既有 searcher，不在平台层重新实现路由裁决。旧 daemon 的数据面
+  命令已退役，新增桌面服务不能直接恢复退役命令来绕过事务边界。

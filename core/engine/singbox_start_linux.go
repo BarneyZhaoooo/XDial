@@ -13,12 +13,14 @@ import (
 )
 
 type linuxProcessLease struct {
-	once sync.Once
-	stop chan struct{}
+	once     sync.Once
+	stop     chan struct{}
+	exitOnce sync.Once
+	exited   chan struct{}
 }
 
 func (l *linuxProcessLease) Close() error   { l.once.Do(func() { close(l.stop) }); return nil }
-func (l *linuxProcessLease) ProcessExited() { l.Close() }
+func (l *linuxProcessLease) ProcessExited() { l.exitOnce.Do(func() { close(l.exited) }) }
 
 // Linux parent-death notification follows the creating OS thread, not merely
 // the process. Keep that thread alive for the entire child lease. No shell,
@@ -42,16 +44,25 @@ func startSingBoxCmd(binary, configPath, workDir string, output io.Writer) (*sin
 			ready <- started{err: fmt.Errorf("start owned core: %w", err)}
 			return
 		}
-		lease := &linuxProcessLease{stop: make(chan struct{})}
+		lease := &linuxProcessLease{stop: make(chan struct{}), exited: make(chan struct{})}
 		ready <- started{cmd: cmd, lease: lease}
-		<-lease.stop
-		// os.Process keeps its PID identity and reports ProcessDone after Wait; it
-		// cannot accidentally signal a later process that recycled this PID.
-		_ = cmd.Process.Kill()
+		select {
+		case <-lease.stop:
+			// Give the core its ordinary shutdown opportunity. SingBoxProcess.Stop
+			// owns the bounded forced-kill fallback. Keep the creator thread alive
+			// until Wait completes so thread retirement cannot interrupt cleanup.
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			<-lease.exited
+		case <-lease.exited:
+		}
 	}()
 	result := <-ready
 	if result.err != nil {
 		return nil, nil, result.err
 	}
-	return wrapSingBoxCommand(result.cmd), result.lease, nil
+	return &singBoxCommand{Process: result.cmd.Process, wait: func() error {
+		err := result.cmd.Wait()
+		result.lease.ProcessExited()
+		return err
+	}}, result.lease, nil
 }

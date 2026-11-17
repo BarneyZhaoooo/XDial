@@ -71,3 +71,25 @@
 透明入口/应用身份；逐项验收安装、撤销、升级、故障回滚。Windows 驱动签名和
 Linux 隔离测试环境尚未具备。多发行版、透明 TCP/UDP/DNS、防环路及原生窗口
 仍在原始交付范围内，不能以本轮进程验收替代。
+
+## Linux 正常停止补验
+
+复核主动断开路径后，将 Linux 租约关闭改为 SIGTERM，创建线程一直保留到 Wait
+完成；无响应时由既有 `SingBoxProcess.Stop` 超时强制回收。父进程崩溃仍使用
+内核 SIGKILL。这避免主动停止过早结束核心的清理工作。
+
+`c33833d` + dirty 的最终 Linux 快照
+`9f55bb3630b4f43136bd9a38e52b39dc8a3bc18fde41a9ec320b10db1e6f48c1`，
+测试可执行文件 SHA256
+`b2480cad62223981d387e2065ebd5a399d71ce2a0d6eb201717571199ea5bab3`。
+Ubuntu 24.04 原机五项测试全部通过，原生回执与 result 均为 exitCode 0：
+上述三项再次通过；新增正常退出写入清理标记且退出码 0，以及忽略 SIGTERM/SIGINT
+后经 80ms 等待进入强制回收。日志 `build/desktop/ubuntu-graceful-native-tests.log`。
+三个远端测试任务均已按各自 UUID 清理，本地证据保留。
+
+最终 Android 双 ABI 构建与打包校验再次通过：
+`build/android/artifacts/xdial-1-debug-da6369583cb4-1e0a22ea8dfb/`，APK SHA256
+`da6369583cb434daaea89c05dc0b0af355c8b66e315b6c376cd3751d67c4d494`。
+manifest 为 `c33833d` + dirty；此包未进行设备安装/交互。本次补改只影响 Linux
+生产启动实现和 Linux/Windows 测试 fixture；Windows 生产启动和 Apple 代码没有
+后续修改，不将之前的原机/Apple 证据冒称为再次执行。
