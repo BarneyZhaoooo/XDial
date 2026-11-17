@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import XDial
 
 final class ConnectionActivityTests: XCTestCase {
@@ -52,10 +53,30 @@ final class ConnectionActivityTests: XCTestCase {
         }
     }
 
-    func testWidestShortIsAsWideAsAnyRealValue() {
-        let widest = XDialSpeedFormat.widestShort
+    @MainActor
+    func testWidestShortIsAsWideAsAnyRealValue() async {
+        var labels = Set<String>()
         for bytesPerSecond in stride(from: 1_000.0, to: 50_000_000_000, by: 7_777.0 * 13) {
-            XCTAssertLessThanOrEqual(XDialSpeedFormat.short(bytesPerSecond).count, widest.count)
+            labels.insert(XDialSpeedFormat.short(bytesPerSecond))
+        }
+        // Include every compact K/M/G spelling, including low rates the stride skips.
+        for scale in [1_000.0, 1_000_000.0, 1_000_000_000.0] {
+            for tenths in 1...990 {
+                labels.insert(XDialSpeedFormat.short(Double(tenths) / 10 * scale))
+            }
+        }
+        // CompactSpeed is shown only at >= 1 KB/s.
+        labels = labels.filter { !$0.hasSuffix("B") }
+        for size: CGFloat in [12, 11, 10] {
+            let font = Font.system(size: size, weight: .semibold, design: .rounded).monospacedDigit()
+            func width(_ label: String) -> CGFloat {
+                let host = UIHostingController(rootView: Text(label).font(font).lineLimit(1).fixedSize())
+                return host.sizeThatFits(in: CGSize(width: 1_000, height: 100)).width
+            }
+            let widest = width(XDialSpeedFormat.widestShort)
+            for label in labels.sorted() {
+                XCTAssertLessThanOrEqual(width(label), widest, "\(label) at \(size) pt")
+            }
         }
     }
 }
