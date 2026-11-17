@@ -597,16 +597,27 @@ struct HomeView: View {
     }
 
     private var degradedCard: some View {
-        noticeCard(
+        let rechecking = app.engine.dataPathRechecking
+        let message: String = rechecking
+            ? app.tr("正在重新检测线路…", "Checking the route again…")
+            : app.tr(
+                "连接可以先用着，XDial 会自动再检测几次。打不开公司网站的话，点「详情」看看哪一步没通过。",
+                "You can keep using the connection; XDial checks again on its own. If company sites don't open, tap Details to see which step failed."
+            )
+        let recheckTitle: String = rechecking
+            ? app.tr("检测中…", "Checking…")
+            : app.tr("重新检测", "Check Again")
+        return noticeCard(
             symbol: "wifi.exclamationmark",
             tint: XDialTheme.warning,
             title: app.tr("已连接，但线路自检没通过", "Connected, but the route check didn't pass"),
-            message: app.tr(
-                "网络可能比较慢。可以先用着；打不开公司网站的话，断开再连一次。",
-                "The network may be slow. Keep using it; if company sites don't open, reconnect."
-            ),
+            message: message,
             identifier: "home-degraded-note"
         ) {
+            Button(recheckTitle) { app.recheckConnection() }
+                .buttonStyle(XDialPillButtonStyle())
+                .disabled(rechecking)
+                .accessibilityIdentifier("home-degraded-recheck")
             Button(app.tr("详情", "Details")) { showingProblemDetail = true }
                 .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
         }

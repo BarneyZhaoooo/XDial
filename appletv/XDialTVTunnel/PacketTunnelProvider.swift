@@ -105,6 +105,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// sslcon 的会话是进程全局资源。创建、StartResolved 与 Stop 必须经过同一
     /// 串行队列，不能让新 generation 与旧会话在底层并发。
     private let engineOperationQueue = DispatchQueue(label: "com.kafeifei.xdial.tunnel.engine")
+    /// 出口探针（线路试拨、出口地区）不改变引擎生命周期：libbox 为每次探针租用运行中的
+    /// outbound，停止时会等租约归还，停止后再借会直接报错。放进串行队列只会让连接验收
+    /// 一条条排队、和自动选场景的出口探测互相等待，所以单独并发执行。
+    private let outboundProbeQueue = DispatchQueue(
+        label: "com.kafeifei.xdial.tunnel.outbound-probe",
+        qos: .utility,
+        attributes: .concurrent
+    )
     /// 设置 job 连同原始系统 completion 严格串行；失效路径会在同一提交锁下
     /// 排入 barrier，因此新 generation 不会越过旧 generation 的未决设置。
     private let networkSettingsSubmissionLock = NSLock()
@@ -879,7 +887,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 return
             }
             let timeoutMS = Int(obj["timeout_ms"] as? String ?? "") ?? 7_000
-            engineOperationQueue.async { [weak self] in
+            outboundProbeQueue.async { [weak self] in
                 guard let self, let engine = self.currentEngine() else {
                     completion.value(self?.encodeResponse(ok: false, message: "连接引擎未运行"))
                     return
@@ -903,7 +911,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         case "probe-exit-country":
             let timeoutMS = Int(obj["timeout_ms"] as? String ?? "") ?? 8_000
-            engineOperationQueue.async { [weak self] in
+            outboundProbeQueue.async { [weak self] in
                 guard let self, let engine = self.currentEngine() else {
                     completion.value(self?.encodeResponse(ok: false, message: "连接引擎未运行"))
                     return
