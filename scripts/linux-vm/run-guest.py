@@ -60,6 +60,15 @@ def run(args):
     if args.capture_binary:
         shutil.copy2(args.capture_binary, guest / "app-capture")
         (guest / "app-capture").chmod(0o755)
+    if bool(args.service_binary) != bool(args.service_tests):
+        raise SystemExit("service binary and tests must be supplied together")
+    if args.service_binary:
+        shutil.copy2(args.service_binary, guest / "app-service")
+        shutil.copy2(args.service_tests, guest / "service-tests")
+        (guest / "app-service").chmod(0o755)
+        (guest / "service-tests").chmod(0o755)
+        for name in ("service-proxy", "service-allow"):
+            os.link(guest / "service-tests", guest / name)
     init = '''#!/bin/sh
 set -eu
 export PATH=/bin:/sbin
@@ -82,6 +91,11 @@ if [ -x /app-capture ]; then
   /app-capture -test.v -test.timeout=60s
   result=$?
   if [ "$result" != 0 ]; then echo XDIAL_CAPTURE_TEST_EXIT=$result; poweroff -f; exit "$result"; fi
+fi
+if [ -x /app-service ]; then
+  /service-tests -test.v -test.timeout=60s
+  result=$?
+  if [ "$result" != 0 ]; then echo XDIAL_SERVICE_TEST_EXIT=$result; poweroff -f; exit "$result"; fi
 fi
 /app-core -test.v -test.run='TestLinux(TProxyProtectionContract|TransparentKernelTraffic)$' -test.timeout=90s
 result=$?
@@ -132,5 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--tools", required=True, type=Path)
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--capture-binary", type=Path)
+    parser.add_argument("--service-binary", type=Path)
+    parser.add_argument("--service-tests", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     run(parser.parse_args())

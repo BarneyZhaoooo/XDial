@@ -1,0 +1,26 @@
+[Unit]
+Description=XDial authenticated transparent network service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/xdial-service serve --state /var/lib/xdial-service
+User=root
+Group=root
+UMask=0077
+RuntimeDirectory=xdial-service
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+# Kernel process attribution needs the real /proc and network namespace.
+# Do not enable PrivateNetwork, PrivateUsers, or hide other processes here.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xdial-service /run/xdial-service
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=multi-user.target

@@ -34,6 +34,9 @@ func (l *Libbox) ConfigureLinuxTProxy(bypassMark uint32) error {
 	if l.running || l.startPreparing || l.cleaning || l.stablePacketIngress {
 		return fmt.Errorf("Linux transparent setup requires an idle native-flow runtime")
 	}
+	l.platform.mu.Lock()
+	l.platform.kernelRoutedUnderlay = true
+	l.platform.mu.Unlock()
 	l.nativeFlowIngress = true
 	l.nativeFlowConfigValidator = func(s string) error { return validateLinuxTProxyConfig(s, bypassMark) }
 	return nil
@@ -51,6 +54,9 @@ func validateLinuxTProxyConfig(s string, mark uint32) error {
 	hasMark := func(v any) bool {
 		f, ok := v.(float64)
 		return ok && f == float64(mark)
+	}
+	if route["auto_detect_interface"] == true || route["default_interface"] != nil {
+		return fmt.Errorf("Linux marked sockets must preserve kernel Underlay selection")
 	}
 	if !hasMark(route["default_mark"]) {
 		return fmt.Errorf("Linux traffic configuration is missing its bypass mark")

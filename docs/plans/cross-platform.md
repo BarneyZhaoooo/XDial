@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | TProxy IPv4 流量及捕获安装/回滚/强杀恢复已在隔离内核通过；授权服务/多发行版缺失 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；隔离内核通过；systemd/多发行版验收待做 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
@@ -17,8 +17,8 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 
 Linux 最新系统证据见 [隔离来宾验收](../verification/linux-transparent-guest.md)：真实
 nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。已新增
-[捕获安装/恢复组件](../verification/linux-capture-transaction.md)，仍需正式授权服务、
-IPv6、多发行版和原生 UI；继续接入服务生命周期及 Windows WFP
+[捕获安装/恢复组件](../verification/linux-capture-transaction.md)，已接入[独立授权服务](../agent/linux-service.md)；仍需原生 DNS 后端、
+IPv6、多发行版安装和原生 UI；继续推进完整安装生命周期及 Windows WFP
 边界，不以本轮测试来宾替代完整桌面交付。
 
 Windows 已新增独立的 [命名管道鉴权层](../verification/windows-control-pipe.md)，
@@ -323,3 +323,24 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
 - 正式 systemd/polkit 授权服务、共享业务控制器生命周期、IPv6、多发行版与原生 UI
   仍需接入。复杂 nft/legacy iptables mark 策略暂明确拒绝，后续补保留/共存协议；
   不能把该拒绝作为永久缩减目标。Windows 继续服务进程/SCM 与 WFP 接入。
+
+
+## 2026-11-17 Linux 独立权限服务接线
+
+`cmd/xdial-service` 已提供可运行的服务/普通用户 CLI；`core/linuxservice` 复用共享
+ConnectionController、Profile/Scenario 编译和 libbox 稳定入口。服务持有 capture
+journal/lasting nft socket，先核心就绪再接管，先撤销接管再停止；强杀后下一次启动
+恢复自身剩余规则，保持未连接。Unix seqpacket 每条消息使用 SCM_CREDENTIALS，
+客户端固定服务 UID 0；实例 nonce + revision 拒绝跨重启/配置过期提交。
+
+编译器把原场景应用条件转换为 sing-box 原生 process_path/name/regex，不复制
+业务规则；Linux marked socket 使用内核完整的按目标 Underlay，未伪造默认接口。
+当前 OS resolver 后端严格支持一个非 loopback IPv4 nameserver；不能把系统 stub、
+search/split/multiple DNS 扁平化。网络事件使捕获退出，尚未自动恢复。cache-only
+编译拒绝客户端 file URL/NativeOptions 文件权限；在线资源和协议租约仍待接入。
+
+[服务构建与安装说明](../agent/linux-service.md) 与
+[独立服务验收](../verification/linux-service.md) 区分真实服务流量与尚未运行的
+systemd 安装包。已有 x64 包、unit、安装/移除脚本和来源摘要；没有执行共享宿主
+安装、公开分发或推送。下一步做完整发行版来宾中的原生 DNS/安装/升级/卸载，
+并推进 Windows SCM/WFP；不以这个 Ubuntu 内核服务替代多发行版和完整原生产品。

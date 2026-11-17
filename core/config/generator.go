@@ -159,6 +159,9 @@ type transparentProxyIngress struct {
 	// A compiler-owned acquisition capability reuses exact-Line DNS policy,
 	// but has no listener and receives Android's OS-selected network via callbacks.
 	androidResource bool
+	// Native desktop ingress has no SOCKS listener/metadata credentials. Its
+	// compiler lowers application selectors to sing-box OS process predicates.
+	nativeFlow bool
 }
 
 // LineAddressFamilyCapability is one Provider-measured, transaction-scoped
@@ -717,7 +720,10 @@ func generateSingBox(
 	// 默认路由已经选定的接口原样转交给 sing-box；它不识别 Wi-Fi、网线或任何
 	// VPN 产品。不能在桌面回落 auto_detect_interface：sing-tun 0.8.9 的 darwin
 	// 实现会跳过没有 RTF_GATEWAY 的 utun 默认路由，破坏自然叠加。
-	if platform == PlatformTransparentProxy && transparentIngress.androidResource {
+	if platform == PlatformTransparentProxy && transparentIngress.nativeFlow {
+		// Linux bypass-mark sockets retain the kernel's complete destination-
+		// specific Underlay routing, rather than binding all destinations to one NIC.
+	} else if platform == PlatformTransparentProxy && transparentIngress.androidResource {
 		route["auto_detect_interface"] = true
 	} else if platform == PlatformMacOS || platform == PlatformTransparentProxy {
 		underlayInterface = strings.TrimSpace(underlayInterface)
@@ -776,7 +782,7 @@ func generateSingBox(
 	}
 
 	inbound := buildTUNInbound(vpnServerIP, platform)
-	if platform.isTransparentProxy() && !transparentIngress.androidResource {
+	if platform.isTransparentProxy() && !transparentIngress.androidResource && !transparentIngress.nativeFlow {
 		var inboundErr error
 		inbound, inboundErr = buildTransparentProxyInbound(*transparentIngress, activeApplicationSelectors)
 		if inboundErr != nil {
@@ -784,7 +790,7 @@ func generateSingBox(
 		}
 	}
 	var inbounds []map[string]interface{}
-	if transparentIngress == nil || !transparentIngress.androidResource {
+	if transparentIngress == nil || (!transparentIngress.androidResource && !transparentIngress.nativeFlow) {
 		inbounds = []map[string]interface{}{inbound}
 	}
 

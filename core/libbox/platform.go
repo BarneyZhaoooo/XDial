@@ -59,14 +59,16 @@ type xdPlatformInterface struct {
 	ownInterfaceName   string
 	monitor            *platformInterfaceMonitor
 	bindUnderlaySocket bool
-	socketProtector    SocketProtector
-	secureStateStore   SecureStateStore
-	lineEpoch          string
-	lineRevision       uint64
-	tunInPackets       atomic.Uint64
-	tunInBytes         atomic.Uint64
-	tunOutPackets      atomic.Uint64
-	tunOutBytes        atomic.Uint64
+	// Linux marked sockets leave destination-specific Underlay choice to the kernel.
+	kernelRoutedUnderlay bool
+	socketProtector      SocketProtector
+	secureStateStore     SecureStateStore
+	lineEpoch            string
+	lineRevision         uint64
+	tunInPackets         atomic.Uint64
+	tunInBytes           atomic.Uint64
+	tunOutPackets        atomic.Uint64
+	tunOutBytes          atomic.Uint64
 }
 
 var _ adapter.PlatformInterface = (*xdPlatformInterface)(nil)
@@ -254,6 +256,7 @@ func (m *platformInterfaceMonitor) Start() error {
 	m.platform.mu.Lock()
 	networkManager := m.platform.networkManager
 	defaultInterface := cloneInterface(m.platform.defaultInterface)
+	kernelRouted := m.platform.kernelRoutedUnderlay
 	m.platform.mu.Unlock()
 	if networkManager != nil {
 		if err := networkManager.UpdateInterfaces(); err != nil {
@@ -261,6 +264,9 @@ func (m *platformInterfaceMonitor) Start() error {
 		}
 	}
 	if defaultInterface == nil {
+		if kernelRouted {
+			return nil
+		}
 		return E.New("platform: default interface not set")
 	}
 	m.notify(defaultInterface)
@@ -374,7 +380,10 @@ func (p *xdPlatformInterface) switchCandidate(
 	defaultInterfaceName string,
 	defaultInterfaceIndex int,
 ) (*xdPlatformInterface, error) {
-	if defaultInterfaceName == "" || defaultInterfaceIndex <= 0 {
+	p.mu.Lock()
+	kernelRouted := p.kernelRoutedUnderlay
+	p.mu.Unlock()
+	if !kernelRouted && (defaultInterfaceName == "" || defaultInterfaceIndex <= 0) {
 		return nil, E.New("platform: default Underlay interface is unavailable")
 	}
 	var snapshots []platformNetworkInterfaceSnapshot
@@ -392,7 +401,7 @@ func (p *xdPlatformInterface) switchCandidate(
 			break
 		}
 	}
-	if !defaultFound {
+	if !defaultFound && !kernelRouted {
 		return nil, E.New(
 			"platform: default Underlay is absent from interface snapshot",
 		)
@@ -400,12 +409,13 @@ func (p *xdPlatformInterface) switchCandidate(
 
 	p.mu.Lock()
 	candidate := &xdPlatformInterface{
-		tunFD:              p.tunFD,
-		opener:             p.opener,
-		ownInterfaceName:   p.ownInterfaceName,
-		bindUnderlaySocket: p.bindUnderlaySocket,
-		socketProtector:    p.socketProtector,
-		secureStateStore:   p.secureStateStore,
+		tunFD:                p.tunFD,
+		opener:               p.opener,
+		ownInterfaceName:     p.ownInterfaceName,
+		bindUnderlaySocket:   p.bindUnderlaySocket,
+		kernelRoutedUnderlay: p.kernelRoutedUnderlay,
+		socketProtector:      p.socketProtector,
+		secureStateStore:     p.secureStateStore,
 	}
 	p.mu.Unlock()
 	if err := candidate.setNetworkInterfaces(snapshots); err != nil {
@@ -427,14 +437,15 @@ func (p *xdPlatformInterface) lineRuntimeCapability() *xdPlatformInterface {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return &xdPlatformInterface{
-		tunFD:              p.tunFD,
-		opener:             p.opener,
-		defaultInterface:   cloneInterface(p.defaultInterface),
-		networkInterfaces:  cloneNetworkInterfaces(p.networkInterfaces),
-		ownInterfaceName:   p.ownInterfaceName,
-		bindUnderlaySocket: p.bindUnderlaySocket,
-		socketProtector:    p.socketProtector,
-		secureStateStore:   p.secureStateStore,
+		tunFD:                p.tunFD,
+		opener:               p.opener,
+		defaultInterface:     cloneInterface(p.defaultInterface),
+		networkInterfaces:    cloneNetworkInterfaces(p.networkInterfaces),
+		ownInterfaceName:     p.ownInterfaceName,
+		bindUnderlaySocket:   p.bindUnderlaySocket,
+		kernelRoutedUnderlay: p.kernelRoutedUnderlay,
+		socketProtector:      p.socketProtector,
+		secureStateStore:     p.secureStateStore,
 	}
 }
 
