@@ -19,7 +19,7 @@ scripts/build-linux-service.sh amd64
 
 安装脚本参数为 `install UID CAPTURE_BIT BYPASS_BIT TABLE PRIORITY LISTENER`；不提供可误用于用户网络的固定资源示例。它验证包摘要、安装父目录、并发锁和策略格式，写入 root 私有 `/var/lib/xdial-service/policy.json`，安装 `/usr/local/libexec/xdial-service` 与 systemd unit，执行 daemon-reload，**不会启动服务**。首次安装失败回滚本事务文件。已有安装必须使用独立的升级事务，不能重复 `install` 覆盖。
 
-审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除，见[完整发行版证据](../verification/linux-distro-systemd.md)。Fedora/Arch 和默认系统 DNS 仍待验收。
+审查后管理员可执行 `systemctl enable --now xdial-service`。服务启动恢复 journal、开放本地控制接口，保持未连接；不保存 Profile 明文、不自动恢复连接。unit 需要 systemd；已在完整 Debian 13 来宾中执行首次安装、正常重启、强杀恢复和连接中移除，见[完整发行版证据](../verification/linux-distro-systemd.md)。Fedora/Arch 和原生 NSS 路径仍待验收。
 
 ## 升级事务
 
@@ -73,16 +73,18 @@ IPC 使用 Unix seqpacket。每条消息验证内核 SCM_CREDENTIALS，连接时
 
 - 实现 IPv4 TCP/UDP 透明接入；应用路径/路径前缀/精确进程名交给 sing-box 原生进程搜索器，不信客户端归因。macOS Bundle 和进程名通配符尚未适配，明确拒绝。
 - Direct DNS 与代理服务器 bootstrap 使用捕获的系统 resolver；应用代理 DNS 仍由共享编译器绑定精确 Line。标记套接字由内核按目标选择完整 Underlay，不虚构默认网卡、不重排路由。
-- 当前仅支持 `/etc/resolv.conf` 一个非 loopback IPv4 nameserver。systemd-resolved stub、search/split/multiple DNS 需受保护原生后端；明确拒绝，不能改用公共 DNS 规避。DNS/接口事实变化事件先断开，尚无自动恢复。
+- 普通 resolver 文件仍仅支持一个非 loopback IPv4 nameserver；另外支持标准 `/run/systemd/resolve/stub-resolv.conf` 链接和真实 systemd-resolved 服务，保留系统的 per-link/split DNS。仅支持 DNS socket 入口；`nss-resolve`、未知 NSS hosts 模块和 nscd 共享缓存返回 `unsupported_native_resolver_ingress`，不能把共享进程查询冒充原应用身份。原生 NSS 适配仍待完成，服务不会替用户改写这些系统配置。
+- resolved 模式只豁免经系统总线、PID 1、内核进程、stub socket 与 cgroup v2 验证的 resolver 依赖套接字，不按 UID 豁免；不接受客户端指定 resolver PID、cgroup 或接口。解析器退出、身份变化、网络事实或不支持的 NSS 变化先断开，尚无自动恢复。租约验证失败返回 `unsupported_resolver_dependency`，不回退公共 DNS。
 - 仅允许经过共享编译和验证的离线规则缓存；尚无服务缓存导入/在线资源事务。客户端本地 file URL 和 NativeOptions 文件访问能力被拒绝，不能让 root 读取用户指定私有文件。
 - AnyConnect/Tailscale 协议套接字与冷资源租约、IPv6、现有 mark/iptables 共存、GUI、完整配置库接线、多发行版安装/更新仍待完成。保留这些目标，不能将当前拒绝当作最终产品取舍。
 - systemd unit 需要 `CAP_NET_BIND_SERVICE`，用于透明 UDP 回包绑定原目标的特权端口（如 DNS 53）；完整 Debian 负面/正面对照已验证。安装脚本不改变系统低端口阈值。
 
-### 原生 DNS 后端接入前的审查结论
+### 原生 DNS 后端边界
 
 当前锁定 sing-box 的 `dns/transport/local/local_resolved_linux.go` 会读取默认接口的
 resolved Link DNS，并为其创建绑定该接口的 transport；不能把直接启用这个 `local`
-实现当作保留整个 Underlay 的 split DNS。后续后端必须保留系统 resolver 的原生
-解析语义，同时保护 resolver 自身的出站依赖、观察其生命周期，避免捕获后递归。
-Debian 完整来宾已含真实 systemd-resolved，可在同样隔离条件下进一步验收，不需要
-修改共享宿主的 resolver。
+实现当作保留整个 Underlay 的 split DNS。本后端使用受保护的标准 stub，保留系统
+域路由和 resolver 缓存；关闭盒内第二层 DNS cache，避免域路由变化后保留旧答案。
+完整 Debian 中实际 split DNS、域路由变化、解析器重启和非 resolver cgroup 同 UID
+进程的验收见[原生 resolver 证据](../verification/linux-resolved.md)。原生 NSS/显式
+D-Bus/Varlink 请求的应用归因不在这份 DNS socket 证据内，不能声称默认 NSS 已适配。

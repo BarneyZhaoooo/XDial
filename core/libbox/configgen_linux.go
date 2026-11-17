@@ -20,6 +20,15 @@ func GenerateLinuxConfig(profileJSON, systemDNS, basePath string, bypassMark uin
 	}, nil)
 }
 
+func GenerateLinuxResolvedConfig(profileJSON, basePath string, bypassMark uint32) (string, error) {
+	if err := validateLinuxProfileFiles(profileJSON); err != nil {
+		return "", err
+	}
+	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, func(p *config.Profile) ([]byte, error) {
+		return config.GenerateLinuxResolvedFlow(p, basePath, bypassMark)
+	}, nil)
+}
+
 // validateLinuxProfileFiles runs before materialization may open any local
 // source. Root-owned caches are allowed only after compiler materialization.
 func validateLinuxProfileFiles(profileJSON string) error {

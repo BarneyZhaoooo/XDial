@@ -34,6 +34,22 @@ func TestInstalledSystemdLifecycle(t *testing.T) {
 	const socket = "/run/xdial-service/control.sock"
 	const state = "/var/lib/xdial-service"
 	const installer = "/opt/xdial-test/xdial-service/install.sh"
+	// This lifecycle fixture exercises application DNS packets, not native NSS
+	// IPC. Keep the distinction explicit and restore the guest's original file.
+	nss, err := os.ReadFile("/etc/nsswitch.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.WriteFile("/etc/nsswitch.conf", nss, 0644) })
+	lines := strings.Split(string(nss), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "hosts:") {
+			lines[i] = "hosts: files dns"
+		}
+	}
+	if err = os.WriteFile("/etc/nsswitch.conf", []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatal("fresh guest required", err)
 	}

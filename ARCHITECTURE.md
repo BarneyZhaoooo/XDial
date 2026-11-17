@@ -192,6 +192,21 @@ Provider 不读域名、不执行第二次 DNS 裁决。
 入口：[DNS transport](core/libbox/mobile_dns_transport.go)、
 [原查询与系统解析补丁](patches/sing-box/)。
 
+Linux 透明服务的系统 DNS 后端与上述 Apple 接口分开适配：当系统明确使用
+systemd-resolved 的标准 stub 时，Direct/服务器 bootstrap 经带 bypass mark 的
+sing-box transport 查询该 stub，保留 resolved 的 per-link/split DNS。代理应用 DNS
+仍绑定原精确 Line；不启用会拍平默认接口 DNS 的上游 `local` 实现。此模式关闭盒内
+第二层 DNS cache，避免系统域路由变化后继续返回旧视角；系统 resolver 自己拥有缓存。
+
+系统 resolver 的依赖套接字只按已验证的服务 cgroup v2 豁免：系统总线、PID 1 的
+MainPID/非委托 cgroup、内核进程和实际 stub socket 所有权必须一致。pidfd、总线
+owner 与持有的 cgroup handle 限定租约；退出/身份变化先撤捕获，不能用客户端自报
+PID/UID 或宽泛 root UID 豁免。这个保护不等于应用原生解析 IPC 已接管：`nss-resolve`
+与 nscd 会丢失原应用网络身份，当前服务拒绝这些配置，变化时断开。未来需要带内核
+调用者身份的原生解析入口；不能把 DNS socket 证据称为所有 D-Bus/Varlink API 已覆盖。
+入口：[Linux resolver 租约](core/linuxresolver/resolved_linux.go)、
+[系统验收](docs/verification/linux-resolved.md)。
+
 ### 4.3 就绪与地址族
 
 Direct 的就绪证明是当前 Underlay 上下文与配置归属，**不依赖固定外部 DNS、TLS 或出口

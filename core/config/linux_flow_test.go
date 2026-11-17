@@ -43,6 +43,27 @@ func TestLinuxFlowCompiler(t *testing.T) {
 		t.Fatal("missing process predicate")
 	}
 }
+
+func TestLinuxResolvedFlowKeepsNativeDependency(t *testing.T) {
+	b, e := GenerateLinuxResolvedFlow(linuxFlowProfile(), t.TempDir(), 1<<17)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s := string(b)
+	for _, want := range []string{`"server":"127.0.0.53"`, `"default_mark":131072`, `"disable_cache":true`} {
+		if !strings.Contains(s, want) {
+			t.Fatal("missing native resolver contract", want, s)
+		}
+	}
+	for _, bad := range []string{`"type":"local"`, `"inbounds"`, `"auto_detect_interface"`, `"default_interface"`, `"server":"1.1.1.1"`} {
+		if strings.Contains(s, bad) {
+			t.Fatal("unexpected resolver fallback", bad)
+		}
+	}
+	if _, e := GenerateLinuxFlow(linuxFlowProfile(), t.TempDir(), "127.0.0.53", 1<<17); e == nil {
+		t.Fatal("ordinary resolver admitted stub without lease")
+	}
+}
 func TestLinuxFlowRejectsUnsupportedAdmission(t *testing.T) {
 	for _, dns := range []string{"127.0.0.53", "::1", "", "255.255.255.255"} {
 		if _, e := GenerateLinuxFlow(linuxFlowProfile(), t.TempDir(), dns, 1<<17); e == nil {

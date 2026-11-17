@@ -25,6 +25,7 @@ import (
 	"github.com/kafeifei/xdial/core/libbox"
 	"github.com/kafeifei/xdial/core/linuxcapture"
 	"github.com/kafeifei/xdial/core/linuxmaintenance"
+	"github.com/kafeifei/xdial/core/linuxresolver"
 	"github.com/kafeifei/xdial/core/mobile"
 	"golang.org/x/sys/unix"
 )
@@ -58,6 +59,7 @@ type Service struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	core            *libbox.Libbox
+	resolver        *linuxresolver.Lease
 	capture         *linuxcapture.Session
 	controller      *mobile.ConnectionController
 	revision        uint64
@@ -268,11 +270,32 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 	if err := s.watchResolver(); err != nil {
 		return response("unsupported_underlay")
 	}
-	dns, interfaces, identity, err := networkFacts()
+	if err := resolverIngressReady(); err != nil {
+		return response("unsupported_native_resolver_ingress")
+	}
+	if s.core == nil && usesResolvedStub() {
+		l, e := linuxresolver.Open(s.ctx)
+		if e != nil {
+			return response("unsupported_resolver_dependency")
+		}
+		s.resolver = l
+	}
+	defer func() {
+		if s.core == nil && s.resolver != nil {
+			s.resolver.Close()
+			s.resolver = nil
+		}
+	}()
+	dns, interfaces, identity, err := s.networkFacts()
 	if err != nil {
 		return response("unsupported_underlay")
 	}
-	config, err := libbox.GenerateLinuxConfig(string(m.Profile), dns, filepath.Join(s.root, "cache"), s.policy.Capture.BypassMark)
+	var config string
+	if s.resolver != nil {
+		config, err = libbox.GenerateLinuxResolvedConfig(string(m.Profile), filepath.Join(s.root, "cache"), s.policy.Capture.BypassMark)
+	} else {
+		config, err = libbox.GenerateLinuxConfig(string(m.Profile), dns, filepath.Join(s.root, "cache"), s.policy.Capture.BypassMark)
+	}
 	if err != nil {
 		return response("invalid_profile_or_missing_cache")
 	}
@@ -299,7 +322,7 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 			err = l.StartLinuxTProxy(s.policy.Capture.Listener, s.policy.Capture.BypassMark)
 		}
 		if err == nil {
-			_, _, check, e := networkFacts()
+			_, _, check, e := s.networkFacts()
 			err = e
 			if e == nil && check != identity {
 				err = errors.New("underlay changed")
@@ -313,10 +336,27 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 		}
 		if err == nil {
 			failureCode = "capture_install_failed"
-			s.capture, err = linuxcapture.Install(ctx, filepath.Join(s.root, "capture"), s.policy.Capture)
+			if s.resolver == nil {
+				s.capture, err = linuxcapture.Install(ctx, filepath.Join(s.root, "capture"), s.policy.Capture)
+			} else {
+				id, level, e := s.resolver.Scope()
+				err = e
+				if err == nil {
+					s.capture, err = linuxcapture.InstallWithResolver(ctx, filepath.Join(s.root, "capture"), s.policy.Capture, linuxcapture.ResolverScope{ID: id, Level: level})
+				}
+				if err == nil {
+					err = s.resolver.Validate(ctx)
+				}
+			}
 		}
 		if err != nil {
 			s.controller.CompleteAttempt(epoch, false, false, 0)
+			if s.capture != nil {
+				if e := s.capture.Close(); e != nil {
+					s.cleanupRequired = true
+				}
+				s.capture = nil
+			}
 			s.stopCore()
 			if e := linuxcapture.Recover(filepath.Join(s.root, "capture")); e != nil {
 				s.cleanupRequired = true
@@ -325,6 +365,7 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 		}
 		s.underlay = identity
 		s.controller.CompleteAttempt(epoch, true, false, 0)
+		s.observeResolverLease()
 		return response("ok")
 	}
 	// No two packet readers: libbox's stable listener admits a candidate without
@@ -337,7 +378,7 @@ func (s *Service) handle(ctx context.Context, _ controlpipe.UnixIdentity, req co
 		return response("switch_failed")
 	}
 	if err = s.prepare(ctx, s.core, func() error { return s.core.PrepareSwitch(config, "", interfaces, "", -1) }); err == nil {
-		_, _, check, e := networkFacts()
+		_, _, check, e := s.networkFacts()
 		err = e
 		if e == nil && check != identity {
 			err = errors.New("underlay changed")
@@ -375,6 +416,10 @@ func (s *Service) stopCore() {
 	if s.core != nil {
 		s.core.Stop()
 		s.core = nil
+	}
+	if s.resolver != nil {
+		s.resolver.Close()
+		s.resolver = nil
 	}
 }
 func (s *Service) disconnect() error {
@@ -444,6 +489,24 @@ func resolverAddress(b []byte) (string, error) {
 	return ip.String(), nil
 }
 func networkFacts() (dns, interfaces, identity string, err error) {
+	return readNetworkFacts(false)
+}
+func (s *Service) networkFacts() (dns, interfaces, identity string, err error) {
+	if s.resolver == nil {
+		return networkFacts()
+	}
+	if err = s.resolver.Validate(s.ctx); err != nil {
+		return
+	}
+	dns, interfaces, identity, err = readNetworkFacts(true)
+	identity += "/" + s.resolver.Identity()
+	return
+}
+func usesResolvedStub() bool {
+	path, e := filepath.EvalSymlinks("/etc/resolv.conf")
+	return e == nil && path == "/run/systemd/resolve/stub-resolv.conf"
+}
+func readNetworkFacts(resolved bool) (dns, interfaces, identity string, err error) {
 	f, err := os.Open("/etc/resolv.conf")
 	if err != nil {
 		return
@@ -457,7 +520,36 @@ func networkFacts() (dns, interfaces, identity string, err error) {
 		err = errors.New("resolver file too large")
 		return
 	}
-	dns, err = resolverAddress(b)
+	if resolved {
+		if !usesResolvedStub() {
+			err = errors.New("system resolver mode changed")
+			return
+		}
+		servers := 0
+		for _, line := range strings.Split(string(b), "\n") {
+			f := strings.Fields(strings.SplitN(line, "#", 2)[0])
+			if len(f) == 0 {
+				continue
+			}
+			if f[0] == "nameserver" {
+				if len(f) != 2 || f[1] != linuxresolver.Stub {
+					err = errors.New("system stub address changed")
+					return
+				}
+				servers++
+			} else if f[0] != "search" && f[0] != "options" {
+				err = errors.New("unsupported stub declaration")
+				return
+			}
+		}
+		if servers != 1 {
+			err = errors.New("ambiguous system stub")
+			return
+		}
+		dns = linuxresolver.Stub
+	} else {
+		dns, err = resolverAddress(b)
+	}
 	if err != nil {
 		return
 	}
@@ -486,6 +578,9 @@ func networkFacts() (dns, interfaces, identity string, err error) {
 	}
 	interfaces = string(data)
 	hash := sha256.Sum256(append(append([]byte(dns), 0), data...))
+	if resolved {
+		hash = sha256.Sum256(append(append(b, 0), data...))
+	}
 	identity = hex.EncodeToString(hash[:])
 	return
 }

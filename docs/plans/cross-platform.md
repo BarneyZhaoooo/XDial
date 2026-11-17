@@ -8,7 +8,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
 | Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
-| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立鉴权服务已接 TProxy/共享编译/捕获恢复；完整 Debian 安装、升级、回滚、强杀恢复与卸载通过；默认系统 DNS/其他发行版待做 |
+| 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 独立服务/TProxy/安装升级恢复；完整 Debian 的 resolved split DNS socket 路径通过；原生 NSS/其他发行版待做 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
 | 自动场景 | 已有 | Swift 自动驾驶＋共享 Go picker | 需逐项核对 | 共享 Go 选择器；连接前 SSID/地区已接入，连接中自动观察待做 | 缺失 | 缺失 |
@@ -17,7 +17,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 
 Linux 最新系统证据见 [隔离来宾验收](../verification/linux-transparent-guest.md)：真实
 nft TProxy TCP/UDP/DNS、OS 进程路径分流、场景提交/退休已通过。已新增
-[捕获安装/恢复组件](../verification/linux-capture-transaction.md)，已接入[独立授权服务](../agent/linux-service.md)；仍需原生 DNS 后端、
+[捕获安装/恢复组件](../verification/linux-capture-transaction.md)，已接入[独立授权服务](../agent/linux-service.md)及[受保护 resolved 后端](../verification/linux-resolved.md)；仍需原生 NSS 调用者入口、
 IPv6、多发行版安装和原生 UI；继续推进完整安装生命周期及 Windows WFP
 边界，不以本轮测试来宾替代完整桌面交付。
 
@@ -372,3 +372,19 @@ systemd 安装包。已有 x64 包、unit、安装/移除脚本和来源摘要�
 受保护的原生系统 DNS（包括真实 resolved/split DNS），再用完整 Fedora/Arch 来宾
 执行安装与升级；不能用同一个 Debian 镜像换标签。Windows SCM/WFP、Linux 协议
 租约/IPv6/既有 mark 共存、移动端和发布缺口保持原范围，避免重复已通过的同一路径。
+
+### 2026-11-17：真实 resolved split DNS 与依赖保护
+
+Linux 服务已使用真实 systemd-resolved 的标准 stub，保留系统 per-link 域路由；
+Direct/bootstrap 经共享 sing-box 带标记 transport，代理应用 DNS 仍走精确 Line。
+依赖租约核对系统总线、PID 1/unit、内核进程/stub socket 与 cgroup v2；只豁免这个
+服务的依赖 socket，不按 UID/root 整体绕过。退出或身份变化先撤捕获，用户显式重连。
+完整 Debian 已验证两个 veth/netns 的不同 DNS、连接中交换域路由、不等 TTL 的新答案、
+解析器重启，以及同 UID 非 resolver cgroup 的真实进程仍被捕获。最终安装/重启/
+强杀恢复/卸载回归通过，见 [完整证据](../verification/linux-resolved.md)。
+
+审查发现 `nss-resolve`/nscd 原生 IPC 丢失原应用身份；本阶段明确拒绝，运行中变化
+会断开，产品不改系统 NSS。DNS socket 后端不能冒称默认 NSS 或所有 D-Bus/Varlink
+接口已适配，后续必须补内核调用者归因的原生入口。这个缺口保留在首版范围内。
+Fedora/Arch 仍须真实完整镜像，不能复用 Debian 验收标签；Windows SCM/WFP、Linux
+协议租约/IPv6/既有 mark 共存/UI、Android 和发布剩余目标继续推进。

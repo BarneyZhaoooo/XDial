@@ -14,8 +14,18 @@ import (
 // resolver. Stub/search/split-DNS support requires a protected native backend;
 // flattening it to public DNS or the daemon's default resolver is forbidden.
 func GenerateLinuxFlow(profile *Profile, basePath, systemDNS string, bypassMark uint32) ([]byte, error) {
+	return generateLinuxFlow(profile, basePath, systemDNS, bypassMark, false)
+}
+
+// GenerateLinuxResolvedFlow is used only while the service holds the verified
+// resolver dependency and kernel socket exemption. It does not accept a stub
+// address from Profile or replace system split DNS with flattened servers.
+func GenerateLinuxResolvedFlow(profile *Profile, basePath string, bypassMark uint32) ([]byte, error) {
+	return generateLinuxFlow(profile, basePath, "127.0.0.53", bypassMark, true)
+}
+func generateLinuxFlow(profile *Profile, basePath, systemDNS string, bypassMark uint32, resolved bool) ([]byte, error) {
 	ip, e := netip.ParseAddr(systemDNS)
-	if e != nil || !ip.Is4() || ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip == netip.MustParseAddr("255.255.255.255") {
+	if e != nil || !ip.Is4() || (ip.IsLoopback() && !resolved) || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip == netip.MustParseAddr("255.255.255.255") {
 		return nil, fmt.Errorf("Linux DNS requires a captured unicast resolver backend")
 	}
 	if bypassMark == 0 || bypassMark&(bypassMark-1) != 0 {
@@ -81,6 +91,11 @@ func GenerateLinuxFlow(profile *Profile, basePath, systemDNS string, bypassMark 
 	delete(d, "experimental")
 	d["log"] = map[string]any{"disabled": true}
 	dns := d["dns"].(map[string]any)
+	if resolved {
+		// The OS resolver owns cache invalidation when per-link DNS changes.
+		// Do not retain a second cache across those system policy changes.
+		dns["disable_cache"] = true
+	}
 	for i, v := range dns["servers"].([]any) {
 		s := v.(map[string]any)
 		// Both Direct resolution and proxy endpoint bootstrap use captured OS

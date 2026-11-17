@@ -73,6 +73,24 @@ func Install(ctx context.Context, dir string, p Plan) (*Session, error) {
 }
 
 func install(ctx context.Context, dir string, p Plan, after func(int) error) (*Session, error) {
+	return installScoped(ctx, dir, p, nil, after)
+}
+
+// ResolverScope is a kernel fact obtained from a held, authenticated resolver
+// lease. It is intentionally absent from Plan/Policy JSON and user IPC.
+type ResolverScope struct {
+	ID    uint64
+	Level uint32
+}
+
+func InstallWithResolver(ctx context.Context, dir string, p Plan, scope ResolverScope) (*Session, error) {
+	if scope.ID == 0 || scope.Level == 0 || scope.Level > 255 {
+		return nil, errors.New("invalid resolver socket scope")
+	}
+	return installScoped(ctx, dir, p, &scope, nil)
+}
+
+func installScoped(ctx context.Context, dir string, p Plan, scope *ResolverScope, after func(int) error) (*Session, error) {
 	if e := p.Validate(); e != nil {
 		return nil, e
 	}
@@ -93,6 +111,7 @@ func install(ctx context.Context, dir string, p Plan, after func(int) error) (*S
 		s.close()
 		return nil, e
 	}
+	k.resolver = scope
 	failBefore := func(e error) (*Session, error) { k.close(); s.close(); return nil, e }
 	boot, ns, e := kernelIdentity()
 	if e != nil {

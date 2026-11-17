@@ -59,7 +59,7 @@ if getent passwd 1001 || getent group 1001; then echo 'test UID already occupied
 groupadd -g 1001 xdial-test
 useradd -u 1001 -g 1001 -M -s /usr/sbin/nologin xdial-test
 export XDIAL_ISOLATED_VM=1 XDIAL_DISTRO_VM=1
-/service-tests -test.v -test.run='^TestInstalled(Systemd|Upgrade)Lifecycle$' -test.timeout=330s
+/service-tests -test.v -test.run='^(TestNSSIngressAdmission|TestInstalled(Systemd|Upgrade|Resolved)Lifecycle)$' -test.timeout=330s
 if [ -f service-lifecycle-tests ]; then
  install -m 0755 service-lifecycle-tests /service-tests
  /service-tests -test.v -test.run='^TestInstalledSystemdLifecycle$' -test.timeout=90s
@@ -125,6 +125,8 @@ runcmd:
         raise SystemExit('service lifecycle regression did not pass')
     if a.baseline and ('XDIAL_DISTRO_UPGRADE_OK '+a.upgrade_group).encode() not in test_output:
         raise SystemExit('requested upgrade group did not pass')
+    if a.require_resolved and b'XDIAL_DISTRO_RESOLVED_OK' not in test_output:
+        raise SystemExit('native resolved test did not pass')
 
 if __name__ == '__main__':
     p=argparse.ArgumentParser(description=__doc__)
@@ -134,6 +136,7 @@ if __name__ == '__main__':
     p.add_argument('--lifecycle-tests',type=Path)
     p.add_argument('--baseline',type=Path)
     p.add_argument('--upgrade-group',choices=('all','early','late'),default='all')
+    p.add_argument('--require-resolved',action='store_true')
     p.add_argument('--tests',required=True,type=Path)
     p.add_argument('--output',required=True,type=Path)
     run(p.parse_args())

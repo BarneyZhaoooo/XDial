@@ -25,9 +25,10 @@ import (
 const routeProtocol = unix.RTPROT_STATIC // ownership also requires the journal, exact scope, and random realm
 
 type kernel struct {
-	rt     *rtnl.Handle
-	nft    *nftables.Conn
-	socket *mnl.Conn
+	rt       *rtnl.Handle
+	nft      *nftables.Conn
+	socket   *mnl.Conn
+	resolver *ResolverScope
 }
 
 func openKernel() (*kernel, error) {
@@ -185,6 +186,11 @@ func (k *kernel) installCapture(j *journal) error {
 	add := func(c *nftables.Chain, x ...expr.Any) { k.nft.AddRule(&nftables.Rule{Table: t, Chain: c, Exprs: x}) }
 	for _, c := range []*nftables.Chain{output, input} {
 		add(c, &expr.Meta{Key: expr.MetaKeyMARK, Register: 1}, &expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4, Mask: binaryutil.NativeEndian.PutUint32(j.Plan.BypassMark), Xor: make([]byte, 4)}, &expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: make([]byte, 4)}, &expr.Verdict{Kind: expr.VerdictReturn})
+	}
+	if scope := k.resolver; scope != nil {
+		// Preserve only the verified OS resolver's own sockets, including its
+		// upstream and stub replies. Never exempt a UID, root, or a whole slice.
+		add(output, &expr.Socket{Key: expr.SocketKeyCgroupv2, Level: scope.Level, Register: 1}, &expr.Cmp{Register: 1, Data: binaryutil.NativeEndian.PutUint64(scope.ID)}, &expr.Verdict{Kind: expr.VerdictReturn})
 	}
 	// Only host-originated flows are captured. Forwarded packets, link-local,
 	// multicast and broadcast remain with the opaque Underlay. Private unicast

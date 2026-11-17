@@ -4,6 +4,7 @@ package linuxservice
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
@@ -50,8 +51,13 @@ func (s *Service) observeNetwork() error {
 				broken = !ok
 			case _, ok := <-addresses:
 				broken = !ok
-			case _, ok := <-w.Events:
+			case event, ok := <-w.Events:
 				broken = !ok
+				if ok && event.Name == "/run/nscd" {
+					if e := s.watchNSSCache(); e != nil {
+						broken = true
+					}
+				}
 			case <-w.Errors:
 				broken = true
 			case <-failed:
@@ -66,8 +72,8 @@ func (s *Service) observeNetwork() error {
 				s.networkFailed = true
 			}
 			if s.core != nil {
-				_, _, identity, e := networkFacts()
-				if broken || e != nil || identity != s.underlay {
+				_, _, identity, e := s.networkFacts()
+				if broken || e != nil || identity != s.underlay || resolverIngressReady() != nil {
 					s.revision++
 					s.disconnect()
 				}
@@ -80,8 +86,40 @@ func (s *Service) observeNetwork() error {
 	}()
 	return nil
 }
+
+func (s *Service) observeResolverLease() {
+	l := s.resolver
+	if l == nil {
+		return
+	}
+	s.observer.Add(1)
+	go func() {
+		defer s.observer.Done()
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-l.Invalid():
+		}
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-s.gate:
+		}
+		defer func() { s.gate <- struct{}{} }()
+		if s.resolver == l {
+			s.revision++
+			s.disconnect()
+		}
+	}()
+}
 func (s *Service) watchResolver() error {
 	if e := s.watcher.Add("/etc"); e != nil {
+		return e
+	}
+	if e := s.watcher.Add("/run"); e != nil {
+		return e
+	}
+	if e := s.watchNSSCache(); e != nil {
 		return e
 	}
 	path, e := filepath.EvalSymlinks("/etc/resolv.conf")
@@ -89,6 +127,15 @@ func (s *Service) watchResolver() error {
 		return e
 	}
 	return s.watcher.Add(filepath.Dir(path))
+}
+
+func (s *Service) watchNSSCache() error {
+	if _, e := os.Stat("/run/nscd"); os.IsNotExist(e) {
+		return nil
+	} else if e != nil {
+		return e
+	}
+	return s.watcher.Add("/run/nscd")
 }
 
 // Cancel only the preparation lease. Join the callback before committing so a

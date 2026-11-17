@@ -63,6 +63,9 @@ def run(args):
     if bool(args.service_binary) != bool(args.service_tests):
         raise SystemExit("service binary and tests must be supplied together")
     if args.service_binary:
+        # This minimal initramfs has no native NSS/cache service. Declare its
+        # wire-DNS fixture explicitly; do not relax the production admission.
+        (guest / "etc/nsswitch.conf").write_text("hosts: files dns\n")
         shutil.copy2(args.service_binary, guest / "app-service")
         shutil.copy2(args.service_tests, guest / "service-tests")
         (guest / "app-service").chmod(0o755)
