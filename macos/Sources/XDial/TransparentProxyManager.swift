@@ -2209,6 +2209,48 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
     }
 
+    /// The committed system-takeover transaction whose Provider may serve app
+    /// requests, or `nil` when XDial does not currently own the system.
+    var committedProviderTransactionID: String? {
+        guard let transactionID = currentTransactionID,
+              diagnosticsTransactionIsCurrent(transactionID) else { return nil }
+        return transactionID
+    }
+
+    /// Runs an exact-Line profile source download inside the Provider, whose
+    /// sockets XDial never captures. Only the bounded document text returns.
+    func sendProfileSourceLineFetch(_ request: ProfileSourceLineFetchRequest,
+        completion: @escaping (Result<ProfileSourceLineFetchResponse, Error>) -> Void) {
+        let gate = HostCompletionGate(completion)
+        guard request.isValid, diagnosticsTransactionIsCurrent(request.transactionID),
+              let data = try? JSONEncoder().encode(request),
+              data.count <= ProfileSourceLineFetch.maxRequestBytes else {
+            gate.finish(.failure(ProviderDiagnosticsHostError.transactionMismatch)); return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + ProfileSourceLineFetch.hostTimeout) {
+            gate.finish(.failure(ProviderDiagnosticsHostError.timedOut))
+        }
+        withProviderMessageManager(purpose: .diagnostics) { result in
+            guard case let .success(manager?) = result,
+                  manager.connection.status == .connected,
+                  self.diagnosticsTransactionIsCurrent(request.transactionID),
+                  let session = manager.connection as? NETunnelProviderSession else {
+                gate.finish(.failure(ProviderDiagnosticsHostError.notConnected)); return
+            }
+            do {
+                try session.sendProviderMessage(data) { raw in
+                    guard let raw, raw.count <= ProfileSourceLineFetch.maxResponseBytes,
+                          let response = try? JSONDecoder().decode(ProfileSourceLineFetchResponse.self, from: raw),
+                          response.requestID == request.requestID,
+                          response.transactionID == request.transactionID else {
+                        gate.finish(.failure(ProviderDiagnosticsHostError.invalidResponse)); return
+                    }
+                    gate.finish(.success(response))
+                }
+            } catch { gate.finish(.failure(ProviderDiagnosticsHostError.sendFailed)) }
+        }
+    }
+
     /// 电源与 Underlay 条件不属于某笔事务，只发给当前已连接的 Provider；结果区分未连接
     /// 与未确认，由发布者重发或续约。Provider 据此决定 Line 局部恢复能否消耗预算。
     private func sendLineRecoveryConditions(
@@ -5140,7 +5182,7 @@ private final class HostUnderlayCapture {
         }
     }
 
-    fileprivate static func captureSystemDNSJSON() -> String? {
+    static func captureSystemDNSJSON() -> String? {
         guard
             let state = SCDynamicStoreCopyValue(
                 nil,

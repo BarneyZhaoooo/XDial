@@ -202,6 +202,14 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
     private var activeScenarioSwitch:
         ProviderScenarioSwitchOperation?
     private var generation = UUID().uuidString
+    /// One profile-source download at a time; owned by `engineQueue`.
+    private var profileSourceFetchActive = false
+    /// The fetch is bounded by Go to 30 s and must not occupy `engineQueue`.
+    private let profileSourceFetchQueue = DispatchQueue(
+        label: XDialBuildIdentity.queueLabelPrefix
+            + ".transparent-proxy.profile-source-fetch",
+        qos: .userInitiated
+    )
     /// A committed target remains authoritative even if releasing its retained
     /// source fails. Block the next Prepare until the two-lease pool proves the
     /// source lease is gone, so a third generation can never accumulate.
@@ -729,6 +737,57 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         }
     }
 
+    /// Runs the shared exact-Line source download here because, while this
+    /// transaction owns the system, the host app's own sockets are captured.
+    /// The Provider's sockets are not, so the selected Line stays exact. It
+    /// borrows no runtime capability and never changes the committed session.
+    private func handleProfileSourceLineFetch(_ data: Data, completion: @escaping (Data?) -> Void) {
+        guard data.count <= ProfileSourceLineFetch.maxRequestBytes,
+              let request = try? JSONDecoder().decode(ProfileSourceLineFetchRequest.self, from: data) else {
+            completion(nil)
+            return
+        }
+        func reply(_ code: String, _ content: String? = nil) {
+            completion(try? JSONEncoder().encode(ProfileSourceLineFetchResponse(
+                requestID: request.requestID, transactionID: request.transactionID,
+                code: code, content: content)))
+        }
+        engineQueue.async { [weak self] in
+            guard let self else { completion(nil); return }
+            guard request.isValid else { reply("invalid-request"); return }
+            guard request.transactionID == self.generation else { reply("transaction-mismatch"); return }
+            guard self.settingsCommitted, !self.settingsCommitInFlight, !self.rollbackInProgress,
+                  self.runtime != nil, self.session != nil else {
+                reply("session-not-committed")
+                return
+            }
+            guard !self.profileSourceFetchActive else { reply("busy"); return }
+            self.profileSourceFetchActive = true
+            let logger = self.logger
+            self.profileSourceFetchQueue.async { [weak self] in
+                var code = "fetch-failed"
+                var content: String?
+                if let instance = LibboxNew(nil) {
+                    do {
+                        content = try instance.fetchProfileSourceViaLine(
+                            request.profileJSON, rawURL: request.url, lineID: request.lineID,
+                            systemDNSJSON: request.systemDNSJSON, basePath: NSTemporaryDirectory())
+                        code = "ok"
+                    } catch {
+                        code = ProfileSourceLineFetchOutcome.code(for: error)
+                        logger.warning("profile-source-line-fetch failed code=\(code, privacy: .public)")
+                    }
+                }
+                if let content, content.utf8.count > ProfileSourceLineFetch.maxContentBytes {
+                    reply("fetch-failed")
+                } else {
+                    reply(code, code == "ok" ? content : nil)
+                }
+                self?.engineQueue.async { self?.profileSourceFetchActive = false }
+            }
+        }
+    }
+
     private func handleLineRecoveryConditions(_ data: Data, completion: @escaping (Data?) -> Void) {
         guard let receipt = lineRecoveryConditions.receive(data) else {
             completion(nil)
@@ -780,6 +839,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 return
             case LocalSOCKSShareRequest.kind:
                 handleLocalSOCKSShare(messageData, completion: completionHandler)
+                return
+            case ProfileSourceLineFetchRequest.kind:
+                handleProfileSourceLineFetch(messageData, completion: completionHandler)
                 return
             case ProviderLineRecoveryConditions.kind:
                 handleLineRecoveryConditions(messageData, completion: completionHandler)
