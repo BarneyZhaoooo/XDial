@@ -1480,8 +1480,20 @@ final class AppState: ObservableObject {
         )
     }
 
-    /// 用户从断开态点击场景球时表达的是“用这个场景连接”，不是只选择场景。
-    /// SSID / 设置页的激活仍走 `switchScenario`，因此 D39 的显式断开门禁不变。
+    /// Changing the home selection while idle must never start the engine.
+    func selectHomeScenario(_ id: String) {
+        guard profileLibraryLoaded, profilePersistenceError == nil,
+              profile.scenarios.contains(where: { $0.id == id }),
+              engine.status != "disconnecting" else { return }
+        if isBusy || isConnected {
+            connectScenario(id)
+        } else {
+            ssidScenarioSelection.noteManualSelection()
+            cancelNetworkEpochQuietWindow()
+            _ = persistActiveScenario(id)
+        }
+    }
+
     @discardableResult
     func connectScenario(_ id: String, profileID: String? = nil) -> Bool {
         ssidScenarioSelection.noteManualSelection()

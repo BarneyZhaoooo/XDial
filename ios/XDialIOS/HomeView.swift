@@ -12,7 +12,6 @@ struct HomeView: View {
     @State private var showingAdvanced = false
     @State private var showingProblemDetail = false
     @State private var isConfirmingReset = false
-    @State private var pendingScenario: Scenario?
     @State private var tailscaleLoginLineID: String?
     @State private var tailscaleLoginError: String?
     @State private var trafficRate = TrafficRate.unavailable
@@ -101,23 +100,6 @@ struct HomeView: View {
         .sheet(isPresented: $showingProblemDetail) {
             ProblemDetailSheet(detail: problemDetailText)
                 .environmentObject(app)
-        }
-        .alert(
-            pendingScenario.map {
-                app.tr("切换到「\($0.name)」？", "Switch to “\($0.name)”?")
-            } ?? "",
-            isPresented: scenarioSwitchPresented,
-            presenting: pendingScenario
-        ) { scenario in
-            Button(app.tr("切换", "Switch")) {
-                Task { await switchWhileConnected(to: scenario.id) }
-            }
-            Button(app.tr("取消", "Cancel"), role: .cancel) {}
-        } message: { _ in
-            Text(app.tr(
-                "新的方式在后台准备好后接手，VPN 不会断开；正在进行的下载或通话可能会中断一下。",
-                "The new routing takes over once it's ready, without turning the VPN off. Downloads or calls in progress may be interrupted briefly."
-            ))
         }
         .alert(
             app.tr("恢复默认配置？", "Restore the default configuration?"),
@@ -757,80 +739,21 @@ struct HomeView: View {
     }
 
     private func scenarioCard(_ scenario: Scenario) -> some View {
-        let isActive = scenario.id == app.profile.activeScenarioID
-        return Button {
-            scenarioTapped(scenario)
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: ScenarioDescriber.symbol(for: scenario, in: app.profile))
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(isActive ? XDialTheme.surface : XDialTheme.accent)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        isActive ? XDialTheme.accent : XDialTheme.accent.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(scenario.name)
-                        .font(.headline)
-                        .foregroundStyle(XDialTheme.ink)
-                    Text(ScenarioDescriber.summary(
-                        for: scenario,
-                        in: app.profile,
-                        isChinese: app.language == .zh
-                    ))
-                    .font(.subheadline)
-                    .foregroundStyle(XDialTheme.inkSecondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(isActive ? XDialTheme.accent : XDialTheme.hairline)
+        HomeScenarioCard(
+            id: scenario.id, name: scenario.name,
+            summary: ScenarioDescriber.summary(for: scenario, in: app.profile, isChinese: app.language == .zh),
+            symbol: ScenarioDescriber.symbol(for: scenario, in: app.profile),
+            isActive: scenario.id == app.profile.activeScenarioID,
+            requiresConfirmation: !isIdle, tr: app.tr,
+            onManualSelection: {
+                autoScenario = false
+                app.updateScenarioAutoPolicy()
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                XDialTheme.surface,
-                in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
-                    .strokeBorder(XDialTheme.accent.opacity(isActive ? 1 : 0), lineWidth: 1.5)
-            }
-            .shadow(color: .black.opacity(0.04), radius: 12, y: 4)
-            .contentShape(RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous))
+        ) {
+            if isIdle { app.selectScenario(scenario.id) }
+            else { Task { await switchWhileConnected(to: scenario.id) } }
         }
-        .buttonStyle(.plain)
         .disabled(status == "disconnecting")
-        .animation(.smooth(duration: 0.25), value: isActive)
-        .sensoryFeedback(.selection, trigger: isActive)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
-        .accessibilityIdentifier("home-scenario-\(scenario.id)")
-    }
-
-    private func scenarioTapped(_ scenario: Scenario) {
-        guard scenario.id != app.profile.activeScenarioID else { return }
-        // 自己动手选了，就不再自动换；先告诉 VPN 扩展，免得它在后台又换回去。
-        autoScenario = false
-        app.updateScenarioAutoPolicy()
-        if isIdle {
-            app.selectScenario(scenario.id)
-        } else {
-            pendingScenario = scenario
-        }
-    }
-
-    private var scenarioSwitchPresented: Binding<Bool> {
-        Binding(
-            get: { pendingScenario != nil },
-            set: { if !$0 { pendingScenario = nil } }
-        )
     }
 
     // MARK: - 账号

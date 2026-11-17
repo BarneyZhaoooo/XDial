@@ -17,6 +17,8 @@ struct DialControl: View {
     let phase: DialPhase
     /// 不可用时变淡，但仍可点（用来引导去登录）。
     var isDimmed = false
+    var attentionTint: Color = XDialTheme.warning
+    var connectedTint: Color = XDialTheme.success
     /// 盘面直径；状态环在盘面外面再多出一圈。
     var diameter: CGFloat = 216
     var layout: DialLayout = .standard
@@ -36,7 +38,7 @@ struct DialControl: View {
         Button(action: action) {
             ZStack {
                 halo
-                TimelineView(.animation(minimumInterval: 1 / 30, paused: phase != .working)) { context in
+                TimelineView(.animation(minimumInterval: 1 / 30, paused: phase != .working || reduceMotion)) { context in
                     let time = context.date.timeIntervalSinceReferenceDate
                     ZStack {
                         statusRing(time: time)
@@ -70,6 +72,8 @@ struct DialControl: View {
             syncAutoDial()
         }
         .onChange(of: phase) { syncAutoDial() }
+        .onChange(of: reduceMotion) { syncAutoDial() }
+        .onDisappear { wheel.stopAutoDial() }
         .onChange(of: isDialing) { _, dialing in
             if !dialing {
                 lastTouchAngle = nil
@@ -136,8 +140,8 @@ struct DialControl: View {
     private var stateColor: Color {
         switch phase {
         case .idle, .working: return XDialTheme.accent
-        case .connected: return XDialTheme.success
-        case .attention: return XDialTheme.warning
+        case .connected: return connectedTint
+        case .attention: return attentionTint
         }
     }
 
@@ -186,13 +190,13 @@ struct DialControl: View {
 
     @ViewBuilder
     private var disc: some View {
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             // 液态玻璃盘面：未连接时是透明玻璃，连上后染成状态色。
             Circle()
                 .fill(.clear)
                 .frame(width: diameter, height: diameter)
                 .glassEffect(
-                    XDialGlass.make(tint: isLit ? stateColor : nil, interactive: true),
+                    Glass.regular.tint(isLit ? stateColor : nil).interactive(),
                     in: Circle()
                 )
         } else {

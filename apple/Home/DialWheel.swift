@@ -1,6 +1,10 @@
 import Observation
 import QuartzCore
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// 拨号盘转盘的运动：手指拖着转、松手后匀速回弹、连接时自动「拨号」。
 /// 只有读了 rotation / activeHole 的那一层视图会跟着重绘。
@@ -17,9 +21,11 @@ final class DialWheel {
     @ObservationIgnored private var link: CADisplayLink?
     @ObservationIgnored private var proxy: LinkProxy?
     @ObservationIgnored private var atStop = false
+    #if os(iOS)
     @ObservationIgnored private let tickHaptic = UIImpactFeedbackGenerator(style: .light)
     @ObservationIgnored private let stopHaptic = UIImpactFeedbackGenerator(style: .rigid)
     @ObservationIgnored private let restHaptic = UIImpactFeedbackGenerator(style: .soft)
+    #endif
 
     /// 回弹是匀速的（真机里靠调速器），每转过一格响一下。
     private static let returnSpeed: Double = 330
@@ -65,8 +71,10 @@ final class DialWheel {
         activeHole = hole
         atStop = false
         stopLink()
+        #if os(iOS)
         tickHaptic.prepare()
         stopHaptic.prepare()
+        #endif
     }
 
     func drag(by delta: Double) {
@@ -74,11 +82,15 @@ final class DialWheel {
         let limit = travels[hole]
         let next = min(max(rotation + delta, 0), limit)
         if Int(next / Self.pulseStep) != Int(rotation / Self.pulseStep) {
+            #if os(iOS)
             tickHaptic.impactOccurred(intensity: 0.45)
+            #endif
         }
         if next >= limit, !atStop {
             atStop = true
+            #if os(iOS)
             stopHaptic.impactOccurred(intensity: 1)
+            #endif
         } else if next < limit - 4 {
             atStop = false
         }
@@ -126,7 +138,9 @@ final class DialWheel {
             if unwind(dt: dt, haptics: manual) {
                 mode = .rest
                 stopLink()
+                #if os(iOS)
                 if manual { restHaptic.impactOccurred(intensity: 0.7) }
+                #endif
             }
         case .auto(var state):
             advance(&state, dt: dt)
@@ -138,7 +152,9 @@ final class DialWheel {
     private func unwind(dt: Double, haptics: Bool) -> Bool {
         let next = max(0, rotation - Self.returnSpeed * dt)
         if haptics, Int(next / Self.pulseStep) != Int(rotation / Self.pulseStep) {
+            #if os(iOS)
             tickHaptic.impactOccurred(intensity: 0.6)
+            #endif
         }
         rotation = next
         return next <= 0
@@ -181,7 +197,11 @@ final class DialWheel {
     private func startLink() {
         guard link == nil else { return }
         let proxy = LinkProxy(owner: self)
+        #if os(macOS)
+        guard let link = NSScreen.main?.displayLink(target: proxy, selector: #selector(LinkProxy.tick(_:))) else { return }
+        #else
         let link = CADisplayLink(target: proxy, selector: #selector(LinkProxy.tick(_:)))
+        #endif
         link.add(to: .main, forMode: .common)
         self.proxy = proxy
         self.link = link

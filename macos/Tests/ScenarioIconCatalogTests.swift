@@ -106,30 +106,3 @@ final class ScenarioIconCatalogTests: XCTestCase {
         )
     }
 }
-
-final class ScenarioGridLayoutTests: XCTestCase {
-    func testColumnsBalanceWithinTheMinimumNumberOfRows() {
-        let expected = [
-            0: 1,
-            1: 1,
-            2: 2,
-            3: 3,
-            4: 4,
-            5: 3,
-            6: 3,
-            7: 4,
-            8: 4,
-            9: 3,
-            10: 4,
-            11: 4,
-            12: 4,
-        ]
-        for (count, columns) in expected {
-            XCTAssertEqual(
-                ScenarioGridLayout.columnCount(itemCount: count),
-                columns,
-                "unexpected columns for \(count) scenarios"
-            )
-        }
-    }
-}

@@ -134,6 +134,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      - path: ../apple/Home
       - path: XDialIOS
         excludes:
           - Info.plist
