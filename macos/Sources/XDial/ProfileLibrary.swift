@@ -2,10 +2,19 @@ import Foundation
 
 struct ProfileSource: Codable, Hashable {
     var url: String
+    var fetchLineID: String? = nil
     var nodesOnly: Bool = false
     var format: String = "auto"
     var refreshInterval: TimeInterval = 86400
     var updatedAt: Date?
+
+    // The legacy URLSession importer cannot honor a selected Line. Preserve the
+    // new declaration and refuse refresh until the explicit transport is wired.
+    func validateLegacyAcquisition() throws {
+        guard fetchLineID == nil || fetchLineID?.isEmpty == true else {
+            throw ProfileLibraryError.invalid("此来源指定了获取线路，请在支持该线路下载的客户端更新；原配置保留")
+        }
+    }
 }
 
 struct ProfileRecord: Codable, Identifiable, Hashable {

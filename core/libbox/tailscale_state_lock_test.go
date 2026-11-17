@@ -1,19 +1,18 @@
-//go:build !windows
-
 package libbox
 
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
 func TestTailscaleStateLockExcludesConcurrentRuntimeAndReleases(t *testing.T) {
 	stateDirectory := filepath.Join(t.TempDir(), "tailscale", "home")
 	configJSON := `{"endpoints":[` +
-		`{"type":"tailscale","tag":"tailscale-home","state_directory":"` +
-		stateDirectory +
-		`"}]}`
+		`{"type":"tailscale","tag":"tailscale-home","state_directory":` +
+		strconv.Quote(stateDirectory) +
+		`}]}`
 
 	first, err := acquireTailscaleStateLocks(configJSON)
 	if err != nil {

@@ -2638,6 +2638,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     #if os(iOS)
     // MARK: - 场景目录与隧道内切换（iOS）
 
+    private var scenarioCatalogBuildState = ScenarioCatalogBuildState()
+
     func rebuildScenarioCatalog(
         inputs: [ScenarioCatalogInput],
         policy: ScenarioAutoPolicy,
@@ -2646,6 +2648,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let basePath = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: kAppGroupIdentifier)?.path ?? ""
         guard !basePath.isEmpty, !inputs.isEmpty else { return nil }
+        let buildID = scenarioCatalogBuildState.begin(policy: policy)
         let entries: [String: Data] = await withCheckedContinuation { continuation in
             Self.configGenerationQueue.submit {
                 var entries: [String: Data] = [:]
@@ -2679,7 +2682,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 continuation.resume(returning: entries)
             }
         }
-        guard !entries.isEmpty else { return nil }
+        guard let policy = scenarioCatalogBuildState.policyForCompletion(buildID, cancelled: Task.isCancelled),
+              !entries.isEmpty else { return nil }
         var merged = entries
         if keepingOthers, case .available(let existing) = ScenarioSwitchCatalogStore.load() {
             for (scenarioID, entry) in existing.entries
@@ -2700,6 +2704,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool {
+        scenarioCatalogBuildState.update(policy: policy)
         guard case .available(var catalog) = ScenarioSwitchCatalogStore.load() else { return false }
         guard catalog.policy != policy else { return true }
         catalog.policy = policy
@@ -2834,6 +2839,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let connection = manager?.connection
         #if os(iOS)
         // 用户断开后不再有扩展使用场景目录；下次连接会重建。
+        scenarioCatalogBuildState.clear()
         ScenarioSwitchCatalogStore.clear()
         #endif
         suspendSystemOnDemand(clearEnvelope: true) {

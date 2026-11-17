@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 // App 与 VPN 扩展共用的自动选场景规则、扩展上报的场景状态，以及共享 Keychain 里的场景目录。
 // 只依赖 Foundation / Security：小组件也编译这个目录。
@@ -37,6 +38,39 @@ struct ScenarioAutoPolicy: Codable, Equatable, Sendable {
     /// 地区表引用、但当前 Profile 里存在的场景。
     var regionScenarioIDs: Set<String> {
         Set(regionScenarios.values).intersection(scenarioIDs)
+    }
+}
+
+/// Main actor owned catalog build state. Policy changes survive the first build;
+/// cancellation, disconnect and a newer build invalidate an older completion.
+struct ScenarioCatalogBuildState {
+    private var buildID = UUID()
+    private var policy: ScenarioAutoPolicy?
+
+    mutating func begin(policy: ScenarioAutoPolicy) -> UUID {
+        buildID = UUID()
+        self.policy = policy
+        return buildID
+    }
+
+    mutating func update(policy: ScenarioAutoPolicy) { self.policy = policy }
+
+    mutating func clear() {
+        buildID = UUID()
+        policy = nil
+    }
+
+    func policyForCompletion(_ id: UUID, cancelled: Bool) -> ScenarioAutoPolicy? {
+        !cancelled && id == buildID ? policy : nil
+    }
+}
+
+/// Include Wi-Fi identity without storing its name in the bounce guard.
+enum ScenarioNetworkIdentity {
+    static func key(path: String?, ssid: String?) -> String {
+        let identity = SHA256.hash(data: Data((ssid ?? "").utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return (path ?? "") + ":wifi:" + identity
     }
 }
 

@@ -1,5 +1,3 @@
-//go:build !windows
-
 package libbox
 
 import (
@@ -96,7 +94,9 @@ type pooledTailscaleRuntime interface {
 }
 
 type tailscaleLineRuntime struct {
-	outbound adapter.Outbound
+	nativeDNS           adapter.DNSTransport
+	consumerEndpointTag string
+	outbound            adapter.Outbound
 }
 
 // tailscaleRuntimeOutbound gives an immutable consumer Box the same outbound
@@ -282,21 +282,29 @@ func prepareTailscaleRuntimeSpec(
 	}
 	document["endpoints"] = encodedEndpoints
 	document["outbounds"] = encodedOutbounds
+	if err := moveTailscaleRuntimeDNS(document, capabilityDNS, endpointTag); err != nil {
+		return nil, err
+	}
 	consumerConfig, err := stdjson.Marshal(document)
 	if err != nil {
 		return nil, fmt.Errorf("encode Tailscale consumer config: %w", err)
 	}
 
+	var originalRoute map[string]stdjson.RawMessage
+	stdjson.Unmarshal(document["route"], &originalRoute)
+	capabilityRoute := map[string]any{"final": "direct", "default_domain_resolver": capabilityResolver}
+	// Mobile platform protection is selected by the compiler's route setting.
+	// Preserve it for the capability's DNS and independent control sockets.
+	if string(originalRoute["auto_detect_interface"]) == "true" {
+		capabilityRoute["auto_detect_interface"] = true
+	}
 	capabilityConfig, err := stdjson.Marshal(map[string]any{
 		"log":       map[string]any{"disabled": true},
 		"dns":       capabilityDNS,
 		"endpoints": []stdjson.RawMessage{tailscaleEndpoint},
 		"inbounds":  []any{},
 		"outbounds": []map[string]any{{"type": "direct", "tag": "direct"}},
-		"route": map[string]any{
-			"final":                   "direct",
-			"default_domain_resolver": capabilityResolver,
-		},
+		"route":     capabilityRoute,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode Tailscale capability config: %w", err)

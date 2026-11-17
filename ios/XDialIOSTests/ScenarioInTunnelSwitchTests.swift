@@ -5,6 +5,34 @@ import XCTest
 // MARK: - 共用规则
 
 final class ScenarioAutoSwitchRuleTests: XCTestCase {
+    func testCatalogCompletionPreservesPolicyChangesAndCannotReviveClearedBuilds() {
+        let enabled = ScenarioAutoPolicy(enabled: true, wifiRules: [], regionScenarios: [:], scenarioIDs: ["a"])
+        var disabled = enabled
+        disabled.enabled = false
+        var state = ScenarioCatalogBuildState()
+        let first = state.begin(policy: enabled)
+        // No catalog exists yet, but turning off Auto must still affect the first save.
+        state.update(policy: disabled)
+        XCTAssertEqual(state.policyForCompletion(first, cancelled: false), disabled)
+        XCTAssertNil(state.policyForCompletion(first, cancelled: true))
+        let second = state.begin(policy: enabled)
+        XCTAssertNil(state.policyForCompletion(first, cancelled: false))
+        state.clear()
+        XCTAssertNil(state.policyForCompletion(second, cancelled: false))
+    }
+
+    func testWiFiIdentityDistinguishesNetworksWithIdenticalInterfaceAndGateway() {
+        let path = "satisfied:wifi:en0:192.168.1.1"
+        let office = ScenarioNetworkIdentity.key(path: path, ssid: "Office")
+        let home = ScenarioNetworkIdentity.key(path: path, ssid: "Home")
+        XCTAssertNotEqual(office, home)
+        XCTAssertFalse(office.contains("Office"))
+        var guardState = ScenarioAutoSwitchGuard()
+        guardState.note(from: "a", to: "b", network: office)
+        XCTAssertFalse(guardState.mayAutoSwitch(to: "a", network: office))
+        XCTAssertTrue(guardState.mayAutoSwitch(to: "a", network: home))
+    }
+
     func testGuardBlocksBouncingBackOnTheSameNetworkOnly() {
         var guardState = ScenarioAutoSwitchGuard()
         let start = Date(timeIntervalSince1970: 1_000)

@@ -192,6 +192,21 @@ Provider 不读域名、不执行第二次 DNS 裁决。
 入口：[DNS transport](core/libbox/mobile_dns_transport.go)、
 [原查询与系统解析补丁](patches/sing-box/)。
 
+Linux 透明服务的系统 DNS 后端与上述 Apple 接口分开适配：当系统明确使用
+systemd-resolved 的标准 stub 时，Direct/服务器 bootstrap 经带 bypass mark 的
+sing-box transport 查询该 stub，保留 resolved 的 per-link/split DNS。代理应用 DNS
+仍绑定原精确 Line；不启用会拍平默认接口 DNS 的上游 `local` 实现。此模式关闭盒内
+第二层 DNS cache，避免系统域路由变化后继续返回旧视角；系统 resolver 自己拥有缓存。
+
+系统 resolver 的依赖套接字只按已验证的服务 cgroup v2 豁免：系统总线、PID 1 的
+MainPID/非委托 cgroup、内核进程和实际 stub socket 所有权必须一致。pidfd、总线
+owner 与持有的 cgroup handle 限定租约；退出/身份变化先撤捕获，不能用客户端自报
+PID/UID 或宽泛 root UID 豁免。这个保护不等于应用原生解析 IPC 已接管：`nss-resolve`
+与 nscd 会丢失原应用网络身份，当前服务拒绝这些配置，变化时断开。未来需要带内核
+调用者身份的原生解析入口；不能把 DNS socket 证据称为所有 D-Bus/Varlink API 已覆盖。
+入口：[Linux resolver 租约](core/linuxresolver/resolved_linux.go)、
+[系统验收](docs/verification/linux-resolved.md)。
+
 ### 4.3 就绪与地址族
 
 Direct 的就绪证明是当前 Underlay 上下文与配置归属，**不依赖固定外部 DNS、TLS 或出口
@@ -291,6 +306,43 @@ journal 无法可靠写入时不能 Commit。入口：[事务处置](macos/Share
 App 写入共享 Keychain 的场景目录。入口：[TUN 交接](core/libbox/tun_handover.go)、
 [Provider](appletv/XDialTVTunnel/PacketTunnelProvider.swift)、
 [计划](docs/plans/ios-in-tunnel-scenario-switch.md)。
+Android packet ingress 显式独立拥有单一 TUN/gVisor，数据 Box 与候选 Box 不再拥有
+packet reader；候选系统 TUN 设置必须与已建立入口一致。TCP/UDP 在完整 flow router
+入口绑定代际，DNS 与 ICMP native Port/FlowTracker 也归同一代际，退役关闭旧流与
+迟到句柄。新流的 DNS/route 一次切换，默认 1 秒退休源；停止先阻止接新流再关闭代际
+和入口。Apple 的既有入口不自动启用此模式。见
+[稳定入口](core/libbox/packet_ingress.go)、[Android 事务](core/libbox/android_switch.go)。
+
+
+Windows/Linux 的原生流适配使用同一 generation 管理，显式选择无 listener 的数据
+Box 与候选 Box；平台只提供原始端点和 OS 进程事实，出口/DNS/规则始终在 sing-box
+裁决。普通 IPC 客户端自报的 PID、路径或 UID 不是可信事实。新流在提交点换代，
+旧流等待平台的有界排空/退休操作；停止先禁止接流，再关闭代际。接流 worker 不持
+系统回调锁，不能从关闭回调同步重入等待该流退出的生命周期操作。此接口的存在
+不代表 OS 拦截器或安装事务已就绪。见 [原生流入口](core/libbox/native_flow.go)。
+
+Linux TProxy 适配独立持有稳定 sing-box listener/UDP NAT，内核原目标进入同一
+generation Router；进程事实由 sing-box 从 OS 查询。捕获 mark 与核心/透明回包的
+绕过 mark 必须由权限事务独立预留，配置和候选均验证完整保护；协议自建 socket
+未具备受保护租约时拒绝，不回退其他线路。监听器 API 不自动改系统规则；撤销捕获
+必须先于关闭入口。隔离来宾已证明 IPv4 TCP/UDP/DNS 与真实进程规则，独立权限
+服务已接线，完整安装、多发行版和 IPv6 验收仍缺。见 [Linux 透明入口验收](docs/verification/linux-transparent-guest.md)。
+
+Linux 捕获安装组件由可信服务持有：先就绪核心/listener，再以显式预留的 mark、table、
+priority 安装系统接管；拒绝冲突，不改 Underlay 的已有顺序。捕获 nft 表绑定持久
+netlink socket 的内核所有权，进程死亡自动撤销；路由/规则用私有持久记录恢复，核对
+boot/netns 与完整对象身份，不按表号或优先级批量清理。正常断开先撤销捕获再停核心。
+该组件没有 DNS/出口策略，由独立 Linux 服务持有；详见
+[安装恢复边界](docs/verification/linux-capture-transaction.md)。
+
+
+Linux 独立服务仅接收有界 Profile 与有限连接操作，不接受裸 sing-box、系统规则或
+任意 root 文件路径。Unix seqpacket 每条消息核验内核 UID，客户端先固定服务 UID；
+安装策略/路径/资源由 root 私有策略控制。实例 nonce 与 revision 共同约束提交，
+客户端的 PID/UID 不参与流量归因。marked egress 由内核按目标使用完整 Underlay，
+Linux 显式模式允许无默认网卡；Apple/Android 的默认接口校验不变。系统 DNS 事实
+尚无受保护后端时拒绝连接，不改公共 DNS；事实变化退出捕获，不能沿用过期配置。
+见 [服务边界与当前限制](docs/agent/linux-service.md)。
 
 ### 5.4 网络变化与恢复
 
@@ -352,6 +404,12 @@ connected，开启恢复的事务永远不能证明。系统会话状态不带�
 读取或改写 Underlay、创建 / 启用 Transparent Proxy 网络配置或提交 DNS / 路由。
 安装成功不代表连接就绪；替换过程可能终止旧进程，[安装命令的实际副作用](docs/agent/development-builds.md)
 与“安装不接管流量”是不同边界。
+
+Linux 独立服务的管理员安装事务使用固定 binary/unit/摘要路径、root 私有 journal
+与备份；连接事务只共享维护锁，不接受安装路径或脚本。升级先停止捕获与核心，
+原来运行的服务在新进程 READY 后才提交；启动失败还原旧包，服务恢复仍保持未连接。
+强杀后的显式恢复按提交记录选择旧/新版，归属冲突保留现场；不把摘要校验当作发行签名。
+该入口尚非自动更新器，具体边界见 [Linux 升级验收](docs/verification/linux-upgrade.md)。
 
 同通道替换要求身份与签名匹配，保留临时旧包，二次验签后清理；失败恢复旧包，下载原件保留。
 helper / 扩展失败停在对应安装步骤，幂等重试以 macOS 结构化状态为依据。
@@ -438,3 +496,21 @@ Provider 读取并只在内存中用于选择场景，不写进共享存储或�
 
 历史路径入口：[DNS 接入与自愈](core/engine/dns_takeover.go)、
 [Underlay](core/engine/underlay.go)、[Transparent Proxy 证据](docs/incidents/d35-transparent-proxy-evidence.md)。
+
+## Android 接入（开发验收阶段）
+
+Android 原生 VpnService 持有系统建立的 TUN fd，Go dup 后交给 sing-tun；
+宿主和核心分别关闭自己持有的 fd。PlatformInterface 在 Android 不声明自身为
+NetworkExtension。SocketProtector 在拨号前同步 protect 并绑定系统选定的
+Underlay Network；失败返回错误，候选 Box 与复用 Line 继承相同保护契约。
+
+Android 沙箱限制 Go 的 netlink 接口查询，宿主通过 NetworkInterface 与
+LinkProperties 提供 name/index/type 与可选 facts（MTU/flags/addresses）。
+有 facts 时采用系统快照，缺失时沿用 Apple 原有补齐路径；无效快照原子拒绝。
+Android 同时将 LinkProperties 的 DNS 顺序传给 Go 编译器，Go 用它生成移动
+DNS fallback transport，平台不自行解析或裁决。禁止把固定公共 DNS 的可达性
+当作所有 Underlay 的前提。
+
+当前仅完成隔离模拟器 Direct 的 DNS/HTTPS 接入验收；协议自建 socket、登录、
+自动场景、网络恢复与 Apple 控制面迁移尚未交付，详见
+[全平台计划](docs/plans/cross-platform.md)与[Android 验收](docs/verification/android-checkpoint.md)。

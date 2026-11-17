@@ -129,6 +129,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// sing-box 的 direct/DNS 出站必须使用 NWPath 给出的完整 Underlay。
     /// 下层 VPN 会以 utun/ipsec/ppp 出现，不能按接口名前缀删除；Go 平台层只排除
     /// 当前 XDial 会话通过 RegisterMyInterface 明确登记的 packet tunnel。
+    private let pathMonitorQueue = DispatchQueue(label: "xdial.path-monitor")
     private var pathMonitor: NWPathMonitor?
     private var diagnosticStage = "idle"
     private var activeAttemptID = ""
@@ -1253,7 +1254,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func startDefaultInterfaceMonitor(generation: UInt64) throws {
         let monitor = NWPathMonitor()
         let ready = DispatchSemaphore(value: 0)
-        let queue = DispatchQueue(label: "\(Self.subsystem).path-monitor")
 
         monitor.pathUpdateHandler = { [weak self, weak monitor] path in
             self?.updateDefaultInterface(path, generation: generation)
@@ -1265,7 +1265,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         guard installPathMonitor(monitor, generation: generation) else {
             throw providerError(7, "连接启动已取消")
         }
-        monitor.start(queue: queue)
+        monitor.start(queue: pathMonitorQueue)
 
         guard ready.wait(timeout: .now() + 5) == .success else {
             throw providerError(5, "等待 Underlay 网络接口超时")
@@ -1785,6 +1785,7 @@ extension PacketTunnelProvider {
         to scenarioID: String,
         origin: TunnelScenarioState.SwitchRecord.Origin,
         expectedRevision: String?,
+        automaticValidation: (@Sendable () -> Bool)? = nil,
         completion: @escaping @Sendable (Result<TunnelScenarioState, Error>) -> Void
     ) {
         lifecycleLock.lock()
@@ -1825,7 +1826,8 @@ extension PacketTunnelProvider {
                 sourceRemote: sourceRemote,
                 to: scenarioID,
                 expectedRevision: expectedRevision,
-                generation: generation
+                generation: generation,
+                automaticValidation: automaticValidation
             )
             let state = self.finishScenarioSwitch(
                 from: source,
@@ -1882,7 +1884,7 @@ extension PacketTunnelProvider {
                     at: Date(), succeeded: true, failure: nil
                 )
                 if origin == .automatic {
-                    state.guardState.note(from: source.scenarioID, to: scenarioID, network: network)
+                    state.guardState.note(from: source.scenarioID, to: scenarioID, network: ScenarioNetworkIdentity.key(path: network, ssid: readCurrentSSID()))
                 }
                 if state.suggestedScenarioID == scenarioID {
                     state.suggestedScenarioID = nil
@@ -1901,7 +1903,8 @@ extension PacketTunnelProvider {
         sourceRemote: String,
         to scenarioID: String,
         expectedRevision: String?,
-        generation: UInt64
+        generation: UInt64,
+        automaticValidation: (@Sendable () -> Bool)?
     ) -> Result<ScenarioSwitchOutcome, Error> {
         dispatchPrecondition(condition: .onQueue(engineOperationQueue))
         guard let engine = engine(for: generation), phase(for: generation) == .running else {
@@ -1928,6 +1931,9 @@ extension PacketTunnelProvider {
             }
             targetRemote = address
         }
+        guard automaticValidation?() != false else {
+            return .failure(scenarioError("自动判断已失效"))
+        }
         let remoteChanges = targetRemote != sourceRemote
         if remoteChanges, let error = applyRunningNetworkSettings(
             buildNetworkSettings(remoteAddress: targetRemote, alsoExcluding: [sourceRemote]),
@@ -1940,14 +1946,16 @@ extension PacketTunnelProvider {
         let result: Result<TunnelScenarioState.SwitchRecord.Mode, Error>
         if staged {
             result = stagedScenarioSwitch(
-                engine, to: target, dialAddress: targetRemote, underlay: underlay, generation: generation
+                engine, to: target, dialAddress: targetRemote, underlay: underlay, generation: generation,
+                automaticValidation: automaticValidation
             ).map { .staged }
         } else {
             result = restartScenarioSwitch(
                 engine,
                 from: source, sourceDialAddress: sourceRemote,
                 to: target, targetDialAddress: targetRemote,
-                underlay: underlay, generation: generation
+                underlay: underlay, generation: generation,
+                automaticValidation: automaticValidation
             ).map { .restart }
         }
 
@@ -2009,14 +2017,34 @@ extension PacketTunnelProvider {
         })
     }
 
-    /// 候选准备好后要先确认它的出口可达，再接手隧道。Direct 与 Tailscale 由准备本身证明。
-    private func candidateProbeTags(for bundle: StartBundle) -> [String] {
+    /// Both switching paths use the same complete acceptance plan. Engine startup alone
+    /// does not prove Tailscale authentication or an outbound's reachability.
+    private func verifyScenarioLines(_ engine: LibboxLibbox, bundle: StartBundle, prepared: Bool) throws {
         guard let data = bundle.acceptancePlanJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let targets = object["targets"] as? [[String: Any]] else { return [] }
-        let tags = targets.compactMap { $0["tag"] as? String }
-            .filter { $0 != "direct" && !$0.hasPrefix("tailscale-") }
-        return Array(tags.prefix(3))
+              let plan = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let targets = plan["targets"] as? [[String: Any]], !targets.isEmpty else {
+            throw scenarioError("场景缺少线路验收计划")
+        }
+        for tag in tailscaleEndpointTags(in: bundle.configJSON).sorted() {
+            var statusError: NSError?
+            let raw = prepared
+                ? engine.preparedSwitchTailscaleStatus(tag, error: &statusError)
+                : engine.tailscaleStatus(tag, error: &statusError)
+            if let statusError { throw statusError }
+            guard tailscaleBackendIsRunning(raw) else { throw scenarioError("Tailscale 尚未就绪") }
+        }
+        for target in targets {
+            guard let tag = target["tag"] as? String, !tag.isEmpty else {
+                throw scenarioError("场景线路验收计划无效")
+            }
+            var error: NSError?
+            let address = prepared
+                ? engine.probePreparedSwitchOutboundIP(tag, timeoutMS: 6_000, error: &error)
+                : engine.probeOutboundIP(tag, timeoutMS: 6_000, error: &error)
+            guard error == nil, !address.isEmpty else {
+                throw scenarioError("新场景的线路暂时不可用：\(error?.localizedDescription ?? "出口无回应")")
+            }
+        }
     }
 
     private func stagedScenarioSwitch(
@@ -2024,7 +2052,8 @@ extension PacketTunnelProvider {
         to target: StartBundle,
         dialAddress: String,
         underlay: UnderlaySnapshot,
-        generation: UInt64
+        generation: UInt64,
+        automaticValidation: (@Sendable () -> Bool)?
     ) -> Result<Void, Error> {
         do {
             if target.usesAnyConnect {
@@ -2059,13 +2088,14 @@ extension PacketTunnelProvider {
             return .failure(scenarioError("新场景没能准备好：\(error.localizedDescription)"))
         }
         recordDiagnostic("scenario_switch_prepared")
-        for tag in candidateProbeTags(for: target) {
-            var probeError: NSError?
-            _ = engine.probePreparedSwitchOutboundIP(tag, timeoutMS: 6_000, error: &probeError)
-            if let probeError {
-                try? engine.abortPreparedSwitch()
-                return .failure(scenarioError("新场景的线路暂时不可用：\(probeError.localizedDescription)"))
-            }
+        do { try verifyScenarioLines(engine, bundle: target, prepared: true) }
+        catch {
+            try? engine.abortPreparedSwitch()
+            return .failure(error)
+        }
+        guard automaticValidation?() != false else {
+            try? engine.abortPreparedSwitch()
+            return .failure(scenarioError("自动判断已失效"))
         }
         guard phase(for: generation) == .running, self.engine(for: generation) === engine else {
             try? engine.abortPreparedSwitch()
@@ -2089,7 +2119,8 @@ extension PacketTunnelProvider {
         to target: StartBundle,
         targetDialAddress: String,
         underlay: UnderlaySnapshot,
-        generation: UInt64
+        generation: UInt64,
+        automaticValidation: (@Sendable () -> Bool)?
     ) -> Result<Void, Error> {
         // 先让旧实例的回调失效，再停它：停止时报上来的「已断开」不是掉线。
         lifecycleLock.lock()
@@ -2102,7 +2133,8 @@ extension PacketTunnelProvider {
         try? engine.stop()
         recordDiagnostic("scenario_switch_restarting")
 
-        switch startReplacementEngine(target, dialAddress: targetDialAddress, underlay: underlay, generation: generation) {
+        switch startReplacementEngine(target, dialAddress: targetDialAddress, underlay: underlay, generation: generation,
+                                      verifyLines: true, automaticValidation: automaticValidation) {
         case .success:
             return .success(())
         case .failure(let targetError):
@@ -2123,7 +2155,9 @@ extension PacketTunnelProvider {
         _ bundle: StartBundle,
         dialAddress: String,
         underlay: UnderlaySnapshot,
-        generation: UInt64
+        generation: UInt64,
+        verifyLines: Bool = false,
+        automaticValidation: (@Sendable () -> Bool)? = nil
     ) -> Result<Void, Error> {
         guard let fd = tunFileDescriptor(), fd > 0 else {
             return .failure(providerError(4, "无法获取系统隧道接口"))
@@ -2144,15 +2178,35 @@ extension PacketTunnelProvider {
             try? replacement.stop()
             return .failure(error)
         }
-        lifecycleLock.lock()
-        guard activeGeneration == generation, attemptPhase == .running else {
+        let installed = pathMonitorQueue.sync { () -> Bool in
+            lifecycleLock.lock()
+            guard activeGeneration == generation, attemptPhase == .running else {
+                lifecycleLock.unlock()
+                return false
+            }
+            libbox = replacement
+            activeEngineToken = token
             lifecycleLock.unlock()
+            // Serialized with path delivery: replay the latest facts after publication.
+            let latest = currentUnderlay()
+            try? replacement.setNetworkInterfaces(latest?.interfacesJSON ?? "[]")
+            replacement.setDefaultInterface(latest?.name ?? "", index: latest?.index ?? -1)
+            return true
+        }
+        guard installed else {
             try? replacement.stop()
             return .failure(scenarioError("连接已结束"))
         }
-        libbox = replacement
-        activeEngineToken = token
-        lifecycleLock.unlock()
+        do {
+            if verifyLines { try verifyScenarioLines(replacement, bundle: bundle, prepared: false) }
+            guard automaticValidation?() != false else { throw scenarioError("自动判断已失效") }
+        } catch {
+            lifecycleLock.lock()
+            if activeEngineToken == token { activeEngineToken = 0 }
+            lifecycleLock.unlock()
+            try? replacement.stop()
+            return .failure(error)
+        }
         return .success(())
     }
 
@@ -2207,7 +2261,7 @@ extension PacketTunnelProvider {
         lastPathSignature = signature
         let running = runningBundle != nil
         scenarioLock.unlock()
-        guard running, let previous, previous != signature, path.status == .satisfied else { return }
+        guard running, previous != nil, path.status == .satisfied else { return }
         scheduleScenarioEvaluation(after: 1.5)
     }
 
@@ -2261,8 +2315,10 @@ extension PacketTunnelProvider {
             return
         }
 
+        let previousSwitch = currentScenarioState().lastSwitch
         let policy = catalog.policy
         let ssid = readCurrentSSID()
+        let decisionNetwork = ScenarioNetworkIdentity.key(path: network, ssid: ssid)
         let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         var pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
@@ -2289,6 +2345,16 @@ extension PacketTunnelProvider {
             byTunnel: true
         )
 
+        let validation: @Sendable () -> Bool = { [weak self] in
+            guard let self, case .available(let latest) = ScenarioSwitchCatalogStore.load(),
+                  latest.revision == catalog.revision, latest.policy == policy, latest.policy.enabled,
+                  self.currentEngine()?.isRunning() == true else { return false }
+            self.scenarioLock.lock()
+            let valid = self.runningBundle?.scenarioID == runningID && self.lastPathSignature == network
+            self.scenarioLock.unlock()
+            return valid && self.currentScenarioState().lastSwitch == previousSwitch && self.readCurrentSSID() == ssid
+        }
+        guard validation() else { completion(currentScenarioState()); return }
         var shouldSwitch = false
         let state = updateScenarioState { state in
             state.lastSurvey = record
@@ -2304,7 +2370,7 @@ extension PacketTunnelProvider {
                 state.suggestedScenarioID = pick.scenarioID
                 return
             }
-            if state.guardState.mayAutoSwitch(to: pick.scenarioID, network: network) {
+            if state.guardState.mayAutoSwitch(to: pick.scenarioID, network: decisionNetwork) {
                 shouldSwitch = true
             } else {
                 state.suggestedScenarioID = pick.scenarioID
@@ -2316,8 +2382,9 @@ extension PacketTunnelProvider {
         }
         // 切换在引擎队列上进行；判断队列等它结束，避免两次判断交错。
         let finished = DispatchSemaphore(value: 0)
-        // App 可能正好在重建目录；自动切换用扩展此刻读到的那一份，不要求修订号一致。
-        switchScenario(to: pick.scenarioID, origin: .automatic, expectedRevision: nil) { _ in
+        // 判断与提交必须使用同一份目录和规则。
+        switchScenario(to: pick.scenarioID, origin: .automatic, expectedRevision: catalog.revision,
+                       automaticValidation: validation) { _ in
             finished.signal()
         }
         finished.wait()
