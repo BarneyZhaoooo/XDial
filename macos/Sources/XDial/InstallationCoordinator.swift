@@ -38,6 +38,9 @@ final class InstallationCoordinator: ObservableObject {
     private let completionMarkerKey = "xdial.installation.ready"
 
     var shouldPrepareAtLaunch: Bool {
+        #if XDIAL_STORE
+        true
+        #else
         InstallationBuildMarker.shouldPrepareAtLaunch(
             serviceRegistered: PrivilegeManager.isInstalled,
             registrationRecoveryPending: PrivilegeManager.hasPendingRegistrationRecovery,
@@ -47,6 +50,7 @@ final class InstallationCoordinator: ObservableObject {
                 forKey: InstallationBuildMarker.requestedInstallationKey
             )
         )
+        #endif
     }
 
     /// The release build has no debug server. Retain the same credential-free
@@ -84,6 +88,18 @@ final class InstallationCoordinator: ObservableObject {
         if runTask != nil { return }
         if isReady, !force { return }
 
+        #if XDIAL_STORE
+        report.tasks = [InstallationTaskReport(id: "provider", name: "网络扩展", detail: "验证随包代理扩展", state: .running, error: nil)]
+        GoEngine.shared.prepareSystemExtension { result in
+            switch result {
+            case .success:
+                self.report.updateTask(id: "provider", state: .ready)
+                self.report.finish()
+            case .failure(let error):
+                self.report.fail(code: "missing-provider", message: error.localizedDescription, taskID: "provider")
+            }
+        }
+        #else
         let markerMatches = xdialDefaults.string(
             forKey: completionMarkerKey
         ) == currentBuildMarker
@@ -102,6 +118,7 @@ final class InstallationCoordinator: ObservableObject {
         runTask = Task { [weak self] in
             await self?.run()
         }
+        #endif
     }
 
     /// Quitting must never wait on the user or the system. Waiting for approval

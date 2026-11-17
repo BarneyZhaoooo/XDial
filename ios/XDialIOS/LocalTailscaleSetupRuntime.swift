@@ -55,7 +55,7 @@ private final class TailscaleSetupInterfaceState: @unchecked Sendable {
 }
 
 @MainActor
-final class LocalTailscaleSetupRuntime: TailscaleSetupRuntime {
+final class LocalTailscaleSetupRuntime {
     private static let appGroupID = XDialIdentity.appGroup
     private static let workQueue = DispatchQueue(
         label: "com.kafeifei.xdial.tailscale-setup",
@@ -138,6 +138,13 @@ final class LocalTailscaleSetupRuntime: TailscaleSetupRuntime {
         lineID: String,
         completion: @escaping (Result<TailscaleRuntimeStatus, Error>) -> Void
     ) {
+        start(profileJSON: profileJSON, lineID: lineID, authKey: "", completion: completion)
+    }
+
+    func start(
+        profileJSON: String, lineID: String, authKey: String,
+        completion: @escaping (Result<TailscaleRuntimeStatus, Error>) -> Void
+    ) {
         guard case .idle = phase,
               let basePath = FileManager.default.containerURL(
                   forSecurityApplicationGroupIdentifier: Self.appGroupID
@@ -147,10 +154,16 @@ final class LocalTailscaleSetupRuntime: TailscaleSetupRuntime {
         }
 
         var generationError: NSError?
-        let configJSON = LibboxGenerateTailscaleSetupConfig(
+        #if os(macOS)
+        let stateDirectory = URL(fileURLWithPath: basePath).appendingPathComponent("NetworkExtension").path
+        #else
+        let stateDirectory = basePath
+        #endif
+        let configJSON = LibboxGenerateTailscaleSetupConfigWithAuthKey(
             profileJSON,
             lineID,
-            basePath,
+            stateDirectory,
+            authKey,
             &generationError
         )
         if let generationError {
@@ -593,3 +606,7 @@ final class LocalTailscaleSetupRuntime: TailscaleSetupRuntime {
         )
     }
 }
+
+#if os(iOS)
+extension LocalTailscaleSetupRuntime: TailscaleSetupRuntime {}
+#endif

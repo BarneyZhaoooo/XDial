@@ -68,6 +68,34 @@ enum XDialBuildIdentity {
     static let allowsAutomaticUpdates = false
     static let allowsFormalDataMigration = false
     static let allowsLegacyCleanup = false
+    #elseif XDIAL_STORE
+    static let isDevelopment = false
+    static let applicationIdentifier = "com.xd.xdial.ios"
+    static let helperIdentifier = applicationIdentifier + ".helper"
+    static let daemonIdentifier = applicationIdentifier + ".daemon"
+    static let transparentProxyIdentifier =
+        applicationIdentifier + ".tunnel"
+    static let settingsUIIdentifier = applicationIdentifier + ".settings-ui"
+    static let appGroupIdentifier =
+        "group.com.xd.xdial.ios"
+    static let applicationBundleName = "XDial.app"
+    static let previousApplicationBundleNames: [String] = []
+    static let applicationDisplayName = "XDial"
+    static let productTitle = "XDial"
+    static let dataIdentifier = applicationIdentifier
+    static let userDataDirectoryName = formalUserDataDirectoryName
+    static let applicationSupportDirectoryName = "XDial"
+    static let logDirectoryName = "XDial"
+    static let daemonSocketPath = "/tmp/xdial-store.sock"
+    static let engineRuntimePath = "/tmp/xdial-store-engine"
+    static let daemonLogPath = "/tmp/xdial-store.log"
+    static let registrationMaintenancePath =
+        "/tmp/xdial-store-registration-maintenance"
+    static let debugServerPort: UInt16 = 19876
+    static let allowsAutomaticUpdates = false
+    static let allowsFormalDataMigration = false
+    static let allowsLegacyCleanup = false
+
     #else
     static let isDevelopment = false
     static let applicationIdentifier = formalApplicationIdentifier

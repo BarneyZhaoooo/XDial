@@ -1134,6 +1134,15 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         purpose: ActivationPurpose,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        #if XDIAL_STORE
+        // PlugInKit discovers the signed app extension in the host bundle.
+        let url = Bundle.main.builtInPlugInsURL?.appendingPathComponent("XDialStoreProxy.appex")
+        guard let url, Bundle(url: url)?.bundleIdentifier == XDialBuildIdentity.transparentProxyIdentifier else {
+            completion(.failure(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+            return
+        }
+        completion(.success(()))
+        #else
         guard
             activationCompletion == nil,
             activationVerificationRequest == nil,
@@ -1151,6 +1160,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             phase: purpose == .installation
                 ? .installationPreflight : .connection
         )
+        #endif
     }
 
     private func submitExtensionActivation() {
@@ -3017,8 +3027,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         var candidate: ConnectionReport?
         var shouldMirrorProviderReport = false
 
+        #if XDIAL_STORE
+        let probedProviderReport = localReport
+        #else
         let probedProviderReport =
             PrivilegeManager.probeProviderConnectionReport()
+        #endif
         startAttempt?.noteProviderReport(probedProviderReport)
         if let providerReport = probedProviderReport,
            currentTransactionID == nil ||
@@ -3036,7 +3050,9 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 candidate = localReport
             } else {
                 candidate = providerReport
+                #if !XDIAL_STORE
                 shouldMirrorProviderReport = true
+                #endif
             }
         } else if let localReport,
                   currentTransactionID == nil ||
