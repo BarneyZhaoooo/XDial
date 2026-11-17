@@ -93,18 +93,12 @@ enum AppIcon {
         )?.draw(in: tile, angle: -90)
     }
 
-    /// 以首页默认尺寸排版后整体缩放，使小图也保留盘面与状态环的比例。
+    /// 只取首页拨盘的静态轮廓，按同一份布局绘制盘面、指孔、指停器与素面圆盖。
     static func drawDial(in rect: NSRect, connected: Bool) {
         let layout = DialLayout.standard
-        let diameter = 2 * DialLayout.discRadius * min(rect.width, rect.height) / RotaryDial.grid
-        let scale = diameter / (2 * DialLayout.discRadius)
+        let scale = min(rect.width, rect.height) / RotaryDial.grid
         let center = NSPoint(x: rect.midX, y: rect.midY)
-        let disc = RotaryDial.circle(at: center, radius: diameter / 2)
-        let homeDiameter: CGFloat = 216
-        let ringWidth = DialLayout.ringWidth(diameter: homeDiameter) * diameter / homeDiameter
-        let ringRadius = diameter / 2 + DialLayout.ringInset(diameter: homeDiameter) * diameter / homeDiameter
-        let ring = RotaryDial.circle(at: center, radius: ringRadius - ringWidth / 2)
-        ring.lineWidth = ringWidth
+        let disc = RotaryDial.circle(at: center, radius: DialLayout.discRadius * scale)
 
         func point(angle: Double, radius: CGFloat) -> NSPoint {
             let radians = angle * .pi / 180
@@ -113,11 +107,13 @@ enum AppIcon {
         }
 
         RotaryDial.withGroupOpacity(connected ? 1 : RotaryDial.idleOpacity) {
-            XDialBrandPalette.divider.setStroke()
-            ring.stroke()
             if connected {
                 XDialBrandPalette.surface.setFill()
                 disc.fill()
+            } else {
+                XDialBrandPalette.surface.setStroke()
+                disc.lineWidth = scale
+                disc.stroke()
             }
             let ink = connected ? XDialBrandPalette.selection : XDialBrandPalette.surface
             ink.setFill()
@@ -134,27 +130,12 @@ enum AppIcon {
             stop.stroke()
 
             let hub = RotaryDial.circle(at: center, radius: layout.hubRadius * scale)
-            NSGraphicsContext.saveGraphicsState()
-            let shadow = NSShadow()
-            shadow.shadowBlurRadius = hub.bounds.width * 0.10
-            shadow.shadowOffset = NSSize(width: 0, height: -hub.bounds.width * 0.05)
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.14)
-            shadow.set()
-            XDialBrandPalette.canvas.setFill()
+            XDialBrandPalette.divider.withAlphaComponent(0.65).setFill()
             hub.fill()
-            NSGraphicsContext.restoreGraphicsState()
-            XDialBrandPalette.divider.withAlphaComponent(0.8).setStroke()
-            hub.lineWidth = diameter / homeDiameter
-            hub.stroke()
-
-            let config = NSImage.SymbolConfiguration(pointSize: layout.powerSymbolSize(diameter: diameter),
-                                                      weight: .semibold)
-                .applying(NSImage.SymbolConfiguration(paletteColors: [XDialBrandPalette.selection]))
-            if let power = NSImage(systemSymbolName: "power", accessibilityDescription: nil)?
-                .withSymbolConfiguration(config) {
-                power.draw(at: NSPoint(x: center.x - power.size.width / 2, y: center.y - power.size.height / 2),
-                           from: .zero, operation: .sourceOver, fraction: 1)
-            }
+            let lip = layout.hubRadius * scale * 0.024
+            let cap = NSBezierPath(ovalIn: hub.bounds.insetBy(dx: lip, dy: lip))
+            NSGradient(starting: XDialBrandPalette.canvas, ending: XDialBrandPalette.surface)?
+                .draw(in: cap, angle: 90)
         }
     }
 

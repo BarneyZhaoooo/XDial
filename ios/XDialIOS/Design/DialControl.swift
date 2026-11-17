@@ -28,7 +28,7 @@ struct DialControl: View {
     @GestureState private var isDialing = false
     @State private var lastTouchAngle: Double?
 
-    private var ringInset: CGFloat { DialLayout.ringInset(diameter: diameter) }
+    private var ringInset: CGFloat { max(9, diameter * 0.055) }
     private var outerDiameter: CGFloat { diameter + ringInset * 2 }
     private var scale: CGFloat { diameter / (DialLayout.discRadius * 2) }
 
@@ -161,7 +161,7 @@ struct DialControl: View {
 
     /// 盘面外的一圈细环：未连接是一道淡线，连接中有光弧绕圈，连上后整圈点亮。
     private func statusRing(time: TimeInterval) -> some View {
-        let lineWidth = DialLayout.ringWidth(diameter: diameter)
+        let lineWidth = max(2.5, diameter * 0.014)
         return ZStack {
             Circle()
                 .stroke(isLit ? stateColor : XDialTheme.hairline.opacity(0.9), lineWidth: lineWidth)
@@ -242,7 +242,7 @@ struct DialControl: View {
                 }
                 .shadow(color: .black.opacity(isLit ? 0.10 : 0.14), radius: size * 0.10, y: size * 0.05)
             Image(systemName: "power")
-                .font(.system(size: layout.powerSymbolSize(diameter: diameter), weight: .semibold))
+                .font(.system(size: min(size * 0.44, diameter * 0.15), weight: .semibold))
                 .foregroundStyle(isLit ? Color.white : (phase == .working ? stateColor : XDialTheme.dialInk))
         }
         .frame(width: size, height: size)
