@@ -9,15 +9,18 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.*;
 import org.json.*;
+import libbox.Libbox;
 
 /** Native document selection and encrypted persistence; all library ownership,
  * import validation and stale-preview checks are shared Go operations. */
 public final class ProfileSourcesActivity extends Activity {
- private static final int PICK_PROFILE=42, MAX_BYTES=2*1024*1024;
+ private static final int PICK_PROFILE=42, APPROVE_DOWNLOAD=43, MAX_BYTES=2*1024*1024;
  private final ExecutorService files=Executors.newSingleThreadExecutor();
  private LinearLayout rows;
  private TextView status;
  private boolean busy;
+ private OnlineProfileImport onlineRequest;
+ private int onlineGeneration;
  private String pendingID="",pendingName="",preview="";
 
  @Override public void onCreate(Bundle saved){
@@ -30,8 +33,10 @@ public final class ProfileSourcesActivity extends Activity {
   });
   button(layout,"返回连接",()->finish());
   TextView title=new TextView(this);title.setText("配置来源");title.setTextSize(24);layout.addView(title);
-  TextView hint=new TextView(this);hint.setText("从 XDial 或 sing-box JSON 文件导入线路与规则，最多 2 MB。场景独立保存；更新来源保留你的场景和出口选择。导入不会发起连接或下载规则。");layout.addView(hint);
+  TextView hint=new TextView(this);hint.setText("从 XDial 或 sing-box JSON 文件导入线路与规则，最多 2 MB。场景独立保存；更新来源保留你的场景和出口选择。文件导入不会联网；链接下载使用你指定的线路，不接管应用流量，也不会下载配置中声明的规则。");layout.addView(hint);
   button(layout,"添加配置来源",()->edit("",""));
+  button(layout,"从链接添加来源",this::onlineDialog);
+  button(layout,"取消下载",()->{onlineGeneration++;if(onlineRequest!=null)onlineRequest.cancel(this);});
   status=new TextView(this);status.setPadding(0,dp(16),0,dp(16));layout.addView(status);
   rows=new LinearLayout(this);rows.setOrientation(1);layout.addView(rows);setContentView(scroll);
  }
@@ -39,7 +44,7 @@ public final class ProfileSourcesActivity extends Activity {
  private void button(LinearLayout parent,String text,Runnable action){Button b=new Button(this);b.setAllCaps(false);b.setText(text);b.setOnClickListener(v->action.run());parent.addView(b);}
  @Override protected void onResume(){super.onResume();if(!busy)reload("");}
  @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("source",pendingID);out.putString("name",pendingName);}
- @Override protected void onDestroy(){preview="";files.shutdownNow();super.onDestroy();}
+ @Override protected void onDestroy(){onlineGeneration++;if(onlineRequest!=null){onlineRequest.detach();onlineRequest.cancel(this);onlineRequest=null;}preview="";files.shutdownNow();super.onDestroy();}
  private boolean canEdit(){
   if(busy||TunnelService.active){Toast.makeText(this,TunnelService.active?"请先断开连接再修改配置来源":"正在处理，请稍候",Toast.LENGTH_SHORT).show();return false;}return true;
  }
@@ -57,14 +62,14 @@ public final class ProfileSourcesActivity extends Activity {
   for(int i=0;i<sources.length();i++){
    JSONObject source=sources.optJSONObject(i);if(source==null)continue;
    String id=source.optString("id"),name=source.optString("name");
-   button(rows,name+(id.equals(summary.optString("editing_id"))?" · 当前编辑":"")+"\n"+source.optInt("lines")+" 条线路 · "+source.optInt("rules")+" 份规则",()->choose(id,name));
+   button(rows,name+(id.equals(summary.optString("editing_id"))?" · 当前编辑":"")+"\n"+source.optInt("lines")+" 条线路 · "+source.optInt("rules")+" 份规则",()->choose(id,name,source.optBoolean("remote")));
   }
  }
- private void choose(String id,String name){
+ private void choose(String id,String name,boolean remote){
   if(!canEdit())return;
-  new AlertDialog.Builder(this).setTitle(name).setItems(new String[]{"设为编辑来源","从新文件更新","移除来源"},(d,index)->{
+  new AlertDialog.Builder(this).setTitle(name).setItems(new String[]{"设为编辑来源",remote?"从原链接更新":"从新文件更新","移除来源"},(d,index)->{
    if(index==0)mutate(()->new ProfileStore(this).selectSource(id),"编辑来源已更改，当前场景保持不变。","无法切换编辑来源，请重试。");
-   else if(index==1)edit(id,name);else new AlertDialog.Builder(this).setTitle("移除配置来源？").setMessage("全局场景保持不变。若场景或线路组仍引用此来源的资源，将保留来源；至少保留一份来源。")
+   else if(index==1){if(remote)refreshOnline(id,name);else edit(id,name);}else new AlertDialog.Builder(this).setTitle("移除配置来源？").setMessage("全局场景保持不变。若场景或线路组仍引用此来源的资源，将保留来源；至少保留一份来源。")
     .setNegativeButton("取消",null).setPositiveButton("移除",(dialog,which)->{if(canEdit())mutate(()->new ProfileStore(this).removeSource(id),"来源已移除，场景保持不变。","无法移除：仍有引用或已是最后一份来源。原配置保留。");}).show();
   }).setNegativeButton("取消",null).show();
  }
@@ -91,7 +96,9 @@ public final class ProfileSourcesActivity extends Activity {
  }
  private boolean hasName(EditText name){if(name.getText().toString().trim().isEmpty()){name.setError("请填写来源名称");return false;}return true;}
  @Override protected void onActivityResult(int request,int result,Intent data){
-  super.onActivityResult(request,result,data);if(request!=PICK_PROFILE)return;
+  super.onActivityResult(request,result,data);
+  if(request==APPROVE_DOWNLOAD){if(onlineRequest!=null){if(result==RESULT_OK)onlineRequest.start(this);else onlineRequest.cancel(this);}return;}
+  if(request!=PICK_PROFILE)return;
   final String id=pendingID,name=pendingName;pendingID="";pendingName="";
   if(result!=RESULT_OK||data==null||data.getData()==null||name.isEmpty())return;
   if(!canEdit())return;final android.net.Uri uri=data.getData();
@@ -101,6 +108,44 @@ public final class ProfileSourcesActivity extends Activity {
     while((size=stream.read(buffer))!=-1){if(Thread.currentThread().isInterrupted()||output.size()+size>MAX_BYTES)throw new IOException("Document exceeds limit");output.write(buffer,0,size);}return output.toString(StandardCharsets.UTF_8.name());
    }
   },name,id);
+ }
+
+ private void onlineDialog(){
+  if(!canEdit())return;
+  LinearLayout fields=new LinearLayout(this);fields.setOrientation(1);fields.setPadding(dp(24),0,dp(24),0);
+  EditText name=input("来源名称"),url=input("HTTPS 配置链接");name.setSingleLine(true);url.setSingleLine(true);fields.addView(name);fields.addView(url);
+  AlertDialog dialog=new AlertDialog.Builder(this).setTitle("从链接添加来源").setView(fields).setNegativeButton("取消",null).setPositiveButton("选择获取线路",null).create();
+  dialog.setOnShowListener(d->{dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+   if(!hasName(name)||!canEdit())return;
+   try{
+    String address=url.getText().toString().trim(),label=name.getText().toString().trim();Libbox.validateProfileSourceURL(address);
+    JSONArray lines=new JSONObject(Libbox.scenarioEditor(new ProfileStore(this).load(),"")).getJSONArray("lines");
+    java.util.ArrayList<String> names=new java.util.ArrayList<>(),ids=new java.util.ArrayList<>();
+    for(int i=0;i<lines.length();i++){JSONObject line=lines.getJSONObject(i);if(line.optBoolean("enabled")){ids.add(line.getString("id"));names.add(line.optString("name",line.getString("id")));}}
+    dialog.dismiss();new AlertDialog.Builder(this).setTitle("下载使用的线路").setItems(names.toArray(new String[0]),(p,w)->startOnline(address,ids.get(w),label,"")).setNegativeButton("取消",null).show();
+   }catch(Exception e){url.setError("请填写有效的公开 HTTPS 配置链接，不能包含用户名、密码或片段。");}
+  });});dialog.show();
+ }
+ private void refreshOnline(String id,String name){
+  try{JSONObject source=new JSONObject(new ProfileStore(this).remoteSource(id));startOnline(source.getString("url"),source.getString("fetchLineID"),name,id);}
+  catch(Exception e){status.setText("来源信息不可用，原配置保留。请重新添加来源。");}
+ }
+ private void startOnline(String url,String line,String name,String id){
+  if(!canEdit())return;busy=true;status.setText("正在准备下载；尚未修改配置…");final int generation=++onlineGeneration;
+  files.execute(()->{
+   try{String library=new ProfileStore(this).librarySnapshot();runOnUiThread(()->{
+    if(isDestroyed()||generation!=onlineGeneration){if(!isDestroyed())reload("已取消下载。");return;}
+    try{
+     onlineRequest=OnlineProfileImport.begin(library,url,line,name,id,result->{
+      if(isDestroyed())return;boolean cancelled=onlineRequest!=null&&onlineRequest.cancelled;onlineRequest=null;
+      if(result.isEmpty())reload(cancelled?"已取消下载，原配置保留。":"下载或校验未完成：请检查网络、链接、获取线路及 JSON 格式。原配置保留。");else showPreview(result);
+     });
+     Intent consent=android.net.VpnService.prepare(this);
+     if(consent!=null){status.setText("需要系统授权，才能让配置下载绕开自身 VPN；本次不会接管流量。");startActivityForResult(consent,APPROVE_DOWNLOAD);}
+     else onlineRequest.start(this);
+    }catch(Exception e){if(onlineRequest!=null){onlineRequest.cancel(this);onlineRequest=null;}else reload("下载服务未能启动，原配置保留。请重试。");}
+   });}catch(Exception e){runOnUiThread(()->{if(!isDestroyed())reload("无法读取下载所需配置，原配置保留。");});}
+  });
  }
  private interface Content{String read()throws Exception;}
  private void prepare(Content content,String name,String id){

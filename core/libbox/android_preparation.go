@@ -119,6 +119,9 @@ func (l *Libbox) newAndroidResourceTransport(parent context.Context, data []byte
 }
 
 func (b *androidBootstrap) fetch(rawURL string, limit int64) ([]byte, error) {
+	return b.fetchResource(rawURL, limit, false)
+}
+func (b *androidBootstrap) fetchResource(rawURL string, limit int64, source bool) ([]byte, error) {
 	lookup := func(ctx context.Context, _, host string) ([]netip.Addr, error) {
 		return b.router.Lookup(ctx, host, adapter.DNSQueryOptions{Transport: b.transport, DisableCache: true})
 	}
@@ -129,7 +132,11 @@ func (b *androidBootstrap) fetch(rawURL string, limit int64) ([]byte, error) {
 		}
 		return b.outbound.DialContext(ctx, network, M.SocksaddrFrom(target.Addr(), target.Port()))
 	}
-	content, err := subscription.FetchStrictBytesWithNetworkContext(b.ctx, rawURL, limit, lookup, dial)
+	fetch := subscription.FetchStrictBytesWithNetworkContext
+	if source {
+		fetch = subscription.FetchProfileSourceBytesWithNetworkContext
+	}
+	content, err := fetch(b.ctx, rawURL, limit, lookup, dial)
 	if err != nil {
 		return nil, fmt.Errorf("protected resource fetch failed")
 	}

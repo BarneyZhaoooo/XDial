@@ -449,3 +449,56 @@ x86_64，仅 arm64 设备运行。尚未推送，GitHub CI/长期签名/受限�
 
 此阶段补齐场景编辑入口，不代表完整平台交付。在线来源、连接中自动选择、协议冷资源
 租约、取消延迟、系统撤权与存储故障分支、Windows/Linux 按应用透明和多发行版仍需继续。
+
+## 2026-11-17 在线来源下载、预览与更新
+
+实现 `FetchAndroidProfilePreview` 的独立准备租约：捕获系统 DNS/接口/protect+bind，
+复用精确 Line 资源编译；不建立 TUN、不展开远程 provider。HTTPS 逐跳校验、全 DNS
+地址校验与数值拨号复用严格获取器，新增源 URL 长度/用户信息/片段校验及重定向同约束；
+下载最多 2 MiB，响应失败、超限或取消不能产生可保存预览。配置提交仍需旧库摘要 CAS。
+`ProfileSourcesActivity` 增加原生链接/线路选择、取消下载和原链接刷新；URL/预览不写
+Intent、Bundle 或日志，只进入内存及最终确认后的加密库。
+
+测试：
+
+- `online-race-final.log`：RemoteProfile/RemoteSource/ProfileSource/AndroidProfileSource
+  定向 race 通过。覆盖来源地址/线路不可替换、获取线路引用保护、文件不能伪造在线来源、
+  全局场景保留、预览 CAS、保护拒绝/准备租约取消。HTTP 测试通过可信本地 TLS 服务器
+  和注入的数值拨号回路验证成功、同站点重定向、私网/用户信息重定向拒绝、超限、非 2xx、
+  响应等待中取消；没有外网转发，不冒称真实代理端到端。最初拨号次数断言未计入连接复用，
+  已修正为实际 6 次（同站点重定向复用连接）。
+- `online-core-final.log`：config/libbox/mobile/subscription 常规全量通过。最初命令漏
+  `build/tools` 导致 sing-box check 无工具，补齐 PATH 后重跑通过；不算代码测试通过。
+- `online-apple.log` 六 Apple 构建通过；补充 Apple 显式获取线路保护后
+  `online-macos-final.log` 再次完成四项 macOS App/扩展 Debug/Release 构建。
+- `online-source-xctest.log`：macOS 1 项专项 XCTest 通过，验证新字段往返、旧 JSON
+  兼容和旧获取器拒绝显式线路。无新增 iOS XCTest，也不把该测试算成全量 macOS 测试。
+- `online-gate-final.log` gate 通过；`online-build-final.log` 双 ABI AAR/APK 构建与产物
+  检查通过。首次 Android 编译使用了 SDK 未开放的 LinkProperties 拷贝构造器，修为
+  捕获系统回调快照后构建通过。
+
+设备：插件独立 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B`，arm64 API 36。
+
+- 从 `https://raw.githubusercontent.com/xindong/XDial/main/docs/examples/profile-next-company.json`
+  下载无秘密示例 `Online sample`，指定 Direct。先显示 2 线路/1 规则/2 场景预览，确认
+  后库由 6 场景增为 8，当前仍 One；原链接更新显示保留全局场景，重启后仍 8 场景。
+- 下载日志 `prepared=true protected=2 failures=0`，清理时 TUN 描述符 0。所含示例
+  公司服务器未认证也未连接，不能据此称企业协议联调完成。
+- `https://192.0.2.1/config` 立即失败，故不把它当作中途取消证据。实际取消测试是在
+  设备断网后更新已有来源，等待网络时点取消；恢复网络后读回“已取消下载，原配置保留”，
+  没有复活。响应读取中取消的证据只来自本地 TLS 测试。
+- 完整新增/取消交互包为 `c440239a1646`；最终包仅收敛页面销毁时取消服务调用的异常。
+  最终 `59e7501d81d3` 包再次原链接更新/保存，返回 One 连接，通过普通未 protect App
+  socket UDP DNS 响应 ID/NXDOMAIN 与 HTTPS 200/正文检查；刷新 0/0/0。最终手动断开、
+  One、自动关闭，`phase=released tun_descriptors=0`。设备网络已恢复。
+- 收据 `build/android/online-device.log`；最终安装 `matchesLocal=true`。
+
+最终 Debug APK：
+`build/android/artifacts/xdial-1-debug-59e7501d81d3-ed302584252b/xdial-1-debug-59e7501d81d3.apk`
+
+SHA-256 `59e7501d81d3caa2fc0f748f9aeca0e32ea38b287050f3c30b7870f6f504a42b`；
+manifest 如实为 `287cf77 + dirty=true`。arm64-v8a/x86_64 均打包，仅 arm64 运行。
+无推送/外部分发，不改宿主 VPN 或既有 iOS 自动化。
+
+仍缺：非 JSON 在线格式、AnyConnect/Tailscale 冷资源租约、连接中自动观察、Apple 显式
+Line 来源获取、长期签名/受限渠道、Windows/Linux 按应用透明与多发行版真实验收。

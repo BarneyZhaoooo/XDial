@@ -16,6 +16,17 @@ public final class TunnelService extends VpnService {
  public static volatile long selectionRevision;
  public static volatile String tailscaleStatus="", setupMessage="";
  private String setupLine="";
+ private volatile OnlineProfileImport profileImport;
+ private volatile Network importNetwork;
+ private volatile LinkProperties importLinks;
+ private Runnable importTimeout;
+ private final Handler mainHandler=new Handler(Looper.getMainLooper());
+ private void invalidateImport(Network network,LinkProperties value,boolean lost){
+  OnlineProfileImport request=profileImport;Network captured=importNetwork;
+  if(request!=null && captured!=null && ((lost&&captured.equals(network)) || (!lost&&(!captured.equals(network)||(value!=null&&!value.equals(importLinks)))))){
+   request.cancelled=true;Libbox_ runtime=request.runtime;if(runtime!=null)runtime.cancelPreparation();
+  }
+ }
  private ScheduledFuture<?> statusRefresh, switchRefresh, retireSwitch;
  private volatile boolean switching;
  private boolean coreReady;
@@ -47,11 +58,11 @@ public final class TunnelService extends VpnService {
   try {worker.execute(()->{if(!destroyed)action.run();});}catch(RejectedExecutionException ignored){}
  }
  private final ConnectivityManager.NetworkCallback networks=new ConnectivityManager.NetworkCallback() {
-  @Override public void onAvailable(Network network) {observedNetworkRevision.incrementAndGet();enqueue(()->{underlay=network;links=null;capabilities=null;blocked=false;});}
+  @Override public void onAvailable(Network network) {invalidateImport(network,null,false);observedNetworkRevision.incrementAndGet();enqueue(()->{underlay=network;links=null;capabilities=null;blocked=false;});}
   @Override public void onCapabilitiesChanged(Network network,NetworkCapabilities value) {enqueue(()->{if(network.equals(underlay)){capabilities=value;observe();}});}
-  @Override public void onLinkPropertiesChanged(Network network,LinkProperties value) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){links=value;observe();}});}
-  @Override public void onBlockedStatusChanged(Network network,boolean value) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){blocked=value;observe();}});}
-  @Override public void onLost(Network network) {observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){underlay=null;links=null;capabilities=null;lifecycle.observeUnderlay("");reconcile();}});}
+  @Override public void onLinkPropertiesChanged(Network network,LinkProperties value) {invalidateImport(network,value,false);observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){links=value;observe();}});}
+  @Override public void onBlockedStatusChanged(Network network,boolean value) {if(value)invalidateImport(network,null,true);observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){blocked=value;observe();}});}
+  @Override public void onLost(Network network) {invalidateImport(network,null,true);observedNetworkRevision.incrementAndGet();enqueue(()->{if(network.equals(underlay)){underlay=null;links=null;capabilities=null;lifecycle.observeUnderlay("");reconcile();}});}
  };
  private final ConnectivityManager.NetworkCallback defaultNetwork=new ConnectivityManager.NetworkCallback(){
   @Override public void onAvailable(Network network){enqueue(TunnelService.this::acquireSystemNetwork);}
@@ -61,6 +72,13 @@ public final class TunnelService extends VpnService {
  @Override public void onCreate(){super.onCreate();connectivity=getSystemService(ConnectivityManager.class);}
  @Override public int onStartCommand(Intent intent,int flags,int id) {
   String action=intent==null?"":intent.getAction();
+  if("cancel-import".equals(action)){
+   String requestID=intent.getStringExtra("request");OnlineProfileImport current=profileImport;
+   if(current!=null&&current.id.equals(requestID)){cancelPreparation();enqueue(()->{state="未连接";finish();});}
+   else if(!active)stopSelf();return START_NOT_STICKY;
+  }
+  final OnlineProfileImport incoming="import-profile".equals(action)?OnlineProfileImport.find(intent.getStringExtra("request")):null;
+  if("import-profile".equals(action)&&(incoming==null||incoming.cancelled||active)){if(incoming!=null)incoming.complete();if(!active)stopSelf();return START_NOT_STICKY;}
   if("stop".equals(action)){cancelPreparation();enqueue(()->{state="未连接";finish();});return START_NOT_STICKY;}
   if("switch-scenario".equals(action)){
    final String target=intent.getStringExtra("scenario");final long request=switchRequests.incrementAndGet();
@@ -109,10 +127,13 @@ public final class TunnelService extends VpnService {
    .setContentTitle("XDial").setContentText("连接服务运行中 · 可随时断开").setContentIntent(open).setOngoing(true)
    .addAction(new Notification.Action.Builder(null,"断开",stop).build()).build());
   enqueue(()->{
-   if(active)return;
+   if(active){if(incoming!=null)incoming.complete();return;}
+   if(incoming!=null&&incoming.cancelled){incoming.complete();finish();return;}
+   profileImport=incoming;
    if(stopRequested){state="未连接";finish();return;}
    settingUp="tailscale-setup".equals(action);setupLine=settingUp?intent.getStringExtra("line"):"";tailscaleStatus="";setupMessage="";
    synchronized(ProfileStore.class){active=true;}probeResult="";surveyResult="";lifecycle.requestConnection(true);state="等待可用网络";
+   if(profileImport!=null){importTimeout=()->{if(profileImport!=null){cancelPreparation();enqueue(()->{state="配置下载超时";finish();});}};mainHandler.postDelayed(importTimeout,35000);}
    acquireSystemNetwork();
   });
   return START_NOT_STICKY;
@@ -174,7 +195,7 @@ public final class TunnelService extends VpnService {
      ssid=info.getSSID();if(ssid.startsWith("\"") && ssid.endsWith("\"")) ssid=ssid.substring(1,ssid.length()-1);
     }
    }
-   String profile=new ProfileStore(this).load();
+   String profile=profileImport==null?new ProfileStore(this).load():Libbox.profileLibraryRuntime(profileImport.library);
    stage="系统网络";
    final Network captured=underlay;
    if(captured==null || links==null || capabilities==null)throw new java.io.IOException("Underlay unavailable");
@@ -215,6 +236,15 @@ public final class TunnelService extends VpnService {
    snapshot.put("facts", facts); snapshots.put(snapshot);
    core.setNetworkInterfaces(snapshots.toString());
    core.setDefaultInterface(nic.getName(),nic.getIndex());
+   if(profileImport!=null){
+    OnlineProfileImport request=profileImport;importNetwork=captured;importLinks=links;request.runtime=core;
+    if(request.cancelled||stopRequested)throw new java.io.InterruptedIOException("Import cancelled");
+    stage="下载配置来源";state="正在下载配置（未接管流量）";long before=protectedSockets.get();
+    String preview=core.fetchAndroidProfilePreview(request.library,request.url,request.line,request.name,request.source,systemDNS.toString(),getNoBackupFilesDir().getAbsolutePath());
+    if(request.cancelled||stopRequested||!importLinks.equals(connectivity.getLinkProperties(captured)))throw new java.io.InterruptedIOException("Import network changed");
+    request.result=preview;android.util.Log.i("XDialSourceImport","prepared=true protected="+(protectedSockets.get()-before)+" failures="+protectionFailures.get());
+    state="未连接";finish();return;
+   }
    if(!settingUp){
     final long observationRevision=observedNetworkRevision.get();
     MobileSelection selection=MobileSelection.get(this);long survey=selection.beginSurvey();String country="";
@@ -265,6 +295,7 @@ public final class TunnelService extends VpnService {
    if(stopRequested){state="未连接";finish();return;}
    awaitReady(epoch,profile,systemDNS.toString(),SystemClock.elapsedRealtime()+30000);
   }catch(Exception error){
+   if(profileImport!=null){state="配置下载未完成，原配置保留";finish();return;}
    stopCore();
    if(stopRequested){state="未连接";finish();return;}
    lifecycle.completeAttempt(epoch,false,error instanceof java.io.IOException,SystemClock.elapsedRealtime());
@@ -376,6 +407,7 @@ public final class TunnelService extends VpnService {
   try{MobileSelection.get(this).connected(false);}catch(Exception ignored){}
  }
  private void cleanup(){
+  if(importTimeout!=null){mainHandler.removeCallbacks(importTimeout);importTimeout=null;}
   stopWaitingForVpnRelease();
   lifecycle.requestConnection(false);if(retry!=null){retry.cancel(false);retry=null;}
   if(watching){try{connectivity.unregisterNetworkCallback(networks);}catch(Exception ignored){}watching=false;}
@@ -383,6 +415,7 @@ public final class TunnelService extends VpnService {
   if(tunnel!=null){try{tunnel.close();}catch(Exception ignored){}tunnel=null;}
   logTunnelOwnership("released");
   underlay=null;links=null;capabilities=null;active=false;settingUp=false;setupLine="";tailscaleStatus="";setupMessage="";probeResult="";
+  OnlineProfileImport completed=profileImport;profileImport=null;importNetwork=null;importLinks=null;if(completed!=null)completed.complete();
  }
  private void logTunnelOwnership(String phase){
   if((getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)==0)return;
@@ -395,7 +428,7 @@ public final class TunnelService extends VpnService {
   android.util.Log.i("XDialLifecycle","phase="+phase+" tun_descriptors="+count);
  }
  private void finish(){cleanup();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
- private void cancelPreparation(){stopRequested=true;switchRequests.incrementAndGet();Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}
+ private void cancelPreparation(){stopRequested=true;OnlineProfileImport request=profileImport;if(request!=null)request.cancelled=true;switchRequests.incrementAndGet();Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}
  @Override public void onRevoke(){cancelPreparation();enqueue(()->{state="VPN 授权已撤销";finish();});}
  @Override public void onDestroy(){destroyed=true;cancelPreparation();probes.shutdownNow();worker.execute(this::cleanup);worker.shutdown();super.onDestroy();}
 }

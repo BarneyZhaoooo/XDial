@@ -195,6 +195,21 @@ func (l *profileLibrary) validate() error {
 	if err := validateDocumentProfileWithEmptyGroups(&profile, true); err != nil {
 		return err
 	}
+	for _, record := range l.Profiles {
+		if len(record.Source) == 0 || string(record.Source) == "null" {
+			continue
+		}
+		// Preserve old sources even if their format is not supported by Android yet.
+		var source struct {
+			FetchLineID string `json:"fetchLineID"`
+		}
+		if json.Unmarshal(record.Source, &source) != nil {
+			return fmt.Errorf("invalid source metadata")
+		}
+		if source.FetchLineID != "" && source.FetchLineID != "direct" && profile.FindLine(source.FetchLineID) == nil {
+			return fmt.Errorf("source acquisition Line is missing")
+		}
+	}
 	active := l.ActiveScenarioID == "" && len(l.Scenarios) == 0
 	ssids := map[string]bool{}
 	for _, s := range profile.Scenarios {
@@ -441,6 +456,9 @@ type libraryPreview struct {
 // PreviewProfileLibraryImport performs no downloads or writes. Imported IDs
 // must have been scoped by ImportProfileDocument to sourceID first.
 func PreviewProfileLibraryImport(raw, importedJSON, name, sourceID string, updating bool) (string, error) {
+	return previewProfileLibraryImport(raw, importedJSON, name, sourceID, updating, nil)
+}
+func previewProfileLibraryImport(raw, importedJSON, name, sourceID string, updating bool, remote *ProfileRemoteSource) (string, error) {
 	l, err := decodeLibrary(raw)
 	if err != nil {
 		return "", err
@@ -464,6 +482,15 @@ func PreviewProfileLibraryImport(raw, importedJSON, name, sourceID string, updat
 		if index < 0 {
 			return "", fmt.Errorf("source no longer exists")
 		}
+		if remote == nil && len(l.Profiles[index].Source) > 0 && string(l.Profiles[index].Source) != "null" {
+			return "", fmt.Errorf("remote source must be refreshed from its recorded address")
+		}
+		if remote != nil {
+			previous, err := profileRemoteSource(l.Profiles[index].Source)
+			if err != nil || previous.URL != remote.URL || previous.FetchLineID != remote.FetchLineID {
+				return "", fmt.Errorf("remote source identity changed")
+			}
+		}
 		if err = l.refreshSource(index, p); err != nil {
 			return "", err
 		}
@@ -472,6 +499,9 @@ func PreviewProfileLibraryImport(raw, importedJSON, name, sourceID string, updat
 			return "", fmt.Errorf("source already exists")
 		}
 		r := libraryRecord{ID: sourceID, Name: name, Profile: p, Baseline: p}
+		if remote != nil {
+			r.Source = libraryJSON(remote)
+		}
 		l.addTemplates(r, true)
 		r.Profile = libraryResources(p)
 		l.Profiles = append(l.Profiles, r)
@@ -693,7 +723,7 @@ func ProfileLibrarySummary(raw string) (string, error) {
 	}
 	var sources []map[string]any
 	for _, r := range l.Profiles {
-		sources = append(sources, map[string]any{"id": r.ID, "name": r.Name, "lines": len(libraryObjects(r.Profile, "lines")), "rules": len(libraryObjects(r.Profile, "rule_sets"))})
+		sources = append(sources, map[string]any{"id": r.ID, "name": r.Name, "lines": len(libraryObjects(r.Profile, "lines")), "rules": len(libraryObjects(r.Profile, "rule_sets")), "remote": len(r.Source) > 0 && string(r.Source) != "null"})
 	}
 	return string(libraryJSON(map[string]any{"sources": sources, "editing_id": l.EditingProfileID, "scenarios": len(l.Scenarios)})), nil
 }

@@ -155,6 +155,7 @@ extension AppState {
         Task {
             defer { refreshingProfileIDs.remove(id) }
             do {
+                try source.validateLegacyAcquisition()
                 let incoming = try await ProfileDocumentService.read(content: "", url: source.url, profileID: id, nodesOnly: source.nodesOnly)
                 guard let index = profileLibrary.profiles.firstIndex(where: { $0.id == id }),
                       profileLibrary.profiles[index].source == source else { return }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kafeifei/xdial/core/config"
 	"github.com/kafeifei/xdial/core/mobile"
+	"github.com/kafeifei/xdial/core/subscription"
 )
 
 func NewProfileLibrary(profileJSON string) (string, error) {
@@ -78,6 +79,12 @@ func PrepareProfileLibraryTailscaleSetup(raw string) (string, error) {
 // legacy all-format ImportProfile entrypoint it cannot expand remote providers
 // through a host HTTP client. Referenced URL RuleSets remain declarations.
 func PreviewNativeProfileImport(libraryJSON, content, name, sourceID string) (string, error) {
+	return previewNativeProfileImport(libraryJSON, content, name, sourceID, "", "")
+}
+func ProfileLibraryRemoteSource(libraryJSON, sourceID string) (string, error) {
+	return config.ProfileLibraryRemoteSource(libraryJSON, sourceID)
+}
+func previewNativeProfileImport(libraryJSON, content, name, sourceID, remoteURL, lineID string) (string, error) {
 	var root map[string]json.RawMessage
 	if len(content) > 2<<20 || json.Unmarshal([]byte(content), &root) != nil || (root["outbounds"] == nil && root["lines"] == nil && root["xdial"] == nil) {
 		return "", fmt.Errorf("choose an XDial or sing-box JSON configuration")
@@ -101,5 +108,12 @@ func PreviewNativeProfileImport(libraryJSON, content, name, sourceID string) (st
 	if err != nil {
 		return "", err
 	}
+	if remoteURL != "" {
+		return config.PreviewProfileLibraryRemoteImport(libraryJSON, string(encoded), name, sourceID, updating, remoteURL, lineID)
+	}
 	return config.PreviewProfileLibraryImport(libraryJSON, string(encoded), name, sourceID, updating)
+}
+
+func ValidateProfileSourceURL(rawURL string) error {
+	return subscription.ValidateProfileSourceURL(rawURL)
 }

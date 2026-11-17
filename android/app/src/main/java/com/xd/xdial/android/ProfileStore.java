@@ -44,6 +44,8 @@ final class ProfileStore {
   synchronized(ProfileStore.class){writeLibrary(Libbox.applyProfileLibrarySelection(readLibrary(),text));}
  }
  String load() throws Exception {synchronized(ProfileStore.class){return Libbox.profileLibraryRuntime(readLibrary());}}
+ String librarySnapshot()throws Exception{synchronized(ProfileStore.class){return readLibrary();}}
+ String remoteSource(String id)throws Exception{synchronized(ProfileStore.class){return Libbox.profileLibraryRemoteSource(readLibrary(),id);}}
  String summary()throws Exception{synchronized(ProfileStore.class){return Libbox.profileLibrarySummary(readLibrary());}}
  String prepareTailscale()throws Exception{
   synchronized(ProfileStore.class){org.json.JSONObject result=new org.json.JSONObject(Libbox.prepareProfileLibraryTailscaleSetup(readLibrary()));writeLibrary(result.getString("library"));return result.getString("line_id");}
@@ -57,7 +59,7 @@ final class ProfileStore {
   synchronized(ProfileStore.class){return Libbox.previewNativeProfileImport(readLibrary(),content,name,updatingID);}
  }
  void commitPreview(String preview)throws Exception{
-  synchronized(ProfileStore.class){writeLibrary(Libbox.commitProfileLibraryPreview(readLibrary(),preview));}
+  synchronized(ProfileStore.class){if(TunnelService.active)throw new IOException("Connection is active");writeLibrary(Libbox.commitProfileLibraryPreview(readLibrary(),preview));}
  }
  private String readLibrary()throws Exception{
   byte[] bytes;
