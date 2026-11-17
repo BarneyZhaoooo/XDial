@@ -69,6 +69,17 @@ enum SettingsLayoutPreview {
             }
         }
         state = AppState(previewLibrary: library)
+        if !arguments.contains("--user-configuration") {
+            state.profileLibraryLoaded = true
+            let initialIntent = state.desiredConnectionStateForDiagnostics
+            state.selectHomeScenario(scenario.id)
+            precondition(state.activeScenario?.id == scenario.id)
+            precondition(state.desiredConnectionStateForDiagnostics == initialIntent)
+            precondition(!state.isBusy && !state.isConnected)
+            let popover = NSHostingView(rootView: MainPopover()
+                .environmentObject(state!).environmentObject(AppUpdateChecker()))
+            precondition(popover.fittingSize.width == 360 && popover.fittingSize.height > 0)
+        }
         state.editorPosition.tab = 2
         let hosting = NSHostingView(rootView: SettingsView().environmentObject(state!))
         let window = NSWindow(contentRect: CGRect(x: -20000, y: -20000, width: 620, height: 580),

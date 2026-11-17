@@ -20,16 +20,11 @@ struct MainPopover: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var networkInfo = NetworkInfo.shared
     @StateObject private var trafficInfo = TrafficInfo()
-    @State private var hoveredScenarioID: String?
+    @State private var showsScenarios = false
+    @State private var contentHeight: CGFloat = 260
     @State private var showsConnectionDetails = true
     @State private var showsPolicyMappings = false
 
-    private let minimumPopoverWidth: CGFloat = 340
-    private let maximumScenariosPerRow = 4
-    private let scenarioItemWidth: CGFloat = 72
-    private let scenarioItemSpacing: CGFloat = 14
-    private let scenarioHorizontalPadding: CGFloat = 24
-    private let sphereDiameter: CGFloat = 64
     private let actionColor = XDialPalette.primaryAction
     private let progressColor = XDialPalette.progress
     private let successColor = XDialPalette.success
@@ -37,11 +32,11 @@ struct MainPopover: View {
     private let warningColor = XDialPalette.warning
     private let proxyOnlyColor = XDialPalette.proxyOnly
 
-    var body: some View {
+    private var content: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            scenarioCarousel
+            homeControls
             if let port = proxyOnlyPort {
                 Divider()
                 proxyOnlyBand(port: port)
@@ -77,7 +72,20 @@ struct MainPopover: View {
                 details(report)
             }
         }
-        .frame(width: popoverWidth)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var scrollLimit: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - 48
+    }
+
+    var body: some View {
+        ScrollView {
+            content
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 360, height: min(contentHeight, scrollLimit))
         .animation(
             .easeInOut(duration: 0.2),
             value: state.browsingRecord.profile.scenarios.count
@@ -371,186 +379,83 @@ struct MainPopover: View {
     }
 
     @ViewBuilder
-    private var scenarioCarousel: some View {
-        if state.browsingRecord.profile.scenarios.isEmpty {
-            VStack(spacing: 7) {
-                Circle()
-                    .strokeBorder(
-                        Color.secondary.opacity(0.35),
-                        style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
-                    )
-                    .frame(width: sphereDiameter, height: sphereDiameter)
-                    .overlay {
-                        Image(systemName: "circle.dashed")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
+    private var homeControls: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 18) {
+                DialControl(phase: dialPhase, attentionTint: dangerColor, connectedTint: connectedColor, diameter: 74) {
+                    if state.scenarioSwitchTargetID != nil && state.isConnected {
+                        state.cancelPendingScenarioSwitch()
+                    } else if state.isConnected || state.isBusy {
+                        state.disconnect()
+                    } else if let selected = state.activeScenario {
+                        state.connectScenario(selected.id)
                     }
-                Text(state.tr("暂无场景", "No Scenarios"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                }
+                .disabled(state.engine.status == "disconnecting" ||
+                          (state.activeScenario == nil && !state.isBusy && !state.isConnected))
+                .accessibilityLabel(dialActionTitle)
+                .accessibilityValue(state.statusText)
+                .help(dialActionTitle)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.isBusy ? dialActivityTitle : state.statusText)
+                        .font(.headline)
+                    if let selected = state.activeScenario {
+                        Text(selected.name).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 142)
-        } else {
-            let indexedScenarios = Array(state.browsingRecord.profile.scenarios.enumerated())
-            let columnCount = scenarioColumnCount
-            let rowCount = Int(
-                ceil(
-                    Double(indexedScenarios.count)
-                        / Double(columnCount)
-                )
-            )
-            VStack(spacing: 18) {
-                ForEach(0..<rowCount, id: \.self) { rowIndex in
-                    let start = rowIndex * columnCount
-                    let end = min(
-                        indexedScenarios.count,
-                        start + columnCount
-                    )
-                    HStack(alignment: .top, spacing: scenarioItemSpacing) {
-                        ForEach(
-                            indexedScenarios[start..<end],
-                            id: \.element.id
-                        ) { indexedScenario in
-                            scenarioSphere(indexedScenario.element)
+            if state.profile.scenarios.isEmpty {
+                Button(state.tr("前往配置添加场景", "Open configuration to add a scenario")) {
+                    state.editorPosition.showProfileSection()
+                    openSettingsWindow()
+                }
+            } else {
+                DisclosureGroup(state.tr("选择场景", "Choose Scenario"), isExpanded: $showsScenarios) {
+                    VStack(spacing: 6) {
+                        ForEach(state.profile.scenarios) { scenario in
+                            HomeScenarioCard(
+                                id: scenario.id, name: scenario.name,
+                                summary: ScenarioDescriber.summary(for: scenario, in: state.profile, isChinese: state.language == .zh),
+                                symbol: ScenarioDescriber.symbol(for: scenario, in: state.profile),
+                                isActive: scenario.id == state.profile.activeScenarioID,
+                                requiresConfirmation: state.isConnected || state.isBusy,
+                                compact: true, tr: state.tr
+                            ) { state.selectHomeScenario(scenario.id) }
+                            .disabled(state.engine.status == "disconnecting")
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 6)
                 }
             }
-            .padding(.horizontal, scenarioHorizontalPadding)
-            .padding(.vertical, 18)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+    }
+
+    private var dialActivityTitle: String {
+        if state.scenarioSwitchTargetID != nil { return state.tr("切换中", "Switching") }
+        switch state.engine.status {
+        case "disconnecting": return state.tr("正在断开", "Disconnecting")
+        case "reconnecting": return state.tr("正在重连", "Reconnecting")
+        default: return state.tr("正在连接", "Connecting")
         }
     }
 
-    private var popoverWidth: CGFloat {
-        let scenarioCount = state.browsingRecord.profile.scenarios.count
-        guard scenarioCount > 0 else { return minimumPopoverWidth }
-        let columnCount = scenarioColumnCount
-        let contentWidth = CGFloat(columnCount) * scenarioItemWidth
-            + CGFloat(max(0, columnCount - 1)) * scenarioItemSpacing
-            + scenarioHorizontalPadding * 2
-        return max(minimumPopoverWidth, contentWidth)
+    private var dialPhase: DialPhase {
+        if state.isBusy { return .working }
+        if state.isConnected { return .connected }
+        if state.presentedConnectionReport?.state == .failed || state.presentedConnectionReport?.error != nil || state.engine.lastError != nil { return .attention }
+        return .idle
     }
 
-    /// 先以每行最多四个求出不可避免的最少行数，再把项目均匀分到这些行。
-    /// 这样 5 个是 3+2，6 个是 3+3，不会因为新增一行仍保持四列宽。
-    private var scenarioColumnCount: Int {
-        ScenarioGridLayout.columnCount(
-            itemCount: state.browsingRecord.profile.scenarios.count,
-            maximumPerRow: maximumScenariosPerRow
-        )
-    }
-
-    private func scenarioSphere(_ scenario: Scenario) -> some View {
-        let visualState = visualState(for: scenario)
-        let hovered = hoveredScenarioID == scenario.id
-        return Button {
-            performScenarioAction(scenario, visualState: visualState)
-        } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.primary.opacity(0.025))
-                    Circle()
-                        .stroke(
-                            Color.secondary.opacity(0.34),
-                            lineWidth: 1.2
-                        )
-                    progressRing(for: visualState, scenario: scenario)
-                    Image(systemName: scenarioIcon(scenario))
-                        .font(.system(size: 25, weight: .regular))
-                        .foregroundStyle(iconColor(for: visualState))
-                }
-                .frame(width: sphereDiameter, height: sphereDiameter)
-                .overlay(alignment: .bottomTrailing) {
-                    if let badge = badge(
-                        for: visualState,
-                        hovered: hovered
-                    ) {
-                        Image(systemName: badge.symbol)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 22, height: 22)
-                            .background(badge.color, in: Circle())
-                            .overlay {
-                                Circle()
-                                    .stroke(
-                                        Color(nsColor: .windowBackgroundColor),
-                                        lineWidth: 2
-                                    )
-                            }
-                    }
-                }
-                Text(scenario.name)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .frame(width: 72)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredScenarioID = hovering ? scenario.id : nil
-        }
-        .help(actionHelp(for: scenario, visualState: visualState))
-        .accessibilityLabel(scenario.name)
-        .accessibilityHint(actionHelp(for: scenario, visualState: visualState))
-    }
-
-    @ViewBuilder
-    private func progressRing(
-        for visualState: ScenarioVisualState,
-        scenario: Scenario
-    ) -> some View {
-        switch visualState {
-        case .idleSelected:
-            Circle()
-                .stroke(Color.secondary.opacity(0.48), lineWidth: 3)
-        case .idle:
-            EmptyView()
-        case .connecting:
-            Circle()
-                .stroke(
-                    Color.secondary.opacity(0.34),
-                    style: StrokeStyle(lineWidth: 4, dash: [8, 4])
-                )
-            Circle()
-                .trim(from: 0, to: max(0.035, connectionProgress))
-                .stroke(
-                    progressColor,
-                    style: StrokeStyle(
-                        lineWidth: 4,
-                        lineCap: .butt
-                    )
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(
-                    .easeInOut(duration: 0.25),
-                    value: connectionProgress
-                )
-        case .connected:
-            Circle()
-                .stroke(
-                    connectedColor,
-                    style: StrokeStyle(
-                        lineWidth: 4,
-                        dash: isProxyOnly ? [7, 4] : []
-                    )
-                )
-        case .failed:
-            Circle()
-                .trim(from: 0.06, to: 0.94)
-                .stroke(
-                    dangerColor,
-                    style: StrokeStyle(
-                        lineWidth: 4,
-                        lineCap: .butt
-                    )
-                )
-                .rotationEffect(.degrees(-90))
-        }
+    private var dialActionTitle: String {
+        if state.scenarioSwitchTargetID != nil && state.isConnected { return state.tr("取消切换", "Cancel switch") }
+        if state.engine.status == "disconnecting" { return state.statusText }
+        if state.isBusy { return state.tr("取消连接", "Cancel connection") }
+        if state.isConnected { return state.tr("断开", "Disconnect") }
+        if dialPhase == .attention { return state.tr("重试", "Retry") }
+        return state.tr("连接", "Connect")
     }
 
     private var statusBand: some View {
@@ -1318,11 +1223,6 @@ struct MainPopover: View {
         .padding(.vertical, 11)
     }
 
-    private var currentRuntimeScenarioID: String? {
-        guard state.browsingRecord.id == state.profileLibrary.activeProfileID else { return nil }
-        return state.presentedConnectionReport?.scenario.id
-    }
-
     private var expandableReport: ConnectionReport? {
         guard let report = state.presentedConnectionReport else {
             return nil
@@ -1352,31 +1252,6 @@ struct MainPopover: View {
             return nil
         }
         return state.presentedConnectionReport
-    }
-
-    private var connectionProgress: Double {
-        guard let report = connectionProgressReport,
-              !report.tasks.isEmpty else {
-            return 0
-        }
-        let total = Double(report.tasks.count)
-        let progress = report.tasks.reduce(0.0) { partial, task in
-            partial + taskProgress(task.state)
-        }
-        return min(1, max(0, progress / total))
-    }
-
-    private func taskProgress(_ taskState: ConnectionTaskState) -> Double {
-        switch taskState {
-        case .ready, .committed, .rolledBack, .skipped:
-            return 1
-        case .running, .committing, .rollingBack:
-            return 0.5
-        case .failed:
-            return 0.75
-        case .pending:
-            return 0
-        }
     }
 
     private func completedTaskCount(in report: ConnectionReport) -> Int {
@@ -1450,140 +1325,6 @@ struct MainPopover: View {
             return state.tr("已回滚", "Rolled back")
         case .skipped:
             return state.tr("已跳过", "Skipped")
-        }
-    }
-
-    private func visualState(for scenario: Scenario) -> ScenarioVisualState {
-        if let targetScenarioID = state.scenarioSwitchTargetID {
-            if scenario.id == targetScenarioID && state.browsingRecord.id == state.scenarioSwitchTargetProfileID { return .connecting }
-            if scenario.id == currentRuntimeScenarioID,
-               state.isConnected {
-                return .connected
-            }
-            return .idle
-        }
-        guard scenario.id == currentRuntimeScenarioID else {
-            return scenario.id == state.browsingRecord.profile.activeScenarioID
-                ? .idleSelected
-                : .idle
-        }
-        if state.isConnected { return .connected }
-        if state.isBusy { return .connecting }
-        if let report = state.presentedConnectionReport,
-           report.error != nil || report.state == .failed {
-            return .failed
-        }
-        return .idleSelected
-    }
-
-    private func performScenarioAction(
-        _ scenario: Scenario,
-        visualState: ScenarioVisualState
-    ) {
-        if let targetScenarioID = state.scenarioSwitchTargetID {
-            if scenario.id == targetScenarioID && state.browsingRecord.id == state.scenarioSwitchTargetProfileID {
-                state.cancelPendingScenarioSwitch()
-            } else if scenario.id == currentRuntimeScenarioID,
-                      state.isConnected {
-                state.cancelPendingScenarioSwitch()
-            } else {
-                state.connectScenario(scenario.id, profileID: state.browsingRecord.id)
-            }
-            return
-        }
-
-        if !state.isConnected && !state.isBusy {
-            state.connectScenario(scenario.id, profileID: state.browsingRecord.id)
-            return
-        }
-
-        if scenario.id != currentRuntimeScenarioID {
-            state.connectScenario(scenario.id, profileID: state.browsingRecord.id)
-            return
-        }
-
-        switch visualState {
-        case .connecting:
-            state.disconnect()
-        case .connected:
-            state.disconnect()
-        case .failed, .idle, .idleSelected:
-            state.connectScenario(scenario.id, profileID: state.browsingRecord.id)
-        }
-    }
-
-    private func badge(
-        for visualState: ScenarioVisualState,
-        hovered: Bool
-    ) -> ScenarioBadge? {
-        switch visualState {
-        case .idle, .idleSelected:
-            return hovered
-                ? ScenarioBadge(symbol: "play.fill", color: actionColor)
-                : nil
-        case .connecting:
-            return hovered
-                ? ScenarioBadge(symbol: "xmark", color: actionColor)
-                : nil
-        case .connected:
-            return hovered
-                ? ScenarioBadge(symbol: "power", color: dangerColor)
-                : ScenarioBadge(
-                    symbol: isProxyOnly ? "powerplug.fill" : "checkmark",
-                    color: connectedColor
-                )
-        case .failed:
-            return hovered
-                ? ScenarioBadge(symbol: "arrow.clockwise", color: actionColor)
-                : ScenarioBadge(
-                    symbol: "exclamationmark",
-                    color: dangerColor
-                )
-        }
-    }
-
-    private func actionHelp(
-        for scenario: Scenario,
-        visualState: ScenarioVisualState
-    ) -> String {
-        if let targetScenarioID = state.scenarioSwitchTargetID {
-            if scenario.id == targetScenarioID {
-                return state.tr("取消切换", "Cancel switch")
-            }
-            if scenario.id == currentRuntimeScenarioID,
-               state.isConnected {
-                return state.tr("断开", "Disconnect")
-            }
-            return state.tr("切换连接", "Switch connection")
-        }
-        switch visualState {
-        case .connecting:
-            return state.tr("取消连接", "Cancel connection")
-        case .connected:
-            return state.tr("断开", "Disconnect")
-        case .failed:
-            return state.tr("重试", "Retry")
-        case .idle, .idleSelected:
-            if (state.isConnected || state.isBusy)
-                && scenario.id != currentRuntimeScenarioID {
-                return state.tr("切换连接", "Switch connection")
-            }
-            return state.tr("连接", "Connect")
-        }
-    }
-
-    private func scenarioIcon(_ scenario: Scenario) -> String {
-        ScenarioIconCatalog.resolvedPreset(for: scenario).symbol
-    }
-
-    private func iconColor(for visualState: ScenarioVisualState) -> Color {
-        switch visualState {
-        case .connected:
-            connectedColor
-        case .failed:
-            dangerColor
-        default:
-            Color.primary.opacity(0.84)
         }
     }
 
@@ -1767,14 +1508,6 @@ struct MainPopover: View {
     }
 }
 
-private enum ScenarioVisualState {
-    case idle
-    case idleSelected
-    case connecting
-    case connected
-    case failed
-}
-
 private struct PopoverHeaderIconButton: View {
     let systemName: String
     let title: String
@@ -1807,11 +1540,6 @@ private struct PopoverHeaderIconButton: View {
         .help(title)
         .accessibilityLabel(title)
     }
-}
-
-private struct ScenarioBadge {
-    let symbol: String
-    let color: Color
 }
 
 private struct FlowLayout: Layout {
