@@ -199,7 +199,11 @@ final class LocalTailscaleSetupRuntime {
 
         let engineBox = TailscaleSetupSendableBox(engine)
         monitor.pathUpdateHandler = { path in
+            #if os(macOS)
+            let interface = TransparentProxyManager.setupDefaultInterface(for: path)
+            #else
             let interface = Self.selectPhysicalInterface(from: path)
+            #endif
             if path.status == .satisfied, let interface {
                 interfaceState.update(available: true) {
                     engineBox.value.setDefaultInterface(interface.name, index: interface.index)
@@ -225,7 +229,7 @@ final class LocalTailscaleSetupRuntime {
                         session: session,
                         error: self?.runtimeError(
                             code: -51,
-                            message: "No physical network interface is available."
+                            message: "No system default network interface is available."
                         ) ?? TunnelRuntimeError.unavailable
                     )
                 }

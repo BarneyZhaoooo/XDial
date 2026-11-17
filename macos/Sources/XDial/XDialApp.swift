@@ -301,9 +301,13 @@ final class ApplicationWindowLifecycleController {
     func prepareToPresentSettingsWindow() {
         AppIcon.applyDockState(connected: GoEngine.shared.isConnected)
         SettingsDockProxyCoordinator.shared.present()
-        _ = NSApp.setActivationPolicy(.accessory)
-        lastPolicyTransitionSucceeded =
-            NSApp.activationPolicy() == .accessory
+        #if XDIAL_STORE
+        let policy: NSApplication.ActivationPolicy = .regular
+        #else
+        let policy: NSApplication.ActivationPolicy = .accessory
+        #endif
+        _ = NSApp.setActivationPolicy(policy)
+        lastPolicyTransitionSucceeded = NSApp.activationPolicy() == policy
     }
 
     func prepareToPresentInstallationWindow() {

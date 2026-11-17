@@ -32,6 +32,15 @@ private func isNumericIPAddress(
 final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate {
     static let shared = TransparentProxyManager()
 
+    /// Use the same opaque system snapshot for Store setup and connections.
+    nonisolated static func setupDefaultInterface(for path: Network.NWPath) -> (name: String, index: Int)? {
+        guard case let .success(snapshot)? = HostUnderlayCapture.snapshotResult(for: path) else {
+            return nil
+        }
+        return (snapshot.defaultInterface.name, snapshot.defaultInterface.index)
+    }
+
+
     typealias StatusHandler = (_ status: String, _ error: String?) -> Void
     typealias ReportHandler = (_ report: ConnectionReport) -> Void
     typealias ScenarioSwitchHandler =

@@ -56,7 +56,6 @@ final class SettingsDockProxyCoordinator {
 
     func present() {
         #if XDIAL_STORE
-        NSApp.setActivationPolicy(.regular)
         desiredVisible = true
         #else
         desiredVisible = true
@@ -108,7 +107,6 @@ final class SettingsDockProxyCoordinator {
 
     func dismiss() {
         #if XDIAL_STORE
-        NSApp.setActivationPolicy(.accessory)
         desiredVisible = false
         #else
         desiredVisible = false
