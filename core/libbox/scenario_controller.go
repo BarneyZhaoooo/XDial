@@ -1,5 +1,3 @@
-//go:build !windows
-
 package libbox
 
 import "github.com/kafeifei/xdial/core/mobile"

@@ -7,7 +7,7 @@ VPN 可连接。AAR、APK 构建成功均不代表全平台完成。
 
 | 能力 | macOS | iOS | tvOS | Android | Windows | Linux |
 |---|---|---|---|---|---|---|
-| Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | CLI 部分；libbox 排除 Windows | CLI 部分 |
+| Go 场景/规则编译与协议 | 已有 | 已有 | 已有 | AAR 已构建 arm64/x86_64；运行验收 arm64 | libbox 共享核心已原机处理 TCP/UDP/DNS | libbox 共享核心已原机处理 TCP/UDP/DNS |
 | 系统接入 | Transparent Proxy | Packet Tunnel | Packet Tunnel | VpnService 模拟器 direct DNS/HTTPS 通过 | 原生客户端/安装事务缺失 | 原生客户端/权限事务缺失 |
 | 核心进程生命周期 | 已有 | 内嵌核心 | 内嵌核心 | 内嵌核心 | Job 原子创建/独立回收原机通过 | 父死亡信号/直接子进程回收原机通过 |
 | 原生产品 UI | 已有 | 大拨盘/触感 | 遥控器 | 原生拨盘、共享场景编辑、文件/在线来源预览更新、离线规则 | 缺失 | 缺失 |
@@ -283,3 +283,21 @@ Android Direct 资源下载已进入受保护的独立准备事务；有效缓�
   复制第二套路由核心。sing-box 已有 Windows/Linux process searcher，应用身份
   优先接原生事实/既有 searcher，不在平台层重新实现路由裁决。旧 daemon 的数据面
   命令已退役，新增桌面服务不能直接恢复退役命令来绕过事务边界。
+
+## 2026-11-17 Windows/Linux 共享核心与接流
+
+- libbox 已解除整体 Windows 排除，Unix TUN 与身份文件锁拆成 OS 适配；Windows
+  使用 LockFileEx，不能把 Unix fd 强转成 HANDLE 或偷偷建立系统适配器。
+- 新原生流 API 接可信 OS 原始端点/进程事实，复用稳定入口与既有切换事务。
+  Windows 原机 9 项、Ubuntu libbox 11 项加 CLI 凭据 1 项通过；真实 loopback
+  TCP/UDP、受控 DNS、新旧流提交/退休、系统 socket 表程序身份查询均有证据。
+  截获端仍为受控流替身，没有 WFP/nftables 系统拦截，不称完整透明客户端。
+- Linux 旧 daemon 改 SO_PEERCRED 同 effective UID；其他未实现凭据的平台拒绝，
+  不保留全部放行。Windows 原生命名管道/权限服务仍需实现，旧 macOS 注册命令
+  不应被移植成 Windows 权限服务。Windows 完整旧 CLI 构建尚未通过。
+- Apple 六构建、已有 packet/switch 定向 race 和核心常规测试、Android 双 ABI
+  打包校验通过。没有新增 Android 设备交互或 XCTest 证据。详见
+  [桌面流入口验收](../verification/desktop-native-flows.md)。
+- 下一阶段接真实系统透明入口和防环路：以任务隔离环境验证 Linux 原始目标/UDP
+  回包/应用归属与撤销，再补多发行版安装；Windows 完成原生服务/驱动边界与签名
+  方案后再请求确需的系统操作。此阶段不安装驱动、不改共享测试机网络。

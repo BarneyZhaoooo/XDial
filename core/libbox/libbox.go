@@ -1,5 +1,3 @@
-//go:build !windows
-
 // Package libbox 是 XDial tvOS 自研引擎的进程内门面:
 // sslcon(AnyConnect) + gVisor 用户态栈 + sing-box(库,非外置进程)整合成
 // 单个 gomobile 可绑定的 API,供 NEPacketTunnelProvider(Swift)调用。
@@ -45,7 +43,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/ntp"
 	"github.com/sagernet/sing/service"
-	"golang.org/x/sys/unix"
 	"sslcon/session"
 
 	"github.com/kafeifei/xdial/core/config"
@@ -98,6 +95,7 @@ var anyConnectReconnectDelays = [...]time.Duration{
 
 type Libbox struct {
 	stablePacketIngress  bool
+	nativeFlowIngress    bool
 	androidSwitchCancel  context.CancelFunc
 	androidRefreshCancel context.CancelFunc
 	packetIngress        *packetIngress
@@ -1282,6 +1280,7 @@ func (l *Libbox) coldStart(
 	platform := l.platform
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
 	stablePacketIngress := l.stablePacketIngress
+	nativeFlowIngress := l.nativeFlowIngress
 	l.lastError = ""
 	l.dnsJSON = ""
 	l.anyConnectDiagnostics = nil
@@ -1399,6 +1398,9 @@ func (l *Libbox) coldStart(
 			ctx,
 			[]byte(configJSON),
 		)
+		if startErr == nil && nativeFlowIngress && len(options.Inbounds) != 0 {
+			startErr = fmt.Errorf("native flow ingress requires a listener-free traffic configuration")
+		}
 		if startErr == nil && stablePacketIngress {
 			if len(options.Inbounds) != 1 || options.Inbounds[0].Type != "tun" {
 				startErr = fmt.Errorf("stable packet ingress requires exactly one TUN")
@@ -1432,6 +1434,9 @@ func (l *Libbox) coldStart(
 
 	if startErr == nil && packetOptions != nil {
 		ingress, startErr = newPacketIngress(*packetOptions, platform, newPacketGeneration(ctx, instance.Router()))
+	}
+	if startErr == nil && nativeFlowIngress {
+		ingress = &packetIngress{current: newPacketGeneration(ctx, instance.Router()), cancel: func() {}}
 	}
 
 	l.mu.Lock()
@@ -1897,6 +1902,10 @@ func (l *Libbox) prepareSwitchContext(
 		}
 	}
 	l.mu.Lock()
+	if l.nativeFlowIngress && len(ingressCheck.Inbounds) != 0 {
+		l.mu.Unlock()
+		return fmt.Errorf("native flow candidate must not create a listener")
+	}
 	if !l.running || l.box == nil || l.runtimeCtx == nil {
 		l.mu.Unlock()
 		return fmt.Errorf("connection is not running")
@@ -3343,10 +3352,10 @@ func acquireTailscaleStateLocks(configJSON string) ([]*os.File, error) {
 			releaseTailscaleStateLocks(locks)
 			return nil, fmt.Errorf("open Tailscale state lock: %w", err)
 		}
-		if err := unix.Flock(int(lockFile.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		if err := tryLockStateFile(lockFile); err != nil {
 			_ = lockFile.Close()
 			releaseTailscaleStateLocks(locks)
-			if errors.Is(err, unix.EWOULDBLOCK) {
+			if errors.Is(err, errTailscaleStateInUse) {
 				return nil, errTailscaleStateInUse
 			}
 			return nil, fmt.Errorf("lock Tailscale state: %w", err)
@@ -3358,7 +3367,7 @@ func acquireTailscaleStateLocks(configJSON string) ([]*os.File, error) {
 
 func releaseTailscaleStateLocks(locks []*os.File) {
 	for index := len(locks) - 1; index >= 0; index-- {
-		_ = unix.Flock(int(locks[index].Fd()), unix.LOCK_UN)
+		_ = unlockStateFile(locks[index])
 		_ = locks[index].Close()
 	}
 }

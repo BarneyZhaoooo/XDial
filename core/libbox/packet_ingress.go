@@ -1,5 +1,3 @@
-//go:build !windows
-
 package libbox
 
 import (
@@ -365,6 +363,9 @@ func (l *Libbox) SetStablePacketIngress(enabled bool) error {
 	defer l.mu.Unlock()
 	if l.running || l.startPreparing || l.cleaning {
 		return fmt.Errorf("packet ingress mode requires an idle runtime")
+	}
+	if enabled && l.nativeFlowIngress {
+		return fmt.Errorf("native flow ingress is already selected")
 	}
 	l.stablePacketIngress = enabled
 	return nil

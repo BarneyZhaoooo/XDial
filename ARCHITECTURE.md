@@ -290,6 +290,14 @@ packet reader；候选系统 TUN 设置必须与已建立入口一致。TCP/UDP 
 [稳定入口](core/libbox/packet_ingress.go)、[Android 事务](core/libbox/android_switch.go)。
 
 
+Windows/Linux 的原生流适配使用同一 generation 管理，显式选择无 listener 的数据
+Box 与候选 Box；平台只提供原始端点和 OS 进程事实，出口/DNS/规则始终在 sing-box
+裁决。普通 IPC 客户端自报的 PID、路径或 UID 不是可信事实。新流在提交点换代，
+旧流等待平台的有界排空/退休操作；停止先禁止接流，再关闭代际。接流 worker 不持
+系统回调锁，不能从关闭回调同步重入等待该流退出的生命周期操作。此接口的存在
+不代表 OS 拦截器或安装事务已就绪。见 [原生流入口](core/libbox/native_flow.go)。
+
+
 ### 5.4 网络变化与恢复
 
 NWPath、默认路由、DNS 与 SSID 的同次物理变化合并为一个不含 SSID 的 network epoch；
