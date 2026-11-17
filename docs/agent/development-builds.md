@@ -1,5 +1,18 @@
 # macOS 构建与安装
 
+## Apple 平台的 TestFlight 身份
+
+iOS、原生 macOS 和未来的 tvOS 等平台使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
+各平台商店构建的宿主 bundle ID 均为 `com.xd.xdial.ios`。扩展保留各自的子标识。
+macOS Developer ID 独立分发版沿用 `com.xd.xdial.app`，Debug 使用 `com.xd.xdial.debug`。
+
+macOS 平台已在该记录中建立，首个版本为 0.1.0。验证交付时须按平台查看 TestFlight 构建，
+确认列出 macOS 以及目标测试组。iOS 构建可在 Apple 芯片 Mac 上运行，两者在后台分别列出。
+
+现有桌面连接流程依赖系统级 helper，宿主经 `SMAppService.daemon` 安装，连接报告写入要求 root。
+商店构建需要验证沙盒中的连接、切换和断开，以及和独立分发版之间的数据及组件隔离。
+
+
 Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI 见
 [Android 构建与测试分发](android-release.md)。两端构建入口不互相安装或重启。
 
