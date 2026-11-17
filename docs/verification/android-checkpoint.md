@@ -341,3 +341,68 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
   本轮未执行 XCTest，也未解决此前全量 libbox race 的基线时限问题。
   Android 构建日志 `country-build-release-wait.log`，设备收据 `country-device.log`，
   public-content-gate 与 diff 检查通过。无宿主安装/VPN 改动、push/PR 或 iOS 自动化修改。
+
+## 2026-11-17 稳定入口与连接中场景事务
+
+实现：`core/libbox/packet_ingress.go` 独立拥有唯一 sing-box TUN/gVisor 入口；运行
+Box 和候选 Box 只拥有完整 DNS/路由/协议配置。`PrepareAndroidSwitch` 在保护的
+Underlay 上准备规则、校验相同系统 TUN 设置，然后移除候选 TUN。提交原子更新新流
+指向，旧 TCP/UDP/native ICMP 按 generation 登记，默认 1 秒关闭；下一候选先退役旧源。
+DNS 在同一 generation 的 router 内裁决，已退役的异步响应不再写入 TUN。并发 close
+等待借用者退出，迟到 ICMP tracker/AttachFlow 不能借用已关闭 router。TCP/UDP 在
+此模式走完整 flow router，未保留原生 PreMatch 快速转发优化；需另测实际性能/功耗。
+
+共享 Line 能力池用于 Android AnyConnect/Tailscale 数据会话。Tailscale 原生 DNS
+单一 hook 属于能力 Box，消费者仅借用，不关闭/重置身份 owner。能力 DNS 保留
+`auto_detect_interface` 保护路径，Android 对 local/非数值系统 DNS 拒绝准备。
+原有 Apple 入口未开启稳定 packet ingress，已有 flow/relay 事务保持。
+
+Android 宿主只处理网络事实、资源生命周期和加密存储；候选选择仍由共享 Go 控制器
+生成。原生选择可在连接中发起；持久化失败不提交，提交失败回写原选择，无法回写则
+停止连接。来源库没有被候选修改。就绪时切换，再排空旧源。独占协议身份变化由 Go
+分类后保存目标并完整重连；这项只有契约测试，未用真实两套企业身份验证。
+停止/新意图可取消准备，网络修订变化使候选过期。背景规则刷新在候选开始时取消，
+避免提交等待一个无关的 60 秒获取任务。
+
+验证证据（不混作真机/真实企业 VPN）：
+
+- `packet-race-final.log`：Packet/Android/PooledTailscale/Switch/Stop 定向 `-race`
+  通过。真实 sing-box + 内存 TUN 注入原始 DNS 包证明候选准备仍用旧 DNS、提交改用
+  新 DNS、退役不关闭入口且只打开一次；本机 TCP/UDP echo 证明旧流提交后继续、退役
+  后关闭；ICMP 用原生 FlowTracker 契约替身证明退休/迟到/并发挂接，无真实 ICMP 出口证据。
+  Android 生成配置候选证明准备返回不取消候选、退休源不取消新 runtime，取消候选后
+  不允许提交。原全量 libbox race 的基线时限问题不在本次通过声明内。
+- `packet-core-final.log`：config/libbox/mobile/subscription 常规全量测试通过。
+  `packet-apple-final.log`：iOS/tvOS generic 模拟器和 macOS Debug/Release App/扩展
+  六构建通过；本次没有新增 XCTest 执行证据。未安装/重启宿主 Debug 或修改宿主 VPN。
+- `packet-package-final.log`：固定工具链构建双 ABI AAR 与 Debug APK 成功。最终 APK
+  `build/android/artifacts/xdial-1-debug-32b4bc4aef96-5a6d1d4a40b6/xdial-1-debug-32b4bc4aef96.apk`，
+  SHA-256 `32b4bc4aef969fcc2f238c5fcabe12afc4e9cf1e32520374d25cdcfe8e10753a`。
+  来源清单如实记录 `862c801` + dirty；不能改写为阶段提交后 clean。插件安装指纹
+  `matchesLocal=true`。仍仅 arm64 模拟器运行，未验证 x86_64/安卓真机。
+- 隔离模拟器 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B` 上使用原生点击，One/Travel
+  连接中来回切换。`switch-preparing`、`switch-committed`、约 1 秒后的
+  `switch-retired` 均为 2 个 TUN 描述符（Android 所持 fd 与 Go 副本），没有再建立
+  TUN；单读者另由核心 opener 计数测试证明。切换后普通未 protect 的应用 socket
+  UDP DNS ID/NXDOMAIN 与 HTTPS 200/正文检查通过。
+- 首次设备检查暴露快速提交时界面仍显示旧名字：500ms 状态轮询错过瞬时准备状态。
+  已改为选择修订号通知，修正包 Travel→One→Travel 名称立即更新，重新启动仍保留
+  已提交选择。不是用同名出口掩盖 DNS 代际测试，核心使用两个不同 hosts 回答验证。
+- 新增无秘密 `Switch failure` fixture（`.invalid` AnyConnect 服务），连接 One 时
+  选择后显示准备失败、仍选 One；随后普通 UDP DNS/HTTPS 都通过。新增 `Switch wait`
+  fixture（文档保留地址 `192.0.2.1`）用于准备中点击断开：最终未连接、选择仍 One、
+  TUN 描述符 0，没有迟到复活。拨号仍受 sslcon 现有 6 秒超时约束；不声明即时取消。
+  后来再选 Travel 成功，但工具调用间隔已经超过前一个拨号超时，因此不将此作为
+  “旧候选仍 pending 时 latest-wins”设备证据。
+- 最终读回未连接、选择 One、自动关闭、TUN 描述符 0；网络未修改。两项无秘密失败
+  fixture 留在独立模拟器，未写入真实用户配置。插件收据 `build/android/packet-device.log`。
+
+边界：这不是完整 Android/全平台交付。还缺连接中自动选择、完整场景编辑与在线
+订阅来源、AnyConnect/Tailscale 冷资源获取租约、受限签名分发及 Windows/Linux 实际
+接入。真实已认证协议复用、不同身份完整重连、真机 ICMP/性能、存储故障回写和系统
+撤权路径需继续补验，不借本机替身结果冒称已验证。
+
+最终 Java 收敛还保留同场景 no-op 的旧流排空计时器，并在完整重连清理失败时准确
+显示已无连接；该改动后重新打包、覆盖安装，One 同场景手动选择、One→Travel→One
+及普通 UDP DNS/HTTPS 再通过。最终 APK 与前一次失败/取消分支测试包核心相同；
+失败/取消设备证据来自前一包 `0ef63d2de4e3`，不将未重跑分支改写为最终包全量验收。

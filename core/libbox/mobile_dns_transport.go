@@ -95,7 +95,7 @@ func newMobileDNSTransport(
 		addDependency(binding.Server)
 	}
 
-	endpointManager := service.FromContext[adapter.EndpointManager](ctx)
+	endpointManager := mobileEndpointManager(ctx)
 	transportManager := service.FromContext[adapter.DNSTransportManager](ctx)
 	if endpointManager == nil || transportManager == nil {
 		return nil, fmt.Errorf("mobile DNS runtime is unavailable")

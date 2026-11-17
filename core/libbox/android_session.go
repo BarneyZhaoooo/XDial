@@ -25,7 +25,27 @@ func (l *Libbox) StartAndroidSession(profileJSON, configJSON, systemDNSJSON stri
 		return err
 	}
 	line := profile.ActiveVPNLine()
+	tail, err := config.ActiveTailscaleLine(profile)
+	if err != nil {
+		return err
+	}
+	tailID, tailIdentity := "", ""
+	if tail != nil {
+		tailID = tail.ID
+		tailIdentity, err = lineRuntimeIdentity(profile, tail)
+		if err != nil {
+			return err
+		}
+	}
+	if tail != nil {
+		if err = validateAndroidTailscaleTransport(configJSON, tailID, tailIdentity); err != nil {
+			return err
+		}
+	}
 	if line == nil {
+		if tail != nil {
+			return l.StartStandaloneWithTailscaleLineID(tailID, tailIdentity, configJSON)
+		}
 		return l.StartStandalone(configJSON)
 	}
 	if strings.TrimSpace(line.VPNServer) == "" || strings.TrimSpace(line.VPNUsername) == "" || line.VPNPassword == "" {
@@ -35,7 +55,11 @@ func (l *Libbox) StartAndroidSession(profileJSON, configJSON, systemDNSJSON stri
 	if err != nil {
 		return err
 	}
-	return l.StartResolvedWithInsecure(line.VPNServer, address, line.VPNUsername, line.VPNPassword, line.AllowInsecure, configJSON)
+	identity, err := lineRuntimeIdentity(profile, line)
+	if err != nil {
+		return err
+	}
+	return l.StartResolvedWithLineRuntimes(line.VPNServer, address, line.VPNUsername, line.VPNPassword, line.AllowInsecure, identity, tailID, tailIdentity, configJSON)
 }
 
 // The VPN server is a transport endpoint on the captured Underlay, not user
@@ -43,6 +67,9 @@ func (l *Libbox) StartAndroidSession(profileJSON, configJSON, systemDNSJSON stri
 // with the same protected socket contract and OS DNS snapshot. No TUN or user
 // route is installed by this temporary Box; the sole traffic reader is untouched.
 func (l *Libbox) resolveAndroidServer(server, systemDNSJSON string) (string, error) {
+	return l.resolveAndroidServerContext(context.Background(), server, systemDNSJSON)
+}
+func (l *Libbox) resolveAndroidServerContext(ctx context.Context, server, systemDNSJSON string) (string, error) {
 	host, err := serverHostname(server)
 	if err != nil {
 		return "", err
@@ -53,7 +80,7 @@ func (l *Libbox) resolveAndroidServer(server, systemDNSJSON string) (string, err
 		}
 		return "", fmt.Errorf("server endpoint is not IPv4")
 	}
-	parent, cancel := context.WithTimeout(context.Background(), serverAddressResolutionTimeout)
+	parent, cancel := context.WithTimeout(ctx, serverAddressResolutionTimeout)
 	defer cancel()
 	bootstrap, err := l.newAndroidBootstrap(parent, systemDNSJSON)
 	if err != nil {

@@ -23,16 +23,17 @@ type androidRefreshReport struct {
 // never substitutes a failed acquisition Line. Results contain only counts.
 func (l *Libbox) RefreshAndroidRuleSets(profileJSON, systemDNSJSON, basePath string) (string, error) {
 	l.mu.Lock()
-	if !l.running || l.cleaning || l.runtimeCtx == nil || l.switchCommitInProgress {
+	if !l.running || l.cleaning || l.runtimeCtx == nil || l.switchCommitInProgress || l.switchPreparing || l.preparedSwitch != nil || l.androidSwitchCancel != nil || l.androidRefreshCancel != nil {
 		l.mu.Unlock()
 		return "", fmt.Errorf("rule refresh requires a committed connection")
 	}
 	parent, cancel := context.WithTimeout(l.runtimeCtx, 60*time.Second)
+	l.androidRefreshCancel = cancel
 	generation := l.boxGeneration
 	l.runtimeUsers.Add(1)
 	l.mu.Unlock()
 	defer l.runtimeUsers.Done()
-	defer cancel()
+	defer func() { cancel(); l.mu.Lock(); l.androidRefreshCancel = nil; l.mu.Unlock() }()
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", fmt.Errorf("rule refresh profile invalid")

@@ -309,6 +309,19 @@ func (l *Libbox) TailscaleDNSCaptureDomains(endpointTag string) (string, error) 
 	return string(data), nil
 }
 
+func (l *Libbox) preparedSwitchTailscaleDNSCaptureDomains(endpointTag string) (string, error) {
+	endpoint, _, _, release, err := l.preparedSwitchTailscaleRuntime(endpointTag)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	data, err := json.Marshal(endpoint.DNSCaptureDomains())
+	if err != nil {
+		return "", fmt.Errorf("Tailscale DNS capture domains are unavailable")
+	}
+	return string(data), nil
+}
+
 // PrepareTailscaleDNS atomically reads one immutable DNS Config snapshot from
 // the running endpoint and installs it into a memory-only hosts transport. The
 // returned metadata intentionally excludes every host address; the snapshot

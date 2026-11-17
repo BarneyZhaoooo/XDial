@@ -11,8 +11,19 @@ import (
 // AndroidSessionReady distinguishes a started engine from an authenticated,
 // reachable exit. The host keeps showing preparation until this returns true.
 func (l *Libbox) AndroidSessionReady(profileJSON string) (bool, error) {
+	return l.androidSessionReady(profileJSON, false)
+}
+
+func (l *Libbox) AndroidPreparedSwitchReady(profileJSON string) (bool, error) {
+	return l.androidSessionReady(profileJSON, true)
+}
+
+func (l *Libbox) androidSessionReady(profileJSON string, prepared bool) (bool, error) {
 	l.mu.Lock()
 	running := l.running && !l.cleaning && !l.switchCommitInProgress
+	if prepared {
+		running = running && l.preparedSwitch != nil
+	}
 	l.mu.Unlock()
 	if !running {
 		return false, fmt.Errorf("connection is not running")
@@ -29,7 +40,11 @@ func (l *Libbox) AndroidSessionReady(profileJSON string) (bool, error) {
 		return true, nil
 	}
 	tag := "tailscale-" + line.ID
-	raw, err := l.TailscaleStatus(tag)
+	statusFunc, probeFunc, domainsFunc := l.TailscaleStatus, l.ProbeTailscalePeer, l.TailscaleDNSCaptureDomains
+	if prepared {
+		statusFunc, probeFunc, domainsFunc = l.PreparedSwitchTailscaleStatus, l.ProbePreparedSwitchTailscalePeer, l.preparedSwitchTailscaleDNSCaptureDomains
+	}
+	raw, err := statusFunc(tag)
 	if err != nil {
 		return false, err
 	}
@@ -67,7 +82,7 @@ func (l *Libbox) AndroidSessionReady(profileJSON string) (bool, error) {
 		if !status.MagicDNSReady {
 			return false, nil
 		}
-		rawDomains, domainErr := l.TailscaleDNSCaptureDomains(tag)
+		rawDomains, domainErr := domainsFunc(tag)
 		if domainErr != nil {
 			return false, domainErr
 		}
@@ -76,7 +91,7 @@ func (l *Libbox) AndroidSessionReady(profileJSON string) (bool, error) {
 			return false, nil
 		}
 	}
-	probe, err := l.ProbeTailscalePeer(tag, line.TailscaleExitNode, 1500)
+	probe, err := probeFunc(tag, line.TailscaleExitNode, 1500)
 	if err != nil {
 		return false, err
 	}

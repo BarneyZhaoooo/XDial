@@ -140,10 +140,24 @@ func (b *androidBootstrap) fetch(rawURL string, limit int64) ([]byte, error) {
 // HTTP while its serial service worker is still preparing. Stop performs cleanup.
 func (l *Libbox) CancelPreparation() {
 	l.mu.Lock()
+	if l.androidRefreshCancel != nil {
+		l.androidRefreshCancel()
+	}
 	cancel := l.startPreparationCancel
+	androidSwitchCancel := l.androidSwitchCancel
+	switchCancel := l.switchPreparationCancel
+	if l.preparedSwitch != nil {
+		switchCancel = l.preparedSwitch.runtimeCancel
+	}
 	l.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if androidSwitchCancel != nil {
+		androidSwitchCancel()
+	}
+	if switchCancel != nil {
+		switchCancel()
 	}
 }
 
@@ -152,12 +166,16 @@ func (l *Libbox) CancelPreparation() {
 // Explicit acquisition never silently falls back to Direct. Protocol-owned
 // sessions still require a separate identity lease; native proxies are isolated.
 func (l *Libbox) PrepareAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string, error) {
+	return l.prepareAndroidConfigContext(context.Background(), profileJSON, systemDNSJSON, basePath)
+}
+
+func (l *Libbox) prepareAndroidConfigContext(parentContext context.Context, profileJSON, systemDNSJSON, basePath string) (string, error) {
 	l.mu.Lock()
 	if l.running || l.startPreparing || l.cleaning {
 		l.mu.Unlock()
 		return "", fmt.Errorf("configuration preparation requires an idle runtime")
 	}
-	parent, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	parent, cancel := context.WithTimeout(parentContext, 60*time.Second)
 	l.startPreparing = true
 	l.startPreparationCancel = cancel
 	l.startPreparationUsers.Add(1)

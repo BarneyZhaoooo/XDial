@@ -52,3 +52,7 @@ func (l *Libbox) BeginTailscaleLogin(_ string) (string, error) {
 func (l *Libbox) TailscaleLogout(_ string) error {
 	return fmt.Errorf("Tailscale is unavailable in this build")
 }
+
+func (l *Libbox) preparedSwitchTailscaleDNSCaptureDomains(_ string) (string, error) {
+	return "", fmt.Errorf("Tailscale is unavailable in this build")
+}

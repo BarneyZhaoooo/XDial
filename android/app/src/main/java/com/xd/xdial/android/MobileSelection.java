@@ -34,12 +34,45 @@ final class MobileSelection {
   } catch(Exception failure) {controller.setAutomatic(previous);throw failure;}
  }
  synchronized void select(String id) throws Exception {
-  // Never let two independently started gVisor stacks read one TUN. Until the
-  // stable mobile ingress transaction exists, running switches are unavailable.
+  // The service owns connected proposals and their dataplane commit.
   if(TunnelService.active) throw new IllegalStateException("connected");
   JSONObject result=new JSONObject(controller.selectScenario(id));
   if(result.optJSONObject("pending")==null)automatic(result.getBoolean("automatic"));
   else persistProposal(result);
+ }
+ synchronized long proposeConnected(String id) throws Exception {
+  JSONObject result=new JSONObject(controller.selectScenario(id));
+  JSONObject pending=result.optJSONObject("pending");
+  if(pending==null){automatic(result.getBoolean("automatic"));return 0;}
+  // Manual intent disables auto even when candidate preparation later fails.
+  try {
+   JSONObject old=new JSONObject(new ProfileStore(context).load());
+   old.put("mobile_automatic",result.getBoolean("automatic"));
+   new ProfileStore(context).saveSelection(old.toString());
+  } catch(Exception failure){controller.abort(pending.getLong("token"));throw failure;}
+  return pending.getLong("token");
+ }
+ synchronized String candidate(long token) throws Exception {
+  JSONObject result=new JSONObject(controller.profileForProposal(token));
+  result.put("mobile_automatic",snapshot().getBoolean("automatic"));return result.toString();
+ }
+ synchronized void commitConnected(long token,libbox.Libbox_ runtime) throws Exception {
+  ProfileStore store=new ProfileStore(context);String before=store.load();
+  String target=candidate(token); // Verify the still-current proposal before storage.
+  store.saveSelection(target); // Atomic encrypted write must succeed before adoption.
+  try {runtime.commitPreparedSwitch();}
+  catch(Exception failure){
+   try{store.saveSelection(before);}catch(Exception rollback){throw new SelectionRollbackException(rollback);}
+   throw failure;
+  }
+  controller.commit(token,SystemClock.elapsedRealtime());
+ }
+ synchronized void commitReconnect(long token) throws Exception {
+  new ProfileStore(context).saveSelection(candidate(token));controller.commit(token,SystemClock.elapsedRealtime());
+ }
+ synchronized void abortConnected(long token) throws Exception {controller.abort(token);}
+ static final class SelectionRollbackException extends Exception {
+  SelectionRollbackException(Exception cause){super(cause);}
  }
  synchronized long beginSurvey() {return controller.beginSurvey();}
  synchronized boolean needsCountry(String ssid) {return controller.needsCountrySurvey(ssid);}

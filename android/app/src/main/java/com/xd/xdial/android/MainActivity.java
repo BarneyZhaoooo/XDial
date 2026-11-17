@@ -16,9 +16,10 @@ public final class MainActivity extends Activity {
  private boolean refreshingSelection;
  private String pendingSetupLine="";
  private boolean lastActive;
+ private long lastSelectionRevision;
  private String lastConnectionState="";
  private final Handler handler = new Handler();
- private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.surveyResult+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);if(lastActive!=TunnelService.active||!lastConnectionState.equals(TunnelService.state)){lastActive=TunnelService.active;lastConnectionState=TunnelService.state;refreshSelection();}handler.postDelayed(this, 500); } };
+ private final Runnable refresh = new Runnable() { public void run() { status.setText(TunnelService.state+"\n"+TunnelService.surveyResult+"\n"+TunnelService.probeResult); dial.setActive(TunnelService.active);if(lastActive!=TunnelService.active||lastSelectionRevision!=TunnelService.selectionRevision||!lastConnectionState.equals(TunnelService.state)){lastSelectionRevision=TunnelService.selectionRevision;lastActive=TunnelService.active;lastConnectionState=TunnelService.state;refreshSelection();}handler.postDelayed(this, 500); } };
  @Override public void onCreate(Bundle saved) {
   super.onCreate(saved);
   ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
@@ -54,7 +55,7 @@ public final class MainActivity extends Activity {
   rules.setOnClickListener(v->startActivity(new Intent(this,OfflineRulesActivity.class)));
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
   details.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("连接诊断").setItems(new String[]{"记录运行计数","验证 DNS 与 HTTPS","验证安全存储"},(d,index)->{if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction(index==0?"diagnose":index==1?"probe":"identity-test"));}).show());
-  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景、连接前 Wi-Fi 优先与地区判断。手动选择关闭自动选择。AnyConnect 支持账号密码，Tailscale 支持浏览器登录与出口选择；真实企业网络联调和连接中切换仍待完成。"); layout.addView(notice);
+  TextView notice = new TextView(this); notice.setText("开发验收版：支持手动场景、连接前 Wi-Fi 优先与地区判断。手动选择关闭自动选择。AnyConnect 支持账号密码，Tailscale 支持浏览器登录与出口选择；连接中可选择场景，准备失败保留原连接。真实企业网络联调仍待完成。"); layout.addView(notice);
   setContentView(scroll);
  }
  private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
@@ -87,14 +88,18 @@ public final class MainActivity extends Activity {
  private void connect() { startForegroundService(new Intent(this,TunnelService.class)); }
  @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(request==1 && result==RESULT_OK) connect();if(request==3 && result==RESULT_OK)startTailscale(); }
  private void chooseScenario() {
-  if(TunnelService.active) {new AlertDialog.Builder(this).setMessage("当前连接保持不变。开发验收版暂需断开后选择场景。").setPositiveButton("知道了",null).show();return;}
+  if(TunnelService.settingUp){Toast.makeText(this,"请先结束账号设置",Toast.LENGTH_SHORT).show();return;}
   try {
    MobileSelection selection=MobileSelection.get(this);
    org.json.JSONObject state=selection.snapshot();org.json.JSONArray choices=state.getJSONArray("choices");
    String[] names=new String[choices.length()];String[] ids=new String[choices.length()];int selected=-1;
    for(int i=0;i<choices.length();i++){org.json.JSONObject choice=choices.getJSONObject(i);names[i]=choice.getString("name");ids[i]=choice.getString("id");if(ids[i].equals(state.getString("selected")))selected=i;}
    new AlertDialog.Builder(this).setTitle("场景").setSingleChoiceItems(names,selected,(d,index)->{
-    try {selection.select(ids[index]);refreshSelection();Toast.makeText(this,"场景已选择",Toast.LENGTH_SHORT).show();d.dismiss();}
+    try {
+     if(TunnelService.active)startService(new Intent(this,TunnelService.class).setAction("switch-scenario").putExtra("scenario",ids[index]));
+     else{selection.select(ids[index]);refreshSelection();Toast.makeText(this,"场景已选择",Toast.LENGTH_SHORT).show();}
+     d.dismiss();
+    }
     catch(Exception e){Toast.makeText(this,"无法保存场景，原配置保留",Toast.LENGTH_LONG).show();}
    }).setNegativeButton("取消",null).show();
   } catch(Exception e){Toast.makeText(this,"请先导入有效配置",Toast.LENGTH_LONG).show();}

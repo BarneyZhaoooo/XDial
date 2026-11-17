@@ -78,3 +78,15 @@ android/gradlew -p android assembleDebug
 Android 安装包已在插件管理的 arm64 隔离模拟器核对本地指纹。
 iOS、tvOS 与 macOS Debug/Release 构建回归通过；没有安装或重启宿主 XDial。
 macOS 909 项测试的执行证据见上一共享控制器检查点，本轮未重复宣称 iOS XCTest 已执行。
+
+## 2026-11-17 Android 场景共用协议能力
+
+Android 数据会话现在使用既有 Line 能力池的 opaque identity。不同独占身份由 Go
+分类为完整重连；同一能力的新旧消费者不能各注册 Tailscale 原生 DNS 的单一
+reconfiguration hook。native transport 移入能力 Box，消费者仅持 borrowed transport，
+标签查找适配不把 endpoint 加入消费者的 owned endpoint 列表。最后一个 Line 租约
+退出才关闭原生 DNS/endpoint。能力 DNS 必须继承编译器的 `auto_detect_interface`，
+否则独立解析 socket 可能漏过保护；Android 对兼容性 local fallback 明确拒绝。
+配置/借用生命周期/数值 DNS 契约已测；尚无已认证 tailnet 的真实换代流量证据。
+AnyConnect 准备中停止的设备测试完成资源清理，但 TLS 拨号仍受既有 6 秒超时约束，
+后续需要会话级 context 取消覆盖认证拨号/握手，不能只取消准备结果的发布。

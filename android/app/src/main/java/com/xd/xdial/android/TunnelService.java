@@ -13,9 +13,16 @@ import libbox.*;
 public final class TunnelService extends VpnService {
  public static volatile String state="未连接", probeResult="", surveyResult="";
  public static volatile boolean active, settingUp;
+ public static volatile long selectionRevision;
  public static volatile String tailscaleStatus="", setupMessage="";
  private String setupLine="";
- private ScheduledFuture<?> statusRefresh;
+ private ScheduledFuture<?> statusRefresh, switchRefresh, retireSwitch;
+ private volatile boolean switching;
+ private boolean coreReady;
+ private long switchToken;
+ private String sessionDNS="",sessionInterfaces="",sessionInterface="";
+ private int sessionInterfaceIndex;
+ private final java.util.concurrent.atomic.AtomicLong switchRequests=new java.util.concurrent.atomic.AtomicLong();
  private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
  private final ExecutorService probes=Executors.newSingleThreadExecutor();
  private final ConnectionController lifecycle=Libbox.newConnectionController();
@@ -55,6 +62,11 @@ public final class TunnelService extends VpnService {
  @Override public int onStartCommand(Intent intent,int flags,int id) {
   String action=intent==null?"":intent.getAction();
   if("stop".equals(action)){cancelPreparation();enqueue(()->{state="未连接";finish();});return START_NOT_STICKY;}
+  if("switch-scenario".equals(action)){
+   final String target=intent.getStringExtra("scenario");final long request=switchRequests.incrementAndGet();
+   Libbox_ current=core;if(switching&&current!=null)current.cancelPreparation();
+   enqueue(()->switchScenario(request,target));return START_NOT_STICKY;
+  }
   if("tailscale-login".equals(action)){enqueue(()->{
    if(core==null||!settingUp)return;
    try{tailscaleStatus=core.beginTailscaleLogin("tailscale-"+setupLine);setupMessage="请打开浏览器完成登录";}
@@ -181,6 +193,7 @@ public final class TunnelService extends VpnService {
     });}
    });
    core.setSecureStateStore(new IdentityStore(this));
+   core.setStablePacketIngress(!settingUp);
    core.setSocketProtector(fd->{
     try{
      if(!protect((int)fd))throw new IllegalStateException("Socket protection denied");
@@ -246,7 +259,9 @@ public final class TunnelService extends VpnService {
    if(tunnel==null)tunnel=builder.establish();
    if(tunnel==null)throw new IllegalStateException("VPN permission revoked");
    setUnderlyingNetworks(new Network[]{captured});core.setTunFD(tunnel.getFd());
-   stage="启动数据面";core.startAndroidSession(profile,config,systemDNS.toString());
+   sessionDNS=systemDNS.toString();sessionInterfaces=snapshots.toString();sessionInterface=nic.getName();sessionInterfaceIndex=nic.getIndex();
+   stage="启动数据面";core.startAndroidSession(profile,config,sessionDNS);
+   logTunnelOwnership("connected-ingress");
    if(stopRequested){state="未连接";finish();return;}
    awaitReady(epoch,profile,systemDNS.toString(),SystemClock.elapsedRealtime()+30000);
   }catch(Exception error){
@@ -274,7 +289,7 @@ public final class TunnelService extends VpnService {
   if(stopRequested){state="未连接";finish();return;}
   try{
    if(core.androidSessionReady(profile)){
-    MobileSelection.get(this).connected(true);lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="已连接";
+    coreReady=true;MobileSelection.get(this).connected(true);lifecycle.completeAttempt(epoch,true,false,SystemClock.elapsedRealtime());state="已连接";
     Libbox_ committed=core;String base=getNoBackupFilesDir().getAbsolutePath();
     probes.execute(()->{try{android.util.Log.i("XDialRuleRefresh",committed.refreshAndroidRuleSets(profile,systemDNS,base));}catch(Exception ignored){/* Valid cache and traffic remain usable. */}});
     return;
@@ -282,6 +297,66 @@ public final class TunnelService extends VpnService {
    if(SystemClock.elapsedRealtime()>=deadline)throw new java.io.IOException("Exit readiness timeout");
    state="正在验证出口连接";statusRefresh=worker.schedule(()->awaitReady(epoch,profile,systemDNS,deadline),1000,TimeUnit.MILLISECONDS);
   }catch(Exception error){state="出口未就绪，请检查 Tailscale 登录、授权和节点状态";finish();}
+ }
+ private boolean switchCurrent(long request,long epoch,long networkRevision){
+  return !destroyed&&!stopRequested&&active&&core!=null&&coreReady&&coreEpoch==epoch
+   &&switchRequests.get()==request&&observedNetworkRevision.get()==networkRevision;
+ }
+ private void switchScenario(long request,String target){
+  if(request!=switchRequests.get()||stopRequested||destroyed)return;
+  abortSwitch();
+  if(core==null||!coreReady||settingUp){state="请等待连接就绪后选择场景";return;}
+  try{
+   MobileSelection selection=MobileSelection.get(this);switchToken=selection.proposeConnected(target);
+   if(switchToken==0){selectionRevision++;state="已连接 · 手动选择";return;}
+   // A no-op above leaves the drain timer intact; a real candidate first
+   // retires the retained source so only two generations can own leases.
+   if(retireSwitch!=null){retireSwitch.cancel(false);retireSwitch=null;}
+   core.retireCommittedSwitch();
+   String profile=selection.candidate(switchToken);
+   if(core.androidSwitchRequiresReconnect(profile)){
+    if(stopRequested||request!=switchRequests.get()){abortSwitch();return;}
+    selection.commitReconnect(switchToken);switchToken=0;selectionRevision++;
+    state="线路身份变化，正在重新连接";stopCore();
+    if(tunnel!=null){tunnel.close();tunnel=null;}logTunnelOwnership("switch-reconnect");
+    if(stopRequested){state="未连接";finish();return;}
+    lifecycle.requestConnection(false);lifecycle.requestConnection(true);reconcile();return;
+   }
+   final long epoch=coreEpoch,revision=observedNetworkRevision.get();switching=true;
+   state="正在准备场景 · 原连接继续使用";logTunnelOwnership("switch-preparing");
+   core.prepareAndroidSwitch(profile,sessionDNS,getNoBackupFilesDir().getAbsolutePath(),sessionInterfaces,sessionInterface,sessionInterfaceIndex);
+   awaitSwitch(request,epoch,revision,profile,SystemClock.elapsedRealtime()+30000);
+  }catch(Exception failure){
+   abortSwitch();
+   if(core==null){state=stopRequested?"未连接":"场景重新连接失败，请重试";finish();}
+   else if(!stopRequested)state="场景准备失败 · 原连接继续使用";
+  }
+ }
+ private void awaitSwitch(long request,long epoch,long revision,String profile,long deadline){
+  if(!switchCurrent(request,epoch,revision)){abortSwitch();if(!stopRequested)state="场景准备已取消 · 原连接继续使用";return;}
+  try{
+   if(!core.androidPreparedSwitchReady(profile)){
+    if(SystemClock.elapsedRealtime()>=deadline)throw new java.io.IOException("Candidate readiness timeout");
+    switchRefresh=worker.schedule(()->awaitSwitch(request,epoch,revision,profile,deadline),500,TimeUnit.MILLISECONDS);return;
+   }
+   if(!switchCurrent(request,epoch,revision))throw new java.io.InterruptedIOException("Stale candidate");
+   MobileSelection.get(this).commitConnected(switchToken,core);
+   switchToken=0;switching=false;switchRefresh=null;selectionRevision++;state="已连接";logTunnelOwnership("switch-committed");
+   final Libbox_ committed=core;
+   retireSwitch=worker.schedule(()->{retireSwitch=null;if(core==committed)try{committed.retireCommittedSwitch();logTunnelOwnership("switch-retired");}catch(Exception error){state="场景清理异常，请重新连接";finish();}},1,TimeUnit.SECONDS);
+   String dns=sessionDNS,base=getNoBackupFilesDir().getAbsolutePath();
+   probes.execute(()->{try{android.util.Log.i("XDialRuleRefresh",committed.refreshAndroidRuleSets(profile,dns,base));}catch(Exception ignored){}});
+  }catch(MobileSelection.SelectionRollbackException failure){state="场景保存异常，请重新连接";finish();}
+  catch(Exception failure){abortSwitch();if(!stopRequested)state="场景切换失败 · 原连接继续使用";}
+ }
+ private void abortSwitch(){
+  if(switchRefresh!=null){switchRefresh.cancel(false);switchRefresh=null;}
+  if(switchToken!=0){
+   if(core!=null)try{core.abortPreparedSwitch();}catch(Exception ignored){}
+   try{MobileSelection.get(this).abortConnected(switchToken);}catch(Exception ignored){}
+   switchToken=0;
+  }
+  switching=false;
  }
  private void diagnose(){
   try{
@@ -293,6 +368,8 @@ public final class TunnelService extends VpnService {
   }catch(Exception ignored){}
  }
  private void stopCore(){
+  coreReady=false;abortSwitch();
+  if(retireSwitch!=null){retireSwitch.cancel(false);retireSwitch=null;}
   if(statusRefresh!=null){statusRefresh.cancel(false);statusRefresh=null;}
   tailscaleStatus="";
   if(core!=null){Libbox_ previous=core;core=null;try{previous.stop();}catch(Exception ignored){}}
@@ -318,7 +395,7 @@ public final class TunnelService extends VpnService {
   android.util.Log.i("XDialLifecycle","phase="+phase+" tun_descriptors="+count);
  }
  private void finish(){cleanup();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
- private void cancelPreparation(){stopRequested=true;Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}
+ private void cancelPreparation(){stopRequested=true;switchRequests.incrementAndGet();Libbox_ preparing=core;if(preparing!=null)preparing.cancelPreparation();}
  @Override public void onRevoke(){cancelPreparation();enqueue(()->{state="VPN 授权已撤销";finish();});}
  @Override public void onDestroy(){destroyed=true;cancelPreparation();probes.shutdownNow();worker.execute(this::cleanup);worker.shutdown();super.onDestroy();}
 }

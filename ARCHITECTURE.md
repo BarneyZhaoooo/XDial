@@ -282,6 +282,14 @@ journal 无法可靠写入时不能 Commit。入口：[事务处置](macos/Share
 
 入口：[Line 能力池](core/libbox/line_runtime_pool.go)、[Switch 测试](core/libbox/switch_test.go)。
 
+Android packet ingress 显式独立拥有单一 TUN/gVisor，数据 Box 与候选 Box 不再拥有
+packet reader；候选系统 TUN 设置必须与已建立入口一致。TCP/UDP 在完整 flow router
+入口绑定代际，DNS 与 ICMP native Port/FlowTracker 也归同一代际，退役关闭旧流与
+迟到句柄。新流的 DNS/route 一次切换，默认 1 秒退休源；停止先阻止接新流再关闭代际
+和入口。Apple 的既有入口不自动启用此模式。见
+[稳定入口](core/libbox/packet_ingress.go)、[Android 事务](core/libbox/android_switch.go)。
+
+
 ### 5.4 网络变化与恢复
 
 NWPath、默认路由、DNS 与 SSID 的同次物理变化合并为一个不含 SSID 的 network epoch；
