@@ -1921,12 +1921,13 @@ func (l *Libbox) prepareSwitchContext(
 	if err := stdjson.Unmarshal([]byte(configJSON), &ingressCheck); err != nil {
 		return fmt.Errorf("invalid switch configuration")
 	}
+	l.mu.Lock()
 	for _, inbound := range ingressCheck.Inbounds {
-		if inbound.Type == "tun" {
+		if inbound.Type == "tun" && !l.tunHandover {
+			l.mu.Unlock()
 			return fmt.Errorf("switch candidate requires an independently owned flow ingress")
 		}
 	}
-	l.mu.Lock()
 	if l.nativeFlowIngress && len(ingressCheck.Inbounds) != 0 {
 		l.mu.Unlock()
 		return fmt.Errorf("native flow candidate must not create a listener")
