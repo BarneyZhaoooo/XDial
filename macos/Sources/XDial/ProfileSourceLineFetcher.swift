@@ -20,7 +20,7 @@ enum ProfileSourceLineFetcher {
         )
         let lineName = runtime.lines.first { $0.id == lineID }?.name ?? lineID
         guard let profileJSON = String(data: try JSONEncoder().encode(runtime), encoding: .utf8),
-              let systemDNSJSON = TransparentProxyManager.captureSystemDNSJSON() else {
+              let systemDNSJSON = TransparentProxyManager.currentSystemDNSJSON() else {
             throw ProfileLibraryError.invalid("无法读取当前系统网络，原配置已保留")
         }
         let content: String
@@ -57,13 +57,14 @@ enum ProfileSourceLineFetcher {
         let basePath = NSTemporaryDirectory()
         return try await withTaskCancellationHandler {
             try await Task.detached(priority: .userInitiated) {
-                do {
-                    return try instance.fetchProfileSourceViaLine(
-                        profileJSON, rawURL: url, lineID: lineID,
-                        systemDNSJSON: systemDNSJSON, basePath: basePath)
-                } catch {
+                var error: NSError?
+                let content = instance.fetchProfileSource(
+                    viaLine: profileJSON, rawURL: url, lineID: lineID,
+                    systemDNSJSON: systemDNSJSON, basePath: basePath, error: &error)
+                if let error {
                     throw failure(code: ProfileSourceLineFetchOutcome.code(for: error), lineName: lineName)
                 }
+                return content
             }.value
         } onCancel: {
             instance.cancelPreparation()
@@ -97,3 +98,4 @@ enum ProfileSourceLineFetcher {
         }
     }
 }
+

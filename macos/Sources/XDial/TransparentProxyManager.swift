@@ -2209,6 +2209,11 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
     }
 
+    /// The OS resolver addresses now, sampled the same way as a connect snapshot.
+    static func currentSystemDNSJSON() -> String? {
+        HostUnderlayCapture.captureSystemDNSJSON()
+    }
+
     /// The committed system-takeover transaction whose Provider may serve app
     /// requests, or `nil` when XDial does not currently own the system.
     var committedProviderTransactionID: String? {
@@ -5182,7 +5187,7 @@ private final class HostUnderlayCapture {
         }
     }
 
-    static func captureSystemDNSJSON() -> String? {
+    fileprivate static func captureSystemDNSJSON() -> String? {
         guard
             let state = SCDynamicStoreCopyValue(
                 nil,

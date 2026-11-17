@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Libbox
 import Network
 @preconcurrency import NetworkExtension
 import OSLog
@@ -768,14 +769,17 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                 var code = "fetch-failed"
                 var content: String?
                 if let instance = LibboxNew(nil) {
-                    do {
-                        content = try instance.fetchProfileSourceViaLine(
-                            request.profileJSON, rawURL: request.url, lineID: request.lineID,
-                            systemDNSJSON: request.systemDNSJSON, basePath: NSTemporaryDirectory())
-                        code = "ok"
-                    } catch {
+                    var error: NSError?
+                    let fetched = instance.fetchProfileSource(
+                    viaLine: request.profileJSON, rawURL: request.url, lineID: request.lineID,
+                        systemDNSJSON: request.systemDNSJSON, basePath: NSTemporaryDirectory(),
+                        error: &error)
+                    if let error {
                         code = ProfileSourceLineFetchOutcome.code(for: error)
                         logger.warning("profile-source-line-fetch failed code=\(code, privacy: .public)")
+                    } else {
+                        content = fetched
+                        code = "ok"
                     }
                 }
                 if let content, content.utf8.count > ProfileSourceLineFetch.maxContentBytes {

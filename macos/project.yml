@@ -367,6 +367,7 @@ targets:
       - Sources/XDial/ProfileLibraryMigration.swift
       - Sources/XDial/ProfileVaultProjection.swift
       - Sources/XDial/ProfileLibrary.swift
+      - Sources/XDial/ProfileSourceLineRoute.swift
       - Sources/XDial/GlobalConfiguration.swift
       - Sources/XDial/ConfigurationEditorState.swift
       - Sources/XDial/ConnectionConfigurationReadiness.swift
