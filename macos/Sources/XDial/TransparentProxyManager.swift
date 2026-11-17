@@ -3028,7 +3028,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         var shouldMirrorProviderReport = false
 
         #if XDIAL_STORE
-        let probedProviderReport = localReport
+        let probedProviderReport = ConnectionReportJournal.readProviderReport()
         #else
         let probedProviderReport =
             PrivilegeManager.probeProviderConnectionReport()
@@ -3050,9 +3050,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 candidate = localReport
             } else {
                 candidate = providerReport
-                #if !XDIAL_STORE
                 shouldMirrorProviderReport = true
-                #endif
             }
         } else if let localReport,
                   currentTransactionID == nil ||
