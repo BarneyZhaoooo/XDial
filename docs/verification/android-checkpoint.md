@@ -236,3 +236,40 @@ APK 路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`；仅本地
 - 最终 APK SHA-256：`3e09b983b5e81b698ee936b23e28647ddf6347bfd5d65705b9dd2f30182dd2f4`，
   插件 matchesLocal=true；设备已手动断开。日志为 `build/android/acquisition-*`。
   尚未推送、PR 或分发；仍不是完整 Android 产品或全平台交付。
+
+## 2026-11-17 共享来源库与导入预览
+
+- Android 原单份 Profile 改为共享 Go schema 3 来源库：来源只持线路/规则，组/场景全局
+  持有。预览与更新不发起网络请求，旧配置来源、场景和离线缓存保持独立。
+- 核心定向 race 覆盖旧配置与未知字段保留、源身份、预览不激活、过期预览拒绝、旧控制器
+  写入拒绝、连续场景选择提交、全局场景不被来源刷新覆盖、移除依赖拒绝、部分条件与顺序
+  丢失拒绝、空组仅可存储不可运行、组重排保留原出口、同服务器本机凭据保留、Tailscale
+  来源隔离/旧匿名来源身份命名空间。已有全量 libbox race 的基线时限问题未据此宣称解决。
+- `PreviewNativeProfileImport` 仅接 XDial/sing-box JSON（最多 2 MiB）；remote URL
+  RuleSet 保留声明。用不可达 `.invalid` 来源完成预览，旧 provider-expanding 文本入口
+  被拒绝。当前不含在线订阅更新、Clash/Surge 文本导入或后台来源刷新。
+- 新 Android `ProfileSourcesActivity` 提供原生来源列表、粘贴/系统文件入口、预览、
+  保存、来源更新、编辑来源与移除；包含未知/不支持规则的预览不提供保存按钮。
+  连接中来源只读。输入不写 Bundle/视图保存状态，窗口 FLAG_SECURE；源内容无日志。
+- 实际设备仍为 `16BAF5BD-2097-4906-9463-6A8D9E10FC9B`：启动后读取旧 One/Two
+  和已有公开 SRS；增加无秘密 Direct 来源 Travel，预览 1 线路/0 规则后保存，返回仍选
+  One。手动选 Travel，更新来源为 1 线路/1 手动规则，并改传入模板名；全局 Travel
+  名称与选中状态保留。结束进程重新启动后仍选 Travel，证明写入可重读。
+- 系统 stylus 首次输入引导截获了初次粘贴；截图确认后通过其 Cancel 退出，再读回正确
+  输入继续测试。没有将输入工具的 executed 当作已写入文本。此次来源成功导入走粘贴；
+  新来源页面的 SAF 成功导入尚无独立实机证据（前阶段离线 SRS 页面 SAF 已实际通过）。
+- 最终包再次执行 One → Travel → One 连续手动选择成功；One 连接后普通未保护 App
+  socket 的 UDP DNS 响应 ID/NXDOMAIN 与 HTTPS 200/正文再次通过。提交后刷新
+  updated=0/failed=0/deferred=0。此前本阶段 Travel 的 Direct 数据面也实际通过。
+- Android 真实 Keystore/AtomicFile 隔离验收：在唯一非秘密 fixture 目录创建旧加密
+  Profile 及 `.bak`，迁移、编辑、重新读库，比较旧主文件和备份字节均未变化；翻转新库认证密文后读取拒绝，
+  没有回退到仍存在的旧文件。fixture 在 finally 清理，不触碰用户库。身份安全存储的
+  持久化、记录隔离、篡改拒绝、删除也通过。日志 `build/android/library-final-device.log`。
+- 最终 `library-race.log` 定向 race、`library-core-tests.log` 的 config/libbox/mobile/
+  subscription 常规全量与 public-content-gate 通过。双 ABI AAR（arm64-v8a/x86_64）
+  与 APK 构建通过；运行只覆盖 arm64。最终核心变更后 iOS/tvOS generic 模拟器、macOS
+  Debug/Release App/扩展六次构建通过（`library-apple-builds.log`）；本阶段未执行 XCTest。
+- APK SHA-256：`df7596e3cc82c0c55730f3c44b0b01fc65578727e375ccb0a2c7a1c77f36e6c7`；
+  插件 matchesLocal=true。最终已手动断开并读回未连接，仍选 One；网络正常。
+  路径仍为 `android/app/build/outputs/apk/debug/app-debug.apk`。没有推送、PR、正式签名
+  分发、宿主安装重启或 iOS 自动化修改；真实企业认证与 Tailscale 出口仍未验证。

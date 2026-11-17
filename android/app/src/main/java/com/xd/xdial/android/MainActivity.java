@@ -45,8 +45,8 @@ public final class MainActivity extends Activity {
   });
   Button login=new Button(this);login.setText("添加 AnyConnect 账号与场景");layout.addView(login);login.setOnClickListener(v->addVPN());
   Button tailscale=new Button(this);tailscale.setText("Tailscale 账号与出口节点");layout.addView(tailscale);tailscale.setOnClickListener(v->tailscale());
-  Button config = new Button(this); config.setText("导入运行 Profile"); layout.addView(config);
-  config.setOnClickListener(v -> edit());
+  Button config = new Button(this); config.setText("配置来源"); layout.addView(config);
+  config.setOnClickListener(v -> startActivity(new Intent(this,ProfileSourcesActivity.class)));
   Button rules=new Button(this);rules.setText("规则与离线副本");layout.addView(rules);
   rules.setOnClickListener(v->startActivity(new Intent(this,OfflineRulesActivity.class)));
   Button details=new Button(this);details.setText("连接诊断");layout.addView(details);
@@ -96,10 +96,7 @@ public final class MainActivity extends Activity {
   new AlertDialog.Builder(this).setTitle("Tailscale").setMessage("准备登录并发现可用出口节点。此步骤不会接管设备流量；身份密钥加密保存在本机。")
    .setNegativeButton("取消",null).setPositiveButton("开始设置",(d,w)->{
     try{
-     ProfileStore store=new ProfileStore(this);String existing;
-     try{existing=store.load();}catch(java.io.FileNotFoundException missing){existing="";}
-     org.json.JSONObject setup=new org.json.JSONObject(Libbox.ensureTailscaleSetup(existing));
-     store.save(setup.getString("profile"));MobileSelection.invalidate();pendingSetupLine=setup.getString("line_id");refreshSelection();
+     pendingSetupLine=new ProfileStore(this).prepareTailscale();MobileSelection.invalidate();refreshSelection();
      Intent consent=VpnService.prepare(this);if(consent!=null)startActivityForResult(consent,3);else startTailscale();
     }catch(Exception error){Toast.makeText(this,"无法准备 Tailscale，请检查配置与本机存储",Toast.LENGTH_LONG).show();}
    }).show();
@@ -146,16 +143,6 @@ public final class MainActivity extends Activity {
   }};
   dialog.setOnShowListener(d->{dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);handler.post(update);});
   dialog.setOnDismissListener(d->{handler.removeCallbacks(update);authURL[0]="";refreshSelection();});dialog.show();
- }
- private void edit() {
-  if(TunnelService.active){Toast.makeText(this,"请先断开再编辑配置",Toast.LENGTH_SHORT).show();return;}
-  EditText input = new EditText(this); input.setGravity(Gravity.TOP); input.setMinLines(10);
-  input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-  new AlertDialog.Builder(this).setTitle("运行 Profile JSON").setView(input).setNegativeButton("取消",null)
-   .setPositiveButton("保存",(d,w)-> { try {
-    String json=input.getText().toString(); Libbox.generateConnectionPlan(json); new ProfileStore(this).save(json); MobileSelection.invalidate(); refreshSelection();
-    Toast.makeText(this,"配置已加密保存",Toast.LENGTH_SHORT).show();
-   } catch(Exception e) { Toast.makeText(this,"配置无效或无法保存",Toast.LENGTH_LONG).show(); } }).show();
  }
  private void refreshSelection() {
   refreshingSelection=true;

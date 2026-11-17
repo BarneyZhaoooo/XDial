@@ -32,6 +32,12 @@ func profileDocument(raw string) (map[string]json.RawMessage, error) {
 // becomes a user-traffic binding. The host atomically stores profile then starts
 // a no-ingress setup session using line_id; the result contains private config.
 func EnsureTailscaleSetup(raw string) (string, error) {
+	return EnsureTailscaleSetupForSource(raw, "")
+}
+
+// EnsureTailscaleSetupForSource scopes setup to the library's selected owner.
+// An empty source preserves the legacy single-profile API.
+func EnsureTailscaleSetupForSource(raw, sourceID string) (string, error) {
 	doc, err := profileDocument(raw)
 	if err != nil {
 		return "", err
@@ -43,7 +49,7 @@ func EnsureTailscaleSetup(raw string) (string, error) {
 	}
 	lineID := ""
 	for _, line := range profile.Lines {
-		if line.Type == config.LineTypeTailscale {
+		if line.Type == config.LineTypeTailscale && (sourceID == "" || line.IdentityProfileID == sourceID) {
 			lineID = line.ID
 			break
 		}
@@ -57,7 +63,7 @@ func EnsureTailscaleSetup(raw string) (string, error) {
 		if err = json.Unmarshal(doc["lines"], &lines); err != nil {
 			return "", err
 		}
-		line, _ := json.Marshal(config.Line{ID: lineID, Name: "Tailscale", Type: config.LineTypeTailscale, Enabled: true})
+		line, _ := json.Marshal(config.Line{ID: lineID, Name: "Tailscale", Type: config.LineTypeTailscale, Enabled: true, IdentityProfileID: sourceID})
 		doc["lines"], _ = json.Marshal(append(lines, line))
 	}
 	encoded, _ = json.Marshal(doc)

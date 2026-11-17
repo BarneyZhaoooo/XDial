@@ -491,6 +491,9 @@ func importDocumentOutbound(raw json.RawMessage, tags map[string]string, allowIn
 // Documents may contain unfinished forms or redacted credentials. Reference
 // validation is separate from runtime preparation, which still fails closed.
 func validateDocumentProfile(profile *Profile) error {
+	return validateDocumentProfileWithEmptyGroups(profile, false)
+}
+func validateDocumentProfileWithEmptyGroups(profile *Profile, allowEmpty bool) error {
 	var groupErr error
 	profile, groupErr = ExpandRuleSetGroups(profile)
 	if groupErr != nil {
@@ -513,7 +516,7 @@ func validateDocumentProfile(profile *Profile) error {
 		switch line.Type {
 		case LineTypeDirect, LineTypeVPN, LineTypeTailscale, LineTypeTrojan, LineTypeShadowsocks, LineTypeVMess, LineTypeAnyTLS:
 		case LineTypeSelector, LineTypeURLTest:
-			if err := validateGroupReferences(profile, line, false); err != nil {
+			if err := validateGroupReferences(profile, line, false, allowEmpty); err != nil {
 				return err
 			}
 		default:

@@ -12,8 +12,12 @@ import libbox.SecureStateStore;
 /** Tailscale receives an encrypted StateStore, never a plaintext state file. */
 final class IdentityStore implements SecureStateStore {
  private final File directory;
- IdentityStore(Context context){directory=new File(context.getNoBackupFilesDir(),"identities");}
- private byte[] associated(String namespace,String key){return ("xdial-tailscale-v1\u0000"+namespace+"\u0000"+key).getBytes(StandardCharsets.UTF_8);}
+ private final Context context;
+ IdentityStore(Context context){this.context=context.getApplicationContext();directory=new File(context.getNoBackupFilesDir(),"identities");}
+ private byte[] associated(String namespace,String key)throws Exception{
+  String resolved=new ProfileStore(context).identityNamespace(context.getNoBackupFilesDir().getAbsolutePath(),namespace);
+  return ("xdial-tailscale-v1\u0000"+resolved+"\u0000"+key).getBytes(StandardCharsets.UTF_8);
+ }
  private AtomicFile file(byte[] aad)throws Exception{
   if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Identity storage unavailable");
   if(!directory.canRead()||!directory.canWrite())throw new IOException("Identity storage inaccessible");

@@ -75,7 +75,7 @@ public final class TunnelService extends VpnService {
   }
   if("identity-test".equals(action)){
    if((getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)enqueue(()->{
-    try{probeResult=IdentityStore.verify(this);}catch(Exception error){probeResult="安全存储验收失败";}
+    try{probeResult=IdentityStore.verify(this)+"\n"+ProfileStore.verify(this);}catch(Exception error){probeResult="安全存储验收失败";}
     android.util.Log.i("XDialProbe",probeResult);
    });return START_NOT_STICKY;
   }

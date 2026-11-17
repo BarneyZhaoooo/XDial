@@ -30,7 +30,7 @@ final class MobileSelection {
   controller.setAutomatic(enabled);
   try {
    JSONObject saved=new JSONObject(new ProfileStore(context).load());saved.put("mobile_automatic",enabled);
-   new ProfileStore(context).save(saved.toString());
+   new ProfileStore(context).saveSelection(saved.toString());
   } catch(Exception failure) {controller.setAutomatic(previous);throw failure;}
  }
  synchronized void select(String id) throws Exception {
@@ -49,7 +49,7 @@ final class MobileSelection {
   try {
    JSONObject saved=new JSONObject(controller.profileForProposal(token));
    saved.put("mobile_automatic",result.getBoolean("automatic"));
-   new ProfileStore(context).save(saved.toString());
+   new ProfileStore(context).saveSelection(saved.toString());
    controller.commit(token,SystemClock.elapsedRealtime());
 
   } catch(Exception e) {controller.abort(token);throw e;}
