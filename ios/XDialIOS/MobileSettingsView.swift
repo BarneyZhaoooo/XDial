@@ -263,7 +263,9 @@ struct MobileSettingsView: View {
             systemProfileInstalled: app.helperInstalled,
             profile: app.profile,
             lastError: app.engine.lastError,
-            dataPathSummary: app.engine.dataPathSummary,
+            dataPathSummary: app.engine.dataPathRechecking
+                ? app.tr("正在重新检测出口与分流", "Rechecking connectivity and routing")
+                : app.engine.dataPathSummary,
             autoScenarioSummary: autoScenarioSummary,
             environment: MobileDiagnosticsService.environmentSummary(version: version),
             scenarioName: app.activeScenario?.name,

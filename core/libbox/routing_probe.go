@@ -28,11 +28,14 @@ const (
 )
 
 var (
-	directProbeTarget     = netip.MustParseAddr("1.0.0.1")
-	anyConnectProbeTarget = netip.MustParseAddr("1.1.1.1")
+	alternateHTTPSProbeTarget = netip.MustParseAddr("223.5.5.5")
+	directProbeTarget         = netip.MustParseAddr("1.0.0.1")
+	anyConnectProbeTarget     = netip.MustParseAddr("1.1.1.1")
 )
 
 type routingProbeTracker struct {
+	alternateHTTPSDirect   atomic.Uint64
+	alternateHTTPSOther    atomic.Uint64
 	directTargetDirect     atomic.Uint64
 	directTargetVPN        atomic.Uint64
 	directTargetOther      atomic.Uint64
@@ -48,6 +51,8 @@ type routingProbeTracker struct {
 }
 
 type routingProbeSnapshot struct {
+	AlternateHTTPSDirect   uint64            `json:"alternate_https_direct,omitempty"`
+	AlternateHTTPSOther    uint64            `json:"alternate_https_other,omitempty"`
 	DirectTargetDirect     uint64            `json:"direct_target_direct"`
 	DirectTargetVPN        uint64            `json:"direct_target_vpn"`
 	DirectTargetOther      uint64            `json:"direct_target_other"`
@@ -182,6 +187,14 @@ func (t *routingProbeTracker) record(
 
 	target := metadata.Destination.Addr.Unmap()
 	switch target {
+	case alternateHTTPSProbeTarget:
+		if tunIngress {
+			if outboundTag == "direct" {
+				t.alternateHTTPSDirect.Add(1)
+			} else {
+				t.alternateHTTPSOther.Add(1)
+			}
+		}
 	case directProbeTarget:
 		t.incrementTag(t.directTargetTags, outboundTag)
 		switch outboundTag {
@@ -318,6 +331,8 @@ func (t *routingProbeTracker) snapshot() routingProbeSnapshot {
 	}
 	t.experimentMu.Unlock()
 	return routingProbeSnapshot{
+		AlternateHTTPSDirect:   t.alternateHTTPSDirect.Load(),
+		AlternateHTTPSOther:    t.alternateHTTPSOther.Load(),
 		DirectTargetDirect:     t.directTargetDirect.Load(),
 		DirectTargetVPN:        t.directTargetVPN.Load(),
 		DirectTargetOther:      t.directTargetOther.Load(),
