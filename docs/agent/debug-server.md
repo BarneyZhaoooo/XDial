@@ -87,7 +87,7 @@ curl -sS -X POST 127.0.0.1:19877/action \
    这里只有 sing-box 的 warn / error 行，info 及以下不进统一日志。每行的公开部分已去掉
    地址、域名和凭据；`detail=` 带目的地址，按私有字段记录，默认显示为 `<private>`。
    - `connection download interrupted by upstream: reason=reset`：上游一侧出了错，
-     数据面已把入站连接按重置关闭，应用拿到的是“连接被重置”而不是正常结束。`reason`
+     数据面已把入站连接按重置关闭，应用拿到的是错误而不是正常结束。`reason`
      取 `reset`、`timeout`、`broken-pipe`、`unreachable`、`truncated` 等。
    - `connection upload interrupted by upstream`：同上，出错的是向上游写。
    - `anyconnect session closed: code=…`：AnyConnect 会话结束的原因。`code` 为
@@ -133,6 +133,14 @@ curl -sS -X POST 127.0.0.1:19877/action \
 判断顺序：内核记录说明上游连接是被 RST、超时还是正常 FIN 结束；数据面日志说明它因此对
 入站连接做了什么；扩展日志说明应用看到的先后。上游是正常 FIN 时数据面不记任何行，应用
 拿到的是正常结束。
+
+经系统接管的流有两点由 macOS 决定，XDial 改不了（macOS 27 上实测）：
+- 应用拿到的错误码不是 Provider 给的那个。Provider 以“对端重置”关闭 flow 时，扩展日志是
+  `closed by plugin (flow error: 50)`，应用读到的是 `ENETDOWN`（50）而不是 `ECONNRESET`；
+  Provider 归不了类的错误以“内部错误”关闭，对应 `flow error: 8`，应用读到 errno 8。
+  所以判断“是不是被重置”要看数据面日志的 `reason=`，不要看应用报的错误码。
+- 应用对套接字做 `shutdown(SHUT_WR)` 之后，自己的读方向立刻返回 EOF，Provider 还没来得及
+  处理。数据面会正确转发半关闭，但这类流的应答到不了应用；本机 SOCKS5 入口不受此限。
 
 ## Release 的安装记录
 
