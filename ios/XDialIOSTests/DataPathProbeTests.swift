@@ -2,6 +2,27 @@ import XCTest
 @testable import XDial
 
 final class DataPathProbeTests: XCTestCase {
+    func testAlternateHTTPSAttributionRequiresExclusiveCounterGrowth() {
+        func snapshot(_ direct: Int64, _ other: Int64) -> RoutingProbeSnapshot {
+            RoutingProbeSnapshot(directTargetDirect: 0, directTargetVPN: 0, directTargetOther: 0,
+                                 anyConnectTargetDirect: 0, anyConnectTargetVPN: 0, anyConnectTargetOther: 0,
+                                 alternateHTTPSDirect: direct, alternateHTTPSOther: other)
+        }
+        let before = snapshot(3, 2)
+        XCTAssertEqual(before.alternateHTTPSRoute(after: snapshot(4, 2)), "direct")
+        XCTAssertEqual(before.alternateHTTPSRoute(after: snapshot(3, 3)), "other")
+        for after in [before, snapshot(4, 3), snapshot(0, 0)] {
+            XCTAssertEqual(before.alternateHTTPSRoute(after: after), "unknown")
+        }
+    }
+
+    func testTLSFailuresKeepNumericEvidenceWithoutErrorDescription() {
+        let error = URLError(.serverCertificateUntrusted)
+        let check = DataPathProbe.CheckRecord.failed(error, since: ProcessInfo.processInfo.systemUptime)
+        XCTAssertEqual(check.result, .tls)
+        XCTAssertEqual(check.urlErrorCode, NSURLErrorServerCertificateUntrusted)
+    }
+
     func testSnapshotReadDistinguishesMissingRejectedAndMalformedReplies() {
         typealias Read = TunnelManager.SnapshotRead
         XCTAssertEqual(Read.decode(nil).detail, "扩展返回空回包")
@@ -221,7 +242,7 @@ final class DataPathProbeTests: XCTestCase {
         XCTAssertTrue(result.isUsable)
         XCTAssertEqual(result.splitRoutingState, .notApplicable)
         XCTAssertTrue(result.diagnosticSummary.contains(
-            "公网双出口不适用；线路与DNS通过，未执行双出口分流验收"
+            "公网双出口不适用；线路与域名 HTTPS 通过，未执行双出口分流验收"
         ))
         XCTAssertFalse(result.diagnosticSummary.contains("分流通过"))
     }

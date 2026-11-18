@@ -21,6 +21,23 @@ final class ScenarioAutoSwitchRuleTests: XCTestCase {
         XCTAssertNil(state.policyForCompletion(second, cancelled: false))
     }
 
+    func testSettledPathNotificationsRespectSSIDPolicyRevisionAndExpiry() {
+        let policy = ScenarioAutoPolicy(enabled: true, wifiRules: [], regionScenarios: ["CN": "a"], scenarioIDs: ["a"])
+        func context(_ ssid: String = "Home", revision: String = "1", runningID: String = "a",
+                     rules: ScenarioAutoPolicy = policy) -> ScenarioSurveyContext {
+            .init(network: ScenarioNetworkIdentity.key(path: "wifi", ssid: ssid),
+                  revision: revision, policy: rules, runningID: runningID)
+        }
+        let settled = ScenarioSurveyContext.Settled(context: context(), at: 10)
+        XCTAssertTrue(settled.covers(context(), now: 230))
+        XCTAssertFalse(settled.covers(context(), now: 310))
+        var changed = policy
+        changed.regionScenarios = [:]
+        for next in [context("Office"), context(revision: "2"), context(runningID: "b"), context(rules: changed)] {
+            XCTAssertFalse(settled.covers(next, now: 11))
+        }
+    }
+
     func testWiFiIdentityDistinguishesNetworksWithIdenticalInterfaceAndGateway() {
         let path = "satisfied:wifi:en0:192.168.1.1"
         let office = ScenarioNetworkIdentity.key(path: path, ssid: "Office")

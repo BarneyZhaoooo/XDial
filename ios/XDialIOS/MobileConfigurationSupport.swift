@@ -531,3 +531,17 @@ enum MobileDiagnosticsService {
         return values
     }
 }
+
+/// Translate app-owned prefixes at display time so changing language also updates existing errors.
+func systemOnDemandFailureText(_ message: String, isChinese: Bool) -> String {
+    guard !isChinese else { return message }
+    let prefixes = [
+        ("无法安全保存系统级按需重连启动包", "Could not securely save the on-demand reconnect configuration"),
+        ("启用系统级按需重连失败：", "Could not enable on-demand reconnect: "),
+        ("无法停用系统级按需重连：", "Could not disable on-demand reconnect: "),
+    ]
+    for (chinese, english) in prefixes where message.hasPrefix(chinese) {
+        return english + message.dropFirst(chinese.count)
+    }
+    return message
+}

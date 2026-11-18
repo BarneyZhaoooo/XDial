@@ -171,6 +171,23 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
 
 // MARK: - 扩展上报的场景状态
 
+/// A path callback can reuse a settled decision only while all its inputs still match.
+struct ScenarioSurveyContext: Equatable {
+    let network: String
+    let revision: String
+    let policy: ScenarioAutoPolicy
+    let runningID: String
+
+    struct Settled {
+        let context: ScenarioSurveyContext
+        let at: TimeInterval
+
+        func covers(_ candidate: ScenarioSurveyContext, now: TimeInterval) -> Bool {
+            context == candidate && now - at < 300
+        }
+    }
+}
+
 /// VPN 扩展当前运行的场景、最近一次判断与切换。扩展写进 App Group，并发 Darwin 通知；
 /// App 回到前台或收到通知时读取。
 struct TunnelScenarioState: Codable, Equatable, Sendable {
