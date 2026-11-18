@@ -246,3 +246,24 @@ func TestRuleHistoryIsValidatedAndCompared(t *testing.T) {
 		}
 	}
 }
+
+func TestRuleHistoryRejectsInvalidJSONShapes(t *testing.T) {
+	for _, history := range []string{
+		`null`, `[]`, `{"intranet":null}`, `{"intranet":{}}`,
+		`{"intranet":[null]}`, `{"intranet":[[]]}`,
+		`{"intranet":[{"domains":null}]}`, `{"intranet":[{"cidrs":null}]}`,
+		`{"intranet":[{"domains":[null]}]}`, `{"intranet":[{"cidrs":[null]}]}`,
+		`{"intranet":[{"domains":[1]}]}`, `{"intranet":[{"cidrs":"10.0.0.0/24"}]}`,
+	} {
+		t.Run(history, func(t *testing.T) {
+			data := strings.Replace(authority, `"revision":2,`, `"revision":2,"rule_set_history":`+history+`,`, 1)
+			if _, err := Load([]byte(data)); err == nil {
+				t.Fatal("invalid history accepted")
+			}
+		})
+	}
+	for _, history := range []string{`{}`, `{"intranet":[]}`, `{"intranet":[{}]}`, `{"intranet":[{"domains":[],"cidrs":[]}]}`} {
+		data := strings.Replace(authority, `"revision":2,`, `"revision":2,"rule_set_history":`+history+`,`, 1)
+		mustLoad(t, data)
+	}
+}

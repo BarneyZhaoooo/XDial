@@ -582,14 +582,22 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         // Beside the user's own Profile the seed's rule IDs are scoped; the history follows them.
         var previous = try phoneSeed()
         previous.ruleSets[0].domains = ["example.com", "shop.example"]
+        var userLibrary = try ProfileLibraryMigration.starterLibrary()
+        let userRule = RuleSet(id: "intranet", name: "My rule", type: "manual", domains: ["mine.example"])
+        userLibrary.profiles[0].profile.ruleSets.append(userRule)
+        userLibrary = try userLibrary.validated()
         var joined = try ProfileLibraryMigration.merging(previous, named: "心动", id: "seed",
-                                                         into: ProfileLibraryMigration.starterLibrary())
+                                                         into: userLibrary)
         joined = try joined.validated()
         let mapping = try XCTUnwrap(joined.profiles.first { $0.id == "seed" }).resourceIDs
-        let scopedIntranet = mapping?["intranet"] ?? "intranet"
+        let scopedIntranet = try XCTUnwrap(mapping?["intranet"])
+        XCTAssertNotEqual(scopedIntranet, "intranet", "the collision must scope the preset rule")
+        XCTAssertEqual(joined.snapshot().ruleSets.first { $0.id == scopedIntranet }?.domains,
+                       ["example.com", "shop.example"])
         let updated = try ProfileLibraryMigration.addingMobileSeed(
             try phoneSeed(), named: "心动", id: "seed", to: joined,
             ruleSetHistory: ["intranet": [ShippedRuleContent(domains: ["example.com", "shop.example"], cidrs: [])]])
         XCTAssertEqual(updated.snapshot().ruleSets.first { $0.id == scopedIntranet }?.domains, ["example.com"])
+        XCTAssertEqual(updated.snapshot().ruleSets.first { $0.id == "intranet" }, userRule)
     }
 }

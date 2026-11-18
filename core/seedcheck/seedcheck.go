@@ -8,6 +8,7 @@
 package seedcheck
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -128,6 +129,9 @@ func Load(data []byte) (*Seed, error) {
 		}
 		regions[code] = target
 	}
+	if raw, present := root["rule_set_history"]; present && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, fmt.Errorf("rule_set_history must be an object")
+	}
 	history := map[string][]RuleContent{}
 	if len(envelope.RuleHistory) > 0 && len(source.RuleSets) != len(profile.RuleSets) {
 		return nil, fmt.Errorf("seed rule sets changed during import")
@@ -142,12 +146,30 @@ func Load(data []byte) (*Seed, error) {
 		if index < 0 {
 			return nil, fmt.Errorf("rule_set_history names %s, which is not a manual rule of the preset", ruleID)
 		}
+		if versions == nil {
+			return nil, fmt.Errorf("rule_set_history for %s must be an array", ruleID)
+		}
 		for _, version := range versions {
+			if version == nil {
+				return nil, fmt.Errorf("rule_set_history for %s must contain objects", ruleID)
+			}
 			var content RuleContent
 			for key, value := range version {
 				target := map[string]*[]string{"domains": &content.Domains, "cidrs": &content.CIDRs}[key]
-				if target == nil || json.Unmarshal(value, target) != nil {
+				if target == nil {
 					return nil, fmt.Errorf("rule_set_history for %s may only list domains and cidrs", ruleID)
+				}
+				// Unlike Go's []string decoder, the Apps reject null arrays
+				// and null elements rather than treating them as empty values.
+				var values []*string
+				if json.Unmarshal(value, &values) != nil || values == nil {
+					return nil, fmt.Errorf("rule_set_history for %s requires string arrays", ruleID)
+				}
+				for _, item := range values {
+					if item == nil {
+						return nil, fmt.Errorf("rule_set_history for %s requires strings", ruleID)
+					}
+					*target = append(*target, *item)
 				}
 			}
 			history[profile.RuleSets[index].ID] = append(history[profile.RuleSets[index].ID], content)
