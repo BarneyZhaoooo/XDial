@@ -25,12 +25,18 @@ struct XDialActivityLockScreenView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                     Spacer(minLength: 4)
-                    XDialElapsedText(connectedAt: state.connectedAt)
+                    // WidgetKit's ticking text needs a finite width in the archived
+                    // Lock Screen layout. Measuring the timer itself with fixedSize
+                    // can push the banner's contents outside the card.
+                    Text(verbatim: state.connectedAt == nil ? "…" : "88:88:88")
+                        .hidden()
+                        .overlay(alignment: .trailing) {
+                            XDialElapsedText(connectedAt: state.connectedAt)
+                                .foregroundStyle(tint)
+                        }
                         .font(.system(.title3, design: .rounded).monospacedDigit())
-                        .foregroundStyle(tint)
                         .lineLimit(1)
-                        .fixedSize()
-                        .layoutPriority(2)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 if let detail = state.detail, !detail.isEmpty {
                     Text(detail)
