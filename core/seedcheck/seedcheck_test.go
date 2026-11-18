@@ -2,6 +2,7 @@ package seedcheck
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -13,10 +14,21 @@ const authority = `{"format":"xdial-mobile-seed","schema_version":1,"revision":2
  "profile":{"lines":[{"id":"direct","name":"直连","type":"direct","enabled":true},
   {"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}],
   "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"domains":["example.com"]},
-   {"id":"cn","name":"国内网站","type":"url","enabled":true,"format":"binary","url":"https://rules.example/cn.srs"}],
+   {"id":"cn","name":"国内网站","type":"url","enabled":true,"format":"srs","url":"https://rules.example/cn.srs"}],
   "scenarios":[{"id":"domestic","name":"在国内","default_line_id":"vpn","bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"direct"}]},
    {"id":"overseas","name":"在国外","default_line_id":"direct","bindings":[{"rule_set_id":"cn","line_id":"vpn"},{"rule_set_id":"intranet","line_id":"vpn"}]}],
-  "active_scenario_id":"domestic"}}`
+  "subscriptions":[],"active_scenario_id":"domestic"}}`
+
+// document is the authority's plain profile document: what an app's importer
+// reads, so app-side values the shared preset may not carry can be tested.
+func document(t *testing.T, seed string) string {
+	t.Helper()
+	data, err := LegacyProfileDocument([]byte(seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
 
 func mustLoad(t *testing.T, text string) *Seed {
 	t.Helper()
@@ -78,8 +90,12 @@ func TestSecretsAndFormattingDoNotCount(t *testing.T) {
 	if printed, _ := json.Marshal(every); strings.Contains(string(printed), "secret") {
 		t.Fatalf("fingerprint carries credentials: %s", printed)
 	}
-	srs := strings.Replace(authority, `"format":"binary"`, `"format":"srs"`, 1)
-	if d := Diff(want, Fingerprint(mustLoad(t, srs), nil), nil); len(d) != 0 {
+	// The desktop app writes "binary" for the phone's "srs".
+	binary := strings.Replace(document(t, authority), `"format": "srs"`, `"format": "binary"`, 1)
+	if !strings.Contains(binary, `"format": "binary"`) {
+		t.Fatal("fixture did not change")
+	}
+	if d := Diff(want, Fingerprint(mustLoad(t, binary), nil), []string{"regions", "offline_rules"}); len(d) != 0 {
 		t.Fatalf("format synonyms reported as differences: %v", d)
 	}
 }
@@ -87,14 +103,14 @@ func TestSecretsAndFormattingDoNotCount(t *testing.T) {
 func TestEffectiveValuesDoNotCount(t *testing.T) {
 	want := Fingerprint(mustLoad(t, authority), nil)
 	// An app fills defaults: Direct fetches rule sets, and a Direct line has no protocol options.
-	filled := strings.Replace(authority, `"format":"binary"`, `"format":"binary","fetch_line_id":"direct"`, 1)
+	filled := strings.Replace(authority, `"format":"srs"`, `"format":"srs","fetch_line_id":"direct"`, 1)
 	filled = strings.Replace(filled, `"type":"direct","enabled":true}`, `"type":"direct","enabled":true,"anytls_port":443}`, 1)
 	filled = strings.Replace(filled, `"name":"在国外","default_line_id":"direct"`, `"name":"在国外","default_line_id":"direct","match_order":[]`, 1)
-	if d := Diff(want, Fingerprint(mustLoad(t, filled), nil), nil); len(d) != 0 {
+	if d := Diff(want, Fingerprint(mustLoad(t, document(t, filled)), nil), []string{"regions"}); len(d) != 0 {
 		t.Fatalf("effective defaults reported as differences: %v", d)
 	}
-	viaVPN := strings.Replace(authority, `"format":"binary"`, `"format":"binary","fetch_line_id":"vpn"`, 1)
-	if d := Diff(want, Fingerprint(mustLoad(t, viaVPN), nil), nil); len(d) != 1 {
+	viaVPN := strings.Replace(authority, `"format":"srs"`, `"format":"srs","fetch_line_id":"vpn"`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, document(t, viaVPN)), nil), []string{"regions"}); len(d) != 1 {
 		t.Fatalf("fetching rules through another line must count: %v", d)
 	}
 }
@@ -144,6 +160,43 @@ func TestLoadRequiresFieldsPlatformsDefaultDifferently(t *testing.T) {
 		}
 		if _, err := Load([]byte(seed)); err == nil || !strings.Contains(err.Error(), "platforms default it differently") {
 			t.Errorf("%s omitted: got %v", name, err)
+		}
+	}
+}
+
+func TestLoadRejectsWhatThePhoneDoesNotRead(t *testing.T) {
+	cases := map[string]string{
+		"inverted rule": strings.Replace(authority, `"domains":["example.com"]`, `"domains":["example.com"],"invert":true`, 1),
+		"native rule":   strings.Replace(authority, `"type":"manual","enabled":true,`, `"type":"native","enabled":true,`, 1),
+		"binding conditions": strings.Replace(authority, `{"rule_set_id":"intranet","line_id":"vpn"}`,
+			`{"rule_set_id":"intranet","line_id":"vpn","condition_ids":["x"]}`, 1),
+		"match order":   strings.Replace(authority, `"name":"在国外",`, `"name":"在国外","match_order":["cn"],`, 1),
+		"line type":     strings.Replace(authority, `"type":"vpn","enabled":true,`, `"type":"anytls","enabled":true,`, 1),
+		"rule format":   strings.Replace(authority, `"format":"srs"`, `"format":"source"`, 1),
+		"subscriptions": strings.Replace(authority, `"active_scenario_id"`, `"subscriptions":[{"id":"s"}],"active_scenario_id"`, 1),
+	}
+	for name, seed := range cases {
+		if seed == authority {
+			t.Fatalf("%s: fixture did not change", name)
+		}
+		if _, err := Load([]byte(seed)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// The allowlists mirror the phone's Swift model; a renamed key there must not
+// leave the checker approving a field the phone no longer reads.
+func TestMobileKeysExistInThePhoneModel(t *testing.T) {
+	source, err := os.ReadFile("../../appletv/XDialTV/Models.swift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, set := range []map[string]bool{mobileProfileKeys, mobileLineKeys, mobileScenarioKeys, mobileBindingKeys} {
+		for key := range set {
+			if strings.Contains(key, "_") && !strings.Contains(string(source), `"`+key+`"`) {
+				t.Errorf("%s is not a key of the phone model", key)
+			}
 		}
 	}
 }

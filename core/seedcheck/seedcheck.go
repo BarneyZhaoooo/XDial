@@ -65,7 +65,7 @@ func Load(data []byte) (*Seed, error) {
 	if err := json.Unmarshal(envelope.Profile, &source); err != nil {
 		return nil, fmt.Errorf("invalid seed profile")
 	}
-	if err := requireExplicitDefaults(envelope.Profile); err != nil {
+	if err := requireMobileCompatible(envelope.Profile); err != nil {
 		return nil, err
 	}
 	profile, err := config.ImportProfileDocument(envelope.Profile, Namespace)
@@ -90,40 +90,128 @@ func Load(data []byte) (*Seed, error) {
 	return &Seed{Profile: profile, Regions: regions, Revision: envelope.Revision, Mobile: true}, nil
 }
 
+// A shared preset may only use what the phone's importer reads the same way
+// (appletv/XDialTV/Models.swift, shared by iOS and tvOS, and
+// MobileConfigurationService.validate in ios/XDialIOS): the Mac imports through
+// Go, which accepts more, and comparing two identical files through one loader
+// cannot reveal what the phone drops or rejects. Anything else is refused here
+// instead of being certified as equivalent.
+var (
+	mobileProfileKeys  = keySet("lines", "rule_sets", "scenarios", "subscriptions", "active_scenario_id", "tailscale")
+	mobileRequiredKeys = []string{"lines", "rule_sets", "subscriptions", "scenarios", "active_scenario_id"}
+	mobileLineKeys     = keySet("id", "name", "type", "enabled", "verified", "allow_insecure",
+		"vpn_server", "vpn_username", "vpn_password", "trojan_server", "trojan_port", "trojan_password", "trojan_sni",
+		"ss_server", "ss_port", "ss_method", "ss_password", "vmess_server", "vmess_port", "vmess_uuid", "vmess_alt_id",
+		"tailscale_exit_node", "tailscale_magic_dns", "tailscale_authenticated")
+	mobileLineTypes    = keySet("direct", "vpn", "trojan", "shadowsocks", "ss", "vmess", "tailscale")
+	mobileRuleKeys     = keySet("id", "name", "type", "enabled", "url", "format", "domains", "cidrs")
+	mobileRuleTypes    = keySet("url", "manual")
+	mobileRuleFormats  = keySet("", "auto", "srs", "json", "text")
+	mobileScenarioKeys = keySet("id", "name", "icon", "match_ssids", "bindings", "default_line_id", "default_subscription_id")
+	mobileBindingKeys  = keySet("rule_set_id", "line_id", "subscription_id")
+)
+
 // platformDefaults are fields whose omission the platforms read differently:
-// the phone's decoder fills these values, while the Go importer the Mac uses
-// leaves Go zero values (a Line would be disabled, a port 0). Comparing two
-// identical files cannot reveal that, so a shared preset must state them.
+// the phone's decoder fills these values, while the Go importer leaves zero
+// values (a Line would be disabled, a port 0), so a shared preset must state them.
 var platformDefaults = map[string][]string{
 	"":            {"enabled"},
 	"trojan":      {"trojan_port"},
 	"shadowsocks": {"ss_port", "ss_method"},
+	"ss":          {"ss_port", "ss_method"},
 	"vmess":       {"vmess_port"},
 }
 
-func requireExplicitDefaults(profile json.RawMessage) error {
-	var document struct {
-		Lines    []map[string]json.RawMessage `json:"lines"`
-		RuleSets []map[string]json.RawMessage `json:"rule_sets"`
+func keySet(keys ...string) map[string]bool {
+	set := map[string]bool{}
+	for _, key := range keys {
+		set[key] = true
 	}
-	if err := json.Unmarshal(profile, &document); err != nil {
+	return set
+}
+
+type rawObject = map[string]json.RawMessage
+
+func text(object rawObject, key string) string {
+	var value string
+	_ = json.Unmarshal(object[key], &value)
+	return value
+}
+
+func onlyKeys(object rawObject, allowed map[string]bool, what string) error {
+	for key := range object {
+		if !allowed[key] {
+			return fmt.Errorf("%s uses %s, which the phone does not read", what, key)
+		}
+	}
+	return nil
+}
+
+func requireMobileCompatible(profile json.RawMessage) error {
+	var top rawObject
+	var document struct {
+		Lines         []rawObject `json:"lines"`
+		RuleSets      []rawObject `json:"rule_sets"`
+		Scenarios     []rawObject `json:"scenarios"`
+		Subscriptions []rawObject `json:"subscriptions"`
+	}
+	if json.Unmarshal(profile, &top) != nil || json.Unmarshal(profile, &document) != nil {
 		return fmt.Errorf("invalid seed profile")
 	}
+	if err := onlyKeys(top, mobileProfileKeys, "the preset"); err != nil {
+		return err
+	}
+	for _, key := range mobileRequiredKeys {
+		if _, ok := top[key]; !ok {
+			return fmt.Errorf("the preset must set %s: the phone requires it", key)
+		}
+	}
+	if len(document.Subscriptions) > 0 {
+		return fmt.Errorf("the preset must not carry subscriptions: their routing is not compared across platforms")
+	}
 	for _, line := range document.Lines {
-		var id, kind string
-		_ = json.Unmarshal(line["id"], &id)
-		_ = json.Unmarshal(line["type"], &kind)
+		what := "line " + text(line, "id")
+		if err := onlyKeys(line, mobileLineKeys, what); err != nil {
+			return err
+		}
+		kind := text(line, "type")
+		if !mobileLineTypes[kind] {
+			return fmt.Errorf("%s has type %q, which the phone does not support", what, kind)
+		}
 		for _, field := range append(append([]string{}, platformDefaults[""]...), platformDefaults[kind]...) {
 			if _, ok := line[field]; !ok {
-				return fmt.Errorf("line %s must set %s: platforms default it differently", id, field)
+				return fmt.Errorf("%s must set %s: platforms default it differently", what, field)
 			}
 		}
 	}
 	for _, rule := range document.RuleSets {
+		what := "rule set " + text(rule, "id")
+		if err := onlyKeys(rule, mobileRuleKeys, what); err != nil {
+			return err
+		}
+		if kind := text(rule, "type"); !mobileRuleTypes[kind] {
+			return fmt.Errorf("%s has type %q, which the phone does not support", what, kind)
+		}
+		if format := text(rule, "format"); !mobileRuleFormats[format] {
+			return fmt.Errorf("%s has format %q, which the phone does not support", what, format)
+		}
 		if _, ok := rule["enabled"]; !ok {
-			var id string
-			_ = json.Unmarshal(rule["id"], &id)
-			return fmt.Errorf("rule set %s must set enabled: platforms default it differently", id)
+			return fmt.Errorf("%s must set enabled: platforms default it differently", what)
+		}
+	}
+	for _, scenario := range document.Scenarios {
+		what := "Scenario " + text(scenario, "id")
+		if err := onlyKeys(scenario, mobileScenarioKeys, what); err != nil {
+			return err
+		}
+		var bindings []rawObject
+		if err := json.Unmarshal(scenario["bindings"], &bindings); err != nil && len(scenario["bindings"]) > 0 {
+			return fmt.Errorf("%s has invalid bindings", what)
+		}
+		for _, binding := range bindings {
+			if err := onlyKeys(binding, mobileBindingKeys, what+" binding"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

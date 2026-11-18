@@ -5,6 +5,9 @@
 
 每条线路和规则都要写明 `enabled`；trojan、shadowsocks、vmess 线路还要写明端口（以及 shadowsocks 的 `ss_method`）。
 这些字段省略时，手机和 Mac 读出的默认值不同（例如手机当作启用，Mac 当作停用），`xdial-seed check` 会拒绝这样的预置。
+共享预置也只能用手机能读的内容：规则类型只有 `url` 和 `manual`，格式为 `auto`、`srs`、`json` 或 `text`，
+不支持 `invert`、`no_resolve`、`fetch_line_id`、按应用/进程匹配、分组条件、场景的 `match_order` 和订阅。
+Mac 能读得更多，但用了这些内容时手机会丢掉或拒绝整个预置，所以检查直接拒绝。
 
 ## 放在哪儿
 
