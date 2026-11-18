@@ -2,6 +2,19 @@ import XCTest
 @testable import XDial
 
 final class MobileConfigurationSupportTests: XCTestCase {
+    func testOnDemandErrorsFollowSelectedLanguageAndKeepSystemDetails() {
+        let cases = [
+            ("无法安全保存系统级按需重连启动包", "Could not securely save the on-demand reconnect configuration"),
+            ("启用系统级按需重连失败：detail (NEVPNErrorDomain 5)", "Could not enable on-demand reconnect: detail (NEVPNErrorDomain 5)"),
+            ("无法停用系统级按需重连：detail (NEVPNErrorDomain 5)", "Could not disable on-demand reconnect: detail (NEVPNErrorDomain 5)"),
+            ("unknown detail", "unknown detail"),
+        ]
+        for (chinese, english) in cases {
+            XCTAssertEqual(systemOnDemandFailureText(chinese, isChinese: false), english)
+            XCTAssertEqual(systemOnDemandFailureText(chinese, isChinese: true), chinese)
+        }
+    }
+
     func testExportMarksAndRemovesSensitiveConfiguration() throws {
         var profile = Profile.bootstrap()
         let privateGroup = try JSONDecoder().decode(
