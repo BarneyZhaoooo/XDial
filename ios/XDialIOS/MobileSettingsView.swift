@@ -257,7 +257,7 @@ struct MobileSettingsView: View {
         case .active:
             return app.tr("系统已启用", "Enabled by system")
         case .failed(let message):
-            return userFacingConnectionText(message)
+            return systemOnDemandFailureText(message, isChinese: app.language == .zh)
         }
     }
 
