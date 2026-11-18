@@ -487,9 +487,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             },
             cleanupCompletion: { [weak self] in
                 self?.recordDiagnostic("stopped")
-                self?.endTimelineSession()
                 os_log("stopTunnel: cleanup done", log: self?.log ?? .default, type: .info)
-                completion.finish()
+                if let self {
+                    self.endTimelineSession { _ = completion.finish() }
+                } else {
+                    completion.finish()
+                }
             }
         )
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -1473,12 +1476,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return "subscription"
     }
 
-    private func endTimelineSession() {
+    private func endTimelineSession(completion: @escaping @Sendable () -> Void) {
         diagnosticLock.lock()
         let sessionID = timelineSessionID
         diagnosticLock.unlock()
-        guard !sessionID.isEmpty else { return }
-        timeline?.endActiveSession(sessionID)
+        guard !sessionID.isEmpty, let timeline else { completion(); return }
+        timeline.endActiveSession(sessionID, completion: completion)
     }
 
     private func setLastError(_ value: String?) {

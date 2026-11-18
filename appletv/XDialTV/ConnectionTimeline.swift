@@ -185,8 +185,8 @@ enum ConnectionTimeline {
 }
 
 /// Process-safe store for `ConnectionTimeline.File`. Appends are serialised on a
-/// private queue within the process and with `flock` across the app and the
-/// extension; a failed write never affects the connection.
+/// private queue within the process and a nonblocking `flock` across the app
+/// and extension. Busy/failed IO may drop diagnostic data; it never changes the connection.
 final class ConnectionTimelineStore: @unchecked Sendable {
     private let fileURL: URL
     private let lockURL: URL
@@ -220,27 +220,32 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         }
     }
 
-    func endActiveSession(_ id: String) {
+    func endActiveSession(_ id: String, completion: @escaping @Sendable () -> Void = {}) {
         queue.async { [self] in
             mutate { file in
                 if file.activeSessionID == id { file.activeSessionID = nil }
             }
+            completion()
         }
     }
 
     func append(
         session id: String,
+        preferActiveSession: Bool = false,
         source: ConnectionTimeline.Source,
         stage: String,
         result: ConnectionTimeline.Result? = nil,
         ms: Int? = nil,
-        detail: String? = nil
+        detail: String? = nil,
+        at timestamp: Int64? = nil
     ) {
         let event = ConnectionTimeline.Event(
-            t: ConnectionTimeline.nowMilliseconds(), src: source, stage: stage,
+            t: timestamp ?? ConnectionTimeline.nowMilliseconds(), src: source, stage: stage,
             result: result, ms: ms, detail: ConnectionTimeline.sanitized(detail))
         queue.async { [self] in
             mutate { file in
+                let id = preferActiveSession ? (file.activeSessionID ?? id) : id
+                guard !id.isEmpty else { return }
                 if let index = file.sessions.firstIndex(where: { $0.id == id }) {
                     if file.sessions[index].events.count >= ConnectionTimeline.maxEventsPerSession {
                         file.sessions[index].droppedEvents += 1
@@ -255,13 +260,23 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         }
     }
 
-    /// Blocks until queued appends from this process are written.
+    /// Test helper: waits until queued appends have been attempted.
+    /// Production shutdown uses the asynchronous endActiveSession completion.
     func flush() {
         queue.sync {}
     }
 
     func snapshot() -> ConnectionTimeline.File {
-        queue.sync { withFileLock { read() } }
+        queue.sync { withFileLock { read() } ?? ConnectionTimeline.File() }
+    }
+
+    /// UI callers suspend instead of blocking the main actor on disk IO.
+    func loadSnapshot() async -> ConnectionTimeline.File {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: withFileLock { read() } ?? ConnectionTimeline.File())
+            }
+        }
     }
 
     // MARK: - File access (on `queue`)
@@ -303,11 +318,13 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         try? data.write(to: fileURL, options: [.atomic])
     }
 
-    private func withFileLock<T>(_ body: () -> T) -> T {
+    private func withFileLock<T>(_ body: () -> T) -> T? {
         let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { return body() }
+        guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }
-        flock(descriptor, LOCK_EX)
+        // Diagnostics are disposable: contention must never delay a connection
+        // or shutdown, and failure must never write without mutual exclusion.
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return nil }
         defer { flock(descriptor, LOCK_UN) }
         return body()
     }

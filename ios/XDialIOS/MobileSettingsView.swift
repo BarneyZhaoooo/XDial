@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct MobileSettingsView: View {
     @EnvironmentObject private var app: AppState
 
+    @State private var timelineSnapshot: ConnectionTimeline.File?
     @State private var exportDocument: MobileJSONDocument?
     @State private var isExporting = false
     @State private var isImporting = false
@@ -115,6 +116,7 @@ struct MobileSettingsView: View {
                             shareTitle: app.tr("分享诊断", "Share diagnostics"),
                             report: diagnosticReport
                         )
+                        .task { timelineSnapshot = await app.connectionTimelineSnapshot() }
                     } label: {
                         Label(app.tr("诊断信息", "Diagnostics"), systemImage: "stethoscope")
                     }
@@ -266,7 +268,7 @@ struct MobileSettingsView: View {
             autoScenarioSummary: autoScenarioSummary,
             environment: MobileDiagnosticsService.environmentSummary(version: version),
             scenarioName: app.activeScenario?.name,
-            timeline: app.connectionTimelineSnapshot(),
+            timeline: timelineSnapshot,
             isChinese: app.language == .zh
         )
     }

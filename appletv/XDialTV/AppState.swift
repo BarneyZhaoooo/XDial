@@ -229,7 +229,7 @@ enum SystemOnDemandState: Equatable {
 }
 
 extension TunnelManaging {
-    func connectionTimelineSnapshot() -> ConnectionTimeline.File? { nil }
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File? { nil }
     func recordUserAction(_ action: String) {}
 }
 
@@ -277,7 +277,7 @@ protocol TunnelManaging: AnyObject {
     func recheckDataPath()
 
     /// Bounded, redacted connection timeline shared with the tunnel extension.
-    func connectionTimelineSnapshot() -> ConnectionTimeline.File?
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File?
     /// Records a user action (for example an explicit disconnect) on the current session.
     func recordUserAction(_ action: String)
 
@@ -613,8 +613,8 @@ final class AppState: ObservableObject {
 
     /// 已连接时经 Direct 线路查网络出口地区；没连着时不唤醒隧道。
     /// Connection timeline for the diagnostics report; nil without a tunnel manager.
-    func connectionTimelineSnapshot() -> ConnectionTimeline.File? {
-        tunnelManager?.connectionTimelineSnapshot()
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File? {
+        await tunnelManager?.connectionTimelineSnapshot()
     }
 
     func directExitCountry() async -> ExitCountryProbeResult {

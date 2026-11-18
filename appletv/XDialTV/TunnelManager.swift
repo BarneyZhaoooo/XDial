@@ -104,6 +104,8 @@ struct TunnelStartOperationState {
         return (id, cancelled)
     }
 
+    var hasPendingOperation: Bool { activeID != nil }
+
     func isCurrent(_ id: UUID) -> Bool {
         activeID == id
     }
@@ -323,6 +325,7 @@ enum DataPathProbe {
     struct CheckRecord: Sendable, Equatable {
         let result: ConnectionTimeline.Result
         let ms: Int
+        var completedAt: Int64 = ConnectionTimeline.nowMilliseconds()
         static let notRun = CheckRecord(result: .notRun, ms: 0)
     }
 
@@ -1047,7 +1050,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private let timeline = ConnectionTimelineStore.shared(appGroup: kAppGroupIdentifier)
     /// Session the next timeline events belong to; equals the start attempt ID.
     private var timelineSessionID: String?
-    private var timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
     private var checkStartedAt = ProcessInfo.processInfo.systemUptime
 
     /// Appends an app event to the connection timeline. When the system started
@@ -1056,22 +1058,23 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         _ stage: String,
         result: ConnectionTimeline.Result? = nil,
         ms: Int? = nil,
-        detail: String? = nil
+        detail: String? = nil,
+        at timestamp: Int64? = nil
     ) {
         guard let timeline else { return }
-        if timelineSessionID == nil {
-            guard let active = timeline.snapshot().activeSessionID else { return }
-            timelineSessionID = active
-            timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
-        }
-        guard let sessionID = timelineSessionID else { return }
-        timeline.append(session: sessionID, source: .app, stage: "app." + stage,
-                        result: result, ms: ms, detail: detail)
+        // Resolve the extension-owned marker at append time. This also adopts
+        // system reconnects missed while suspended, without a main-thread read.
+        // A manual start keeps its own ID until the system reaches connected.
+        let manualStart = startOperationState.hasPendingOperation ||
+            (activeStartAttemptID != nil && manager?.connection.status != .connected)
+        timeline.append(session: timelineSessionID ?? "", preferActiveSession: !manualStart,
+                        source: .app, stage: "app." + stage,
+                        result: result, ms: ms, detail: detail, at: timestamp)
     }
 
     /// The bounded, redacted connection timeline for the diagnostics report.
-    func connectionTimelineSnapshot() -> ConnectionTimeline.File? {
-        timeline?.snapshot()
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File? {
+        await timeline?.loadSnapshot()
     }
 
     func recordUserAction(_ action: String) {
@@ -1583,8 +1586,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let previousStatus = observedSystemStatus
         observedSystemStatus = connection.status
         if previousStatus != connection.status {
-            recordTimeline("status." + Self.timelineStatusName(connection.status),
-                           ms: ConnectionTimeline.elapsedMilliseconds(since: timelineSessionStartedAt))
+            recordTimeline("status." + Self.timelineStatusName(connection.status))
         }
         switch connection.status {
         case .connected:
@@ -2151,13 +2153,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             return .cancelled
         }
         recordTimeline("check.direct_request", result: routed.directCheck.result,
-                       ms: routed.directCheck.ms, detail: "cf-trace via Direct")
+                       ms: routed.directCheck.ms, detail: "cf-trace via Direct", at: routed.directCheck.completedAt)
         if plan.currentRouteTag != nil {
             recordTimeline("check.current_request", result: routed.currentCheck.result,
-                           ms: routed.currentCheck.ms, detail: "cf-trace via current line")
+                           ms: routed.currentCheck.ms, detail: "cf-trace via current line", at: routed.currentCheck.completedAt)
         }
         recordTimeline("check.hostname_request", result: routed.hostnameCheck.result,
-                       ms: routed.hostnameCheck.ms, detail: "www.apple.com")
+                       ms: routed.hostnameCheck.ms, detail: "www.apple.com", at: routed.hostnameCheck.completedAt)
         let direct = routed.routedDirectEgressIP == nil ? "未取得出口" : "取得出口"
         let current = plan.currentRouteTag == nil ? "跳过"
             : (routed.routedAnyConnectEgressIP == nil ? "未取得出口" : "取得出口")
@@ -2505,7 +2507,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         activeStartAllowsSystemOnDemand = allowSystemOnDemand
         let sessionID = UUID().uuidString
         timelineSessionID = sessionID
-        timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
         timeline?.beginSession(sessionID, markActive: false)
         recordTimeline("start_requested", detail: "anyconnect=\(anyConnect != nil) ondemand=\(allowSystemOnDemand)")
         guard isCurrentStartOperation(operationID) else { return }
@@ -3033,8 +3034,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
     /// 停止系统级隧道。manager/connection 不可用时静默返回(语义等价「本来就没在跑」)。
     func stopTunnel() {
-        recordTimeline("stop_requested",
-                       ms: ConnectionTimeline.elapsedMilliseconds(since: timelineSessionStartedAt))
+        recordTimeline("stop_requested")
         let cancelledCompletion = startOperationState.cancel()
         activeStartAttemptID = nil
         startWatchdogTask?.cancel()

@@ -117,3 +117,44 @@
 | `make ios`、`make appletv` | 通过 |
 | `make test-macos-transaction`（`apple/Home` 也被 macOS 编译） | 927 个 XCTest 通过 |
 | `make go-vet`、`make test` | 通过 |
+
+## PR #27 第三轮审查（2026-11-18）
+
+本轮保持原目标：连接时间线、请求耗时与失败分类；锁屏排版和地区依据是已明确追加的
+现场需求。新增行数主要来自这些展示/证据及其测试。本轮不添加快照缓存、轮询、锁或重试；
+缩减同步读取与重复的 App 会话计时状态，复用既有串行队列。
+
+### 不变量与事件边界
+
+| 事件 | 会话归属/完成点 |
+|---|---|
+| 手动启动尚未完成或系统还在 connecting | 保留 App 启动尝试的 ID，不被上一条活跃记录替换 |
+| 接管已运行连接、前台恢复、自检和用户操作 | 在后台追加时读取扩展拥有的 activeSessionID，覆盖 App 挂起期间遗漏的系统重连 |
+| stopped + endActiveSession | 同一串行队列先尝试写 stopped/清除当前标记，再执行系统 stop completion；既有引擎停止看门狗保留 |
+| 文件锁繁忙/失败 | 不无限等待、不无锁写入；诊断可丢弃，连接和界面不等锁；报告不是完整审计日志 |
+| 导出报告 | 异步在既有队列读取，界面只显示返回的值，不在主线程等磁盘/队列 |
+| 一个并发请求结束 | 当时保存 completedAt；其它请求迟到时不重盖所有请求的时间戳 |
+
+App 不再存储另一份“当前会话起始 uptime”来计算状态/停止耗时；报告统一按持久会话
+startedAt 与事件 t 对齐。明确的单步耗时继续由该步自己测量。
+
+新增 4 个测试分别覆盖遗漏 disconnected 后的新会话、停止回调落在末尾记录之后、
+实际持锁时不等待/不无锁覆盖，以及延迟追加仍保留请求完成顺序。
+
+CI 的 `TestEngineDNSSelfHealPicksUpLeftoverState` 一次失败发生在“DNS 已还原、状态文件
+尚未删除”的观察窗口：失败日志的断言先于 `system DNS restored`。本 PR 对 `core/engine`
+无改动；干净主线 checkout 的同一测试连续 300 次通过，工作分支连续 30 次通过。
+仅重跑该次失败 CI 一次，不在诊断 PR 修改 DNS 自愈实现或缩短/放宽超时。
+
+本轮未修改 Go/libbox；沿用已重建的 iOS framework，不冒称新增 Go 构建证据。
+原先 unsigned 环境在主线同样失败的 AppStateTests/ScenarioInTunnelSwitchTests 仍排除。
+日志在 `build/pr-follow/`，验证结果以下一段最终收据为准。
+
+### 本轮最终收据
+
+- `ios-tests-final.log`：同一独立模拟器运行 iOS XCTest，97 项、0 失败，仍明确排除上述两组已知环境套件。
+- `mobile-builds-final.log`：`make ios appletv` 最终均成功。
+- `timeline-tests.log`：新增会话/锁争用/停止/时间戳测试先定向通过；最终全量已包括这些测试。
+- `dns-current.log` / `dns-baseline.log`：分别为当前分支 30 次和干净主线同代码 300 次窄测试，均通过。
+- `gate.log`：public-content gate 通过。未改 macOS 行为，也未重启宿主当前连接。
+- 未新增实机、自检真实耗时对照或 TestFlight 可下载证据；仍需合入后的既有上传流程和第 7 节实测清单。
