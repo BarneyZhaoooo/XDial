@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private extension GeneralSettingsSection {
+extension GeneralSettingsSection {
     @MainActor func title(_ state: AppState) -> String {
         switch self {
         case .startup: return state.tr("启动与连接", "Startup & Connection")
@@ -41,53 +41,20 @@ struct GeneralSettingsView: View {
     private var section: GeneralSettingsSection { state.editorPosition.generalSection }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(state.tr("通用", "General"))
-                    .font(.system(size: 16, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 12)
-                ForEach(GeneralSettingsSection.allCases, id: \.self) { item in
-                    Button { state.editorPosition.generalSection = item } label: {
-                        Label(item.title(state), systemImage: item.symbol)
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .background(
-                                section == item ? XDialPalette.selection.opacity(0.14) : .clear,
-                                in: RoundedRectangle(cornerRadius: 6)
-                            )
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(section == item ? .isSelected : [])
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                switch section {
+                case .startup: startup
+                case .appearance: appearance
+                case .system: system
+                case .about: about
                 }
-                Spacer(minLength: 0)
             }
-            .padding(12)
-            .frame(width: state.language == .en ? 202 : 154)
-            .background(XDialPalette.surface)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(section.title(state))
-                        .font(.system(size: 15, weight: .semibold))
-                    switch section {
-                    case .startup: startup
-                    case .appearance: appearance
-                    case .system: system
-                    case .about: about
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(18)
         }
-        .font(.system(size: 12))
-        .controlSize(.small)
+        .font(.body)
+        .controlSize(.regular)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(XDialPalette.canvas)
     }

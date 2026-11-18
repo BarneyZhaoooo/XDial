@@ -35,7 +35,6 @@ struct MainPopover: View {
     private var content: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             homeControls
             if let port = proxyOnlyPort {
                 Divider()
@@ -90,7 +89,7 @@ struct MainPopover: View {
             .easeInOut(duration: 0.2),
             value: state.browsingRecord.profile.scenarios.count
         )
-        .background(XDialPalette.elevated)
+        .background(XDialPalette.canvas)
         .contextMenu {
             if let candidate = updater.releaseCandidate {
                 Button(
@@ -136,8 +135,7 @@ struct MainPopover: View {
         HStack(spacing: 10) {
             HStack(spacing: 8) {
                 Text(XDialBuildIdentity.productTitle)
-                    .font(.system(size: 15, weight: .semibold))
-                    .tracking(0.25)
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
                 if state.isConnected,
                    let connectedAt = state.engine.connectedAt {
                     Circle()
@@ -266,19 +264,8 @@ struct MainPopover: View {
                 MenuBarRecoveryController.shared.requestQuit()
             }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 54)
-        .background {
-            LinearGradient(
-                colors: [
-                    headerAccent.opacity(0.09),
-                    headerAccent.opacity(0.025),
-                    Color.clear,
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        }
+        .padding(.horizontal, 18)
+        .frame(minHeight: 54)
     }
 
     /// 仅 SOCKS5 的连接不接管系统：所有“已连接”的颜色改用暮紫，并常驻提示。
@@ -382,9 +369,21 @@ struct MainPopover: View {
 
     @ViewBuilder
     private var homeControls: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 18) {
-                DialControl(phase: dialPhase, attentionTint: dangerColor, connectedTint: connectedColor, diameter: 74) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(state.surveyingRegion && !state.isBusy && !state.isConnected
+                         ? state.tr("正在选择场景…", "Choosing a scenario…") : (state.isBusy ? dialActivityTitle : state.statusText))
+                        .font(.system(.title, design: .rounded, weight: .bold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(dialHint)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                DialControl(phase: dialPhase, attentionTint: dangerColor, connectedTint: connectedColor, diameter: 112) {
                     if state.scenarioSwitchTargetID != nil && state.isConnected {
                         state.cancelPendingScenarioSwitch()
                     } else if state.isConnected || state.isBusy {
@@ -402,16 +401,13 @@ struct MainPopover: View {
                 .accessibilityLabel(dialActionTitle)
                 .accessibilityValue(state.statusText)
                 .help(dialActionTitle)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(state.surveyingRegion && !state.isBusy && !state.isConnected
-                         ? state.tr("正在选择场景…", "Choosing a scenario…") : (state.isBusy ? dialActivityTitle : state.statusText))
-                        .font(.headline)
-                    if let selected = state.activeScenario {
-                        Text(selected.name).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 17)
+            .padding(.vertical, 16)
+            .environment(\.colorScheme, .dark)
+            .background { DialInstrumentSurface() }
+            .clipShape(RoundedRectangle(cornerRadius: 22))
+
             if state.profile.scenarios.isEmpty {
                 Button(state.tr("前往配置添加场景", "Open configuration to add a scenario")) {
                     state.editorPosition.tab = 2
@@ -419,7 +415,7 @@ struct MainPopover: View {
                 }
             } else {
                 HStack {
-                    Text(state.tr("场景", "Scenarios")).font(.headline)
+                    Text(state.tr("上网方式", "Routing")).font(.headline)
                     Spacer()
                     Toggle(state.tr("自动", "Automatic"), isOn: $state.automaticScenario)
                         .toggleStyle(.switch).controlSize(.small)
@@ -428,13 +424,16 @@ struct MainPopover: View {
                     Button {
                         showsScenarios.toggle()
                     } label: {
-                        HStack {
-                            Text(selectionReason).multilineTextAlignment(.leading)
-                            Spacer()
-                            Image(systemName: showsScenarios ? "chevron.up" : "chevron.down")
-                        }
+                        HomeRouteLabel(
+                            name: state.activeScenario?.name ?? state.tr("未选择场景", "No scenario selected"),
+                            reason: selectionReason,
+                            symbol: state.activeScenario.map { ScenarioDescriber.symbol(for: $0, in: state.profile) } ?? "network",
+                            expanded: showsScenarios
+                        )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(state.tr("当前选择，\(state.activeScenario?.name ?? "")", "Current selection, \(state.activeScenario?.name ?? "")"))
+                    .accessibilityValue(selectionReason)
                     .accessibilityHint(state.tr("展开或收起场景", "Show or hide scenarios"))
                 }
                 if !state.automaticScenario || showsScenarios {
@@ -458,21 +457,28 @@ struct MainPopover: View {
                 }
             }
             if let line = homeAccountLine {
+                Text(state.tr("账号", "Account")).font(.headline)
                 Button {
                     openAccount(line.id)
                 } label: {
-                    HStack {
-                        Label(line.vpnUsername.isEmpty ? state.tr("登录账号", "Sign In") : line.vpnUsername, systemImage: "person.crop.circle")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                    }
+                    HomeAccountLabel(name: line.name, detail: line.vpnUsername.isEmpty
+                                     ? state.tr("登录账号", "Sign in") : line.vpnUsername)
                 }
                 .buttonStyle(.plain)
             }
         }
         .onChange(of: state.automaticScenario) { showsScenarios = false }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 14)
+    }
+
+    private var dialHint: String {
+        if state.engine.status == "disconnecting" { return state.tr("正在结束连接", "Finishing the connection") }
+        if state.isBusy || state.scenarioSwitchTargetID != nil { return state.tr("点按拨盘取消", "Click the dial to cancel") }
+        if state.isConnected { return state.tr("点按拨盘断开", "Click the dial to disconnect") }
+        if state.surveyingRegion { return state.tr("正在检查网络出口", "Checking the network exit") }
+        if state.activeScenario == nil { return state.tr("请先添加场景", "Add a scenario to connect") }
+        return state.tr("点按拨盘连接", "Click the dial to connect")
     }
 
     private var selectionReason: String {
@@ -480,7 +486,11 @@ struct MainPopover: View {
             return state.tr("已连上 Wi-Fi「\(ssid)」", "Connected to Wi-Fi “\(ssid)”")
         }
         if let code = state.exitCountry, let target = state.regionScenarioTargets[code] ?? state.regionScenarioTargets["*"],
-           state.profile.scenarios.contains(where: { $0.id == target }) { return state.tr("网络出口在 \(code)", "Network exits in \(code)") }
+           state.profile.scenarios.contains(where: { $0.id == target }) {
+            let locale = Locale(identifier: state.language == .zh ? "zh-Hans" : "en")
+            let region = locale.localizedString(forRegionCode: code) ?? code
+            return state.tr("网络出口在\(region)", "Network exits in \(region)")
+        }
         return state.surveyingRegion ? state.tr("正在判断所在网络…", "Checking the network…")
             : state.tr("没判断出来，保持当前选择", "Network unrecognized. Keeping current selection.")
     }
@@ -718,8 +728,8 @@ struct MainPopover: View {
                 .foregroundStyle(.primary.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)
                 Text(state.tr(
-                    "无法读取当前 Wi-Fi，场景不会自动切换。",
-                    "XDial cannot read the current Wi-Fi, so scenarios will not switch automatically."
+                    "允许读取 Wi-Fi 名称后，就能按 Wi-Fi 选择场景。",
+                    "Allow access to Wi-Fi names to match scenarios by Wi-Fi."
                 ))
                 .font(.system(size: 9.5))
                 .foregroundStyle(.secondary)
@@ -1578,30 +1588,18 @@ private struct PopoverHeaderIconButton: View {
     let title: String
     let tint: Color
     let action: () -> Void
-    @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13.5, weight: .semibold))
                 .symbolRenderingMode(.monochrome)
-                .frame(width: 28, height: 28)
-                .background(
-                    tint.opacity(hovered ? 0.18 : 0.11),
-                    in: Circle()
-                )
-                .overlay {
-                    Circle().stroke(
-                        tint.opacity(hovered ? 0.44 : 0.28),
-                        lineWidth: 0.75
-                    )
-                }
+                .frame(width: 30, height: 30)
+                .xdialGlass(interactive: true, in: Circle(), fallback: XDialPalette.surface)
         }
         .buttonStyle(.plain)
         .foregroundStyle(tint)
         .contentShape(Circle())
-        .onHover { hovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovered)
         .help(title)
         .accessibilityLabel(title)
     }

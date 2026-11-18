@@ -35,7 +35,7 @@ enum XDialBrandPalette {
     static let proxyOnlyHighContrastLightHex: UInt32 = 0x463D6C
     static let proxyOnlyHighContrastDarkHex: UInt32 = 0xD2CBEE
 
-    static let canvasLightHex: UInt32 = 0xE2E7EA
+    static let canvasLightHex: UInt32 = 0xEFF2F3
     static let canvasDarkHex: UInt32 = 0x1B1E20
     static let canvasHighContrastLightHex: UInt32 = 0xE8EBED
     static let canvasHighContrastDarkHex: UInt32 = 0x131618
@@ -75,7 +75,7 @@ enum XDialBrandPalette {
     static let selection = color(selectionLightHex)
     static let success = color(successLightHex)
     static let danger = color(dangerLightHex)
-    static let canvas = color(canvasLightHex)
+    static let iconHub = color(0xE2E7EA)
     static let surface = color(surfaceLightHex)
     static let divider = color(dividerLightHex)
     static let textPrimary = color(textPrimaryLightHex)
