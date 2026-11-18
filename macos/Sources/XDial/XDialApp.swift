@@ -110,8 +110,8 @@ private struct MenuBarLabel: View {
             let upload = isCurrent ? trafficInfo.uploadBytesPerSecond : nil
             image = MenuBarStatusIcon.imageWithTrafficRates(
                 icon: icon, menuBarTone: tone,
-                download: TrafficInfo.formatRate(download, compact: true),
-                upload: TrafficInfo.formatRate(upload, compact: true)
+                download: download,
+                upload: upload
             )
             label = "\(XDialBuildIdentity.productTitle), \(downloadLabel) \(TrafficInfo.formatRate(download)), \(uploadLabel) \(TrafficInfo.formatRate(upload))"
         } else {
