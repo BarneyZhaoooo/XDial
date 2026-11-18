@@ -90,7 +90,20 @@ struct MainPopover: View {
             value: state.browsingRecord.profile.scenarios.count
         )
         .background(XDialPalette.canvas)
-        .contextMenu {
+        .contextMenu { applicationMenuItems }
+        .onAppear { synchronizeTrafficSampling() }
+        .onDisappear { trafficInfo.stop() }
+        .onChange(of: state.engine.status) {
+            synchronizeTrafficSampling()
+        }
+        .onChange(of: state.presentedConnectionReport?.transactionID) {
+            synchronizeTrafficSampling()
+        }
+    }
+
+    @ViewBuilder
+    private var applicationMenuItems: some View {
+        Section {
             if let candidate = updater.releaseCandidate {
                 Button(
                     candidate.channel == .beta
@@ -116,18 +129,9 @@ struct MainPopover: View {
                 state.installation.present()
             }
             #endif
-            Divider()
-            Button(state.tr("退出 XDial", "Quit XDial")) {
-                MenuBarRecoveryController.shared.requestQuit()
-            }
         }
-        .onAppear { synchronizeTrafficSampling() }
-        .onDisappear { trafficInfo.stop() }
-        .onChange(of: state.engine.status) {
-            synchronizeTrafficSampling()
-        }
-        .onChange(of: state.presentedConnectionReport?.transactionID) {
-            synchronizeTrafficSampling()
+        Button(state.tr("退出 \(XDialBuildIdentity.productTitle)", "Quit \(XDialBuildIdentity.productTitle)")) {
+            MenuBarRecoveryController.shared.requestQuit()
         }
     }
 
@@ -246,26 +250,36 @@ struct MainPopover: View {
                 )
             }
             Spacer()
-            PopoverHeaderIconButton(
-                systemName: "gearshape.fill",
-                title: state.tr("设置", "Settings"),
-                tint: XDialPalette.accent
-            ) {
-                openSettingsWindow()
+            Button(action: openSettingsWindow) {
+                headerIcon("gearshape.fill", tint: XDialPalette.accent)
             }
-            PopoverHeaderIconButton(
-                systemName: "power",
-                title: state.tr(
-                    "退出 \(XDialBuildIdentity.productTitle)",
-                    "Quit \(XDialBuildIdentity.productTitle)"
-                ),
-                tint: Color.secondary
-            ) {
-                MenuBarRecoveryController.shared.requestQuit()
+            .buttonStyle(.plain)
+            .help(state.tr("设置", "Settings"))
+            .accessibilityLabel(state.tr("设置", "Settings"))
+
+            Menu {
+                applicationMenuItems
+            } label: {
+                headerIcon("ellipsis", tint: .secondary)
             }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help(state.tr("更多操作", "More Actions"))
+            .accessibilityLabel(state.tr("更多操作", "More Actions"))
         }
         .padding(.horizontal, 18)
         .frame(minHeight: 54)
+    }
+
+    private func headerIcon(_ systemName: String, tint: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 13.5, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(tint)
+            .frame(width: 30, height: 30)
+            .xdialGlass(interactive: true, in: Circle(), fallback: XDialPalette.surface)
+            .contentShape(Circle())
     }
 
     /// 仅 SOCKS5 的连接不接管系统：所有“已连接”的颜色改用暮紫，并常驻提示。
@@ -1580,28 +1594,6 @@ struct MainPopover: View {
             minutes,
             remainingSeconds
         )
-    }
-}
-
-private struct PopoverHeaderIconButton: View {
-    let systemName: String
-    let title: String
-    let tint: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13.5, weight: .semibold))
-                .symbolRenderingMode(.monochrome)
-                .frame(width: 30, height: 30)
-                .xdialGlass(interactive: true, in: Circle(), fallback: XDialPalette.surface)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(tint)
-        .contentShape(Circle())
-        .help(title)
-        .accessibilityLabel(title)
     }
 }
 
