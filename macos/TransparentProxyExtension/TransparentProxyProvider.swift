@@ -1038,7 +1038,7 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
                         code: "snapshot-unavailable"
                     )
                 }
-            case .probeLineOutboundAddress, .probeLineLatency:
+            case .probeLineOutboundAddress, .probeLineLatency, .probeDirectCountry:
                 self.beginLineOutboundAddressProbe(
                     request: request,
                     runtime: runtime,
@@ -1800,8 +1800,6 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let sourceReport = sourceReporter.currentReport()
         let sourceDrainDecision = ScenarioSwitchSourceDrainPolicy.decide(
             ScenarioSwitchSourceDrainFacts(
-                networkEpochSwitch:
-                    operation.request.networkEpochID != nil,
                 sourceScenarioID: sourceReport?.scenario.id ?? "",
                 targetScenarioID: committedReport.scenario.id,
                 sourceConfigurationFingerprint:
@@ -2526,8 +2524,8 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         completionHandler: @escaping (Data?) -> Void
     ) {
         guard
-            let lineID = request.lineID,
-            session.lineOutbounds[lineID] != nil
+            let lineID = request.cmd == .probeDirectCountry ? "direct" : request.lineID,
+            request.cmd == .probeDirectCountry || session.lineOutbounds[lineID] != nil
         else {
             completionHandler(
                 Self.encodeDiagnosticsResponse(
@@ -2558,6 +2556,9 @@ final class TransparentProxyProvider: NETransparentProxyProvider {
         let gate = outboundProbeGate
         diagnosticsQueue.async { [weak self] in
             let result = Result<ProviderDiagnosticsData, Error> {
+                if request.cmd == .probeDirectCountry {
+                    return ProviderDiagnosticsData(directCountry: try runtime.probeDirectCountry())
+                }
                 if request.cmd == .probeLineLatency {
                     return ProviderDiagnosticsData(lineLatencies: try runtime.probeLineLatency(lineID: lineID, groupID: request.groupID, session: session))
                 }

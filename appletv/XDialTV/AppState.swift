@@ -282,7 +282,7 @@ protocol TunnelManaging: AnyObject {
     /// 只更新场景目录里的判断规则（例如关掉「自动」）。目录不存在时返回 false。
     func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool
     /// 请 VPN 扩展在不断开系统 VPN 的情况下切换到目录里的场景。
-    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply
+    func requestScenarioSwitch(to scenarioID: String, revision: String, reapply: Bool) async -> ScenarioSwitchReply
     /// 请 VPN 扩展按当前网络判断一次（必要时自动切换），返回扩展的场景状态。
     func requestScenarioEvaluation() async -> ScenarioEvaluationReply
     /// 向正在运行的 VPN 扩展读取场景状态；扩展不可用或是旧版本时返回 nil。
@@ -330,7 +330,7 @@ extension TunnelManaging {
         keepingOthers: Bool
     ) async -> String? { nil }
     func updateScenarioCatalogPolicy(_ policy: ScenarioAutoPolicy) -> Bool { false }
-    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply { .unsupported }
+    func requestScenarioSwitch(to scenarioID: String, revision: String, reapply: Bool) async -> ScenarioSwitchReply { .unsupported }
     func requestScenarioEvaluation() async -> ScenarioEvaluationReply { .unsupported }
     func requestScenarioState() async -> TunnelScenarioState? { nil }
     func adoptSwitchedScenario(_ scenarioID: String) {}
@@ -1391,10 +1391,20 @@ final class AppState: ObservableObject {
 
     func reconnectToApplyChanges() {
         guard isConnected, hasPendingRuntimeChanges else { return }
+        #if os(iOS)
+        let target = profile.activeScenarioID
+        Task { @MainActor in
+            if await switchScenarioInTunnel(to: target) == .unavailable {
+                engine.lastError = tr("当前 VPN 扩展无法在连接中应用配置，请手动断开后再连接。",
+                                      "The active VPN extension cannot apply these changes in place. Disconnect and connect again.")
+            }
+        }
+        #else
         reconnectAfterDisconnect = true
         disconnectRequested = false
         disconnect()
         disconnectRequested = false
+        #endif
     }
 
     func removeTunnelProfile(completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
@@ -3034,7 +3044,7 @@ extension AppState {
             engine.lastError = tr("无法准备新场景的连接配置", "Couldn't prepare the new scenario")
             return .failed
         }
-        switch await tunnelManager.requestScenarioSwitch(to: id, revision: revision) {
+        switch await tunnelManager.requestScenarioSwitch(to: id, revision: revision, reapply: runningProfileSnapshot?.activeScenarioID == id) {
         case .switched(let state):
             engine.lastError = nil
             adoptTunnelScenario(state, base: base)

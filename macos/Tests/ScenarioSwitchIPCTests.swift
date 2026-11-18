@@ -1,6 +1,17 @@
 import XCTest
 
 final class ScenarioSwitchIPCTests: XCTestCase {
+    func testQueuedReconnectReappliesEvenIfCurrentScenarioIsSelectedAgain() {
+        XCTAssertTrue(HostScenarioSwitchMode.select.canReuseCommittedReport(
+            sameScenario: true, sameConfiguration: true, sameUnderlay: true))
+        XCTAssertFalse(HostScenarioSwitchMode.reapply.canReuseCommittedReport(
+            sameScenario: true, sameConfiguration: true, sameUnderlay: true))
+        XCTAssertEqual(HostScenarioSwitchMode.select.including(.reapply), .reapply)
+        XCTAssertEqual(HostScenarioSwitchMode.reapply.including(.select), .reapply)
+        XCTAssertEqual(HostScenarioSwitchMode.reapply.including(.refreshUnderlay), .refreshUnderlay)
+        XCTAssertEqual(HostScenarioSwitchMode.refreshUnderlay.including(.reapply), .refreshUnderlay)
+    }
+
     func testSwitchRequestRoundTripsAllTransactionIdentities() throws {
         let request = ProviderScenarioSwitchRequest.switchScenario(
             requestID: "request-1",

@@ -64,6 +64,7 @@ final class ScenarioSSIDMatchingTests: XCTestCase {
             profile.scenario(matchingSSID: "Office")?.id,
             "work"
         )
+        XCTAssertEqual(profile.scenario(matchingSSID: " Office ")?.id, "work")
         XCTAssertNil(profile.scenario(matchingSSID: "office"))
         XCTAssertNil(profile.scenario(matchingSSID: "Unknown"))
     }

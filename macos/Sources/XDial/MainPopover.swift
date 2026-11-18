@@ -22,7 +22,7 @@ struct MainPopover: View {
     @StateObject private var trafficInfo = TrafficInfo()
     @State private var showsScenarios = false
     @State private var contentHeight: CGFloat = 260
-    @State private var showsConnectionDetails = true
+    @State private var showsConnectionDetails = false
     @State private var showsPolicyMappings = false
 
     private let actionColor = XDialPalette.primaryAction
@@ -388,16 +388,21 @@ struct MainPopover: View {
                     } else if state.isConnected || state.isBusy {
                         state.disconnect()
                     } else if let selected = state.activeScenario {
-                        state.connectScenario(selected.id)
+                        if let lineID = ConnectionConfigurationBlocker.evaluate(selected, in: state.profile)?.lineID {
+                            openAccount(lineID, connect: selected.id)
+                        } else {
+                            state.connectScenario(selected.id)
+                        }
                     }
                 }
-                .disabled(state.engine.status == "disconnecting" ||
+                .disabled(state.engine.status == "disconnecting" || (state.surveyingRegion && !state.isConnected && !state.isBusy) ||
                           (state.activeScenario == nil && !state.isBusy && !state.isConnected))
                 .accessibilityLabel(dialActionTitle)
                 .accessibilityValue(state.statusText)
                 .help(dialActionTitle)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(state.isBusy ? dialActivityTitle : state.statusText)
+                    Text(state.surveyingRegion && !state.isBusy && !state.isConnected
+                         ? state.tr("正在选择场景…", "Choosing a scenario…") : (state.isBusy ? dialActivityTitle : state.statusText))
                         .font(.headline)
                     if let selected = state.activeScenario {
                         Text(selected.name).foregroundStyle(.secondary)
@@ -407,11 +412,30 @@ struct MainPopover: View {
             }
             if state.profile.scenarios.isEmpty {
                 Button(state.tr("前往配置添加场景", "Open configuration to add a scenario")) {
-                    state.editorPosition.showProfileSection()
+                    state.editorPosition.tab = 2
                     openSettingsWindow()
                 }
             } else {
-                DisclosureGroup(state.tr("选择场景", "Choose Scenario"), isExpanded: $showsScenarios) {
+                HStack {
+                    Text(state.tr("场景", "Scenarios")).font(.headline)
+                    Spacer()
+                    Toggle(state.tr("自动", "Automatic"), isOn: $state.automaticScenario)
+                        .toggleStyle(.switch).controlSize(.small)
+                }
+                if state.automaticScenario {
+                    Button {
+                        showsScenarios.toggle()
+                    } label: {
+                        HStack {
+                            Text(selectionReason).multilineTextAlignment(.leading)
+                            Spacer()
+                            Image(systemName: showsScenarios ? "chevron.up" : "chevron.down")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(state.tr("展开或收起场景", "Show or hide scenarios"))
+                }
+                if !state.automaticScenario || showsScenarios {
                     VStack(spacing: 6) {
                         ForEach(state.profile.scenarios) { scenario in
                             HomeScenarioCard(
@@ -421,16 +445,55 @@ struct MainPopover: View {
                                 isActive: scenario.id == state.profile.activeScenarioID,
                                 requiresConfirmation: state.isConnected || state.isBusy,
                                 compact: true, tr: state.tr
-                            ) { state.selectHomeScenario(scenario.id) }
+                            ) {
+                                state.automaticScenario = false
+                                state.selectHomeScenario(scenario.id)
+                            }
                             .disabled(state.engine.status == "disconnecting")
                         }
                     }
                     .padding(.top, 6)
                 }
             }
+            if let line = homeAccountLine {
+                Button {
+                    openAccount(line.id)
+                } label: {
+                    HStack {
+                        Label(line.vpnUsername.isEmpty ? state.tr("登录账号", "Sign In") : line.vpnUsername, systemImage: "person.crop.circle")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .onChange(of: state.automaticScenario) { showsScenarios = false }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+    }
+
+    private var selectionReason: String {
+        if let ssid = state.currentSSID, state.profile.scenario(matchingSSID: ssid) != nil {
+            return state.tr("已连上 Wi-Fi「\(ssid)」", "Connected to Wi-Fi “\(ssid)”")
+        }
+        if let code = state.exitCountry, let target = state.regionScenarioTargets[code] ?? state.regionScenarioTargets["*"],
+           state.profile.scenarios.contains(where: { $0.id == target }) { return state.tr("网络出口在 \(code)", "Network exits in \(code)") }
+        return state.surveyingRegion ? state.tr("正在判断所在网络…", "Checking the network…")
+            : state.tr("没判断出来，保持当前选择", "Network unrecognized. Keeping current selection.")
+    }
+
+    private var homeAccountLine: Line? {
+        let lines = state.profile.lines.filter { $0.type == "vpn" && $0.enabled }
+        let scenario = state.activeScenario
+        let used = Set((scenario?.bindings.map(\.lineID) ?? []) + [scenario?.defaultLineID ?? ""])
+        let leaves = Set(state.profile.leafLines(for: state.profile.lines.filter { used.contains($0.id) }).map(\.id))
+        return lines.first { leaves.contains($0.id) } ?? lines.first
+    }
+
+    private func openAccount(_ id: String, connect: String? = nil) {
+        openWindow(id: "account", value: HomeAccountRequest(lineID: id, connectScenarioID: connect))
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private var dialActivityTitle: String {
@@ -573,8 +636,8 @@ struct MainPopover: View {
             }
             Spacer(minLength: 6)
             Button(blocker.actionTitle(state.tr)) {
-                state.revealConnectionBlocker(blocker)
-                openSettingsWindow()
+                if let id = blocker.lineID { openAccount(id, connect: blocker.scenarioID) }
+                else { state.revealConnectionBlocker(blocker); openSettingsWindow() }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)

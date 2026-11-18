@@ -2764,10 +2764,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         return ScenarioSwitchCatalogStore.save(catalog) == errSecSuccess
     }
 
-    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply {
+    func requestScenarioSwitch(to scenarioID: String, revision: String, reapply: Bool) async -> ScenarioSwitchReply {
         guard let session = providerSession,
               let request = try? JSONSerialization.data(withJSONObject: [
-                  "cmd": "scenario-switch",
+                  "cmd": reapply ? "scenario-reapply" : "scenario-switch",
                   "scenario_id": scenarioID,
                   "catalog_revision": revision,
               ]) else {

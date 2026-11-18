@@ -553,9 +553,11 @@ private struct LineEditorView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField(app.tr("用户名", "Username"), text: lineBinding(index, \.vpnUsername))
+                    .textContentType(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 SecureField(app.tr("密码", "Password"), text: lineBinding(index, \.vpnPassword))
+                    .textContentType(.password)
             }
         case "trojan":
             Section("Trojan") {
@@ -565,6 +567,7 @@ private struct LineEditorView: View {
                 TextField(app.tr("端口", "Port"), value: lineBinding(index, \.trojanPort), format: .number)
                     .keyboardType(.numberPad)
                 SecureField(app.tr("密码", "Password"), text: lineBinding(index, \.trojanPassword))
+                    .textContentType(.password)
                 TextField("SNI", text: lineBinding(index, \.trojanSNI))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -580,6 +583,7 @@ private struct LineEditorView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 SecureField(app.tr("密码", "Password"), text: lineBinding(index, \.ssPassword))
+                    .textContentType(.password)
             }
         case "vmess":
             Section("VMess") {

@@ -175,6 +175,7 @@ struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @State private var hoveredTab: Int?
     @State private var profileSheet: ProfileSheet?
+    @State private var confirmingRestore = false
     private var tab: Int { state.editorPosition.tab }
 
     var body: some View {
@@ -199,9 +200,26 @@ struct SettingsView: View {
         .background(XDialPalette.canvas)
         .toolbar {
             navigationToolbarItem.withoutSharedBackground()
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Button(state.tr("从文件导入…", "Import File…")) { profileSheet = .action(.file, state.editingRecord) }
+                    Button(state.tr("从链接订阅…", "Add Subscription…")) { profileSheet = .action(.subscription, state.editingRecord) }
+                    Divider()
+                    Button(state.tr("恢复默认配置…", "Restore Defaults…")) { confirmingRestore = true }
+                        .disabled(state.engine.status != "disconnected" || state.isBusy)
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel(state.tr("管理配置", "Manage Configuration"))
+            }
         }
         // Keep presentation attached to the window content while the toolbar
         // and resource pages update for a newly selected or deleted Profile.
+        .alert(state.tr("恢复默认配置？", "Restore default configuration?"), isPresented: $confirmingRestore) {
+            Button(state.tr("恢复默认", "Restore Defaults"), role: .destructive) { state.restoreDefaultConfiguration() }
+            Button(state.tr("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(state.tr("这会替换共享配置库中的所有配置、订阅和场景。保存的线路账号需要重新填写。",
+                          "This replaces every profile, subscription and scenario in the shared library. You will need to enter line credentials again."))
+        }
         .sheet(item: $profileSheet) { sheet in
             switch sheet {
             case .manage(let record):
@@ -228,10 +246,10 @@ struct SettingsView: View {
                         .frame(width: 1, height: 16)
                         .padding(.trailing, 5)
                     settingsTab(0, title: state.tr("线路", "Lines"))
-                    settingsTab(1, title: state.tr("规则", "Rules"))
+                    settingsTab(3, title: state.tr("线路组", "Line Groups"))
                 }
                 navigationGroup {
-                    settingsTab(3, title: state.tr("线路组", "Line Groups"))
+                    settingsTab(1, title: state.tr("规则", "Rules"))
                     settingsTab(2, title: state.tr("场景", "Scenarios"))
                 }
                 navigationGroup {
@@ -1505,7 +1523,13 @@ struct LineRow: View {
         let readOnly = credential ? credentialsReadOnly : sourceOwned
         return HStack {
             Text(label).font(.caption).foregroundStyle(.secondary).frame(width: 60, alignment: .leading)
-            SettingsDraftInput(binding, readOnlyText: readOnly ? String(describing: binding.wrappedValue) : nil, onCommit: markLineChanged) { ASCIITextField(placeholder: placeholder, text: $0) }
+            SettingsDraftInput(binding, readOnlyText: readOnly ? String(describing: binding.wrappedValue) : nil, onCommit: markLineChanged) { draft in
+                if credential {
+                    TextField(label, text: draft).textContentType(.username).autocorrectionDisabled()
+                } else {
+                    ASCIITextField(placeholder: placeholder, text: draft)
+                }
+            }
                 .textFieldStyle(.roundedBorder)
                 .font(.caption)
         }
@@ -1518,7 +1542,7 @@ struct LineRow: View {
             if credentialsReadOnly {
                 SettingsReadOnlySecret(text: binding.wrappedValue)
             } else {
-                SettingsDraftInput(binding, onCommit: markLineChanged) { ASCIISecureField(placeholder: "", text: $0) }
+                SettingsDraftInput(binding, onCommit: markLineChanged) { CredentialSecureField(placeholder: label, text: $0, isPassword: label == "密码") }
                     .textFieldStyle(.roundedBorder).font(.caption)
             }
         }

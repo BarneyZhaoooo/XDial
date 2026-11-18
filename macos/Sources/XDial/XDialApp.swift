@@ -228,6 +228,13 @@ struct XDialApp: App {
         .windowToolbarStyle(.unified)
 
 
+        WindowGroup("XDial 账号", id: "account", for: HomeAccountRequest.self) { request in
+            if let value = request.wrappedValue {
+                HomeAccountView(request: value).environmentObject(state)
+            }
+        }
+        .windowResizability(.contentSize)
+
         Window("XDial 安装与卸载", id: "installation") {
             InstallationView(
                 coordinator: InstallationCoordinator.shared
