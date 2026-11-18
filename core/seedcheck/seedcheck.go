@@ -149,7 +149,7 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	for _, rule := range p.RuleSets {
 		rules = append(rules, map[string]any{
 			"id": rule.ID, "name": rule.Name, "type": string(rule.Type), "enabled": rule.Enabled,
-			"url": rule.URL, "format": normalizedFormat(rule.Format), "fetch_line_id": rule.FetchLineID,
+			"url": rule.URL, "format": normalizedFormat(rule.Format), "fetch_line_id": rule.EffectiveFetchLineID(),
 			"domains": sorted(rule.Domains), "cidrs": sorted(rule.CIDRs), "invert": rule.Invert,
 			"no_resolve": rule.NoResolve,
 		})
@@ -163,7 +163,8 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 		}
 		scenarios = append(scenarios, map[string]any{
 			"id": scenario.ID, "name": scenario.Name, "default_line_id": scenario.DefaultLineID,
-			"match_ssids": sorted(scenario.MatchSSIDs), "bindings": bindings, "match_order": scenario.MatchOrder,
+			"match_ssids": sorted(scenario.MatchSSIDs), "bindings": bindings,
+			"match_order": append([]string{}, scenario.MatchOrder...),
 		})
 	}
 	regions := map[string]any{}

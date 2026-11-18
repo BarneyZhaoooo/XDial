@@ -8,8 +8,10 @@ import Foundation
 /// It runs the launch-time seed decision (`ProfileLibraryMigration.applying`) with
 /// this package's embedded preset and the real importer, entirely in memory: no
 /// Keychain, configuration library, ledger or network is touched. Each case writes
-/// the effective configuration (`<case>.json`) for `xdial-seed effective` to compare
-/// with the phone preset by routing meaning. Credentials are fixed test values.
+/// the effective configuration (`<case>.json`) together with the package's own preset as
+/// imported for that Profile; `xdial-seed effective` compares the two by routing meaning,
+/// and `xdial-seed check` separately proves the package preset equals the phone's.
+/// Credentials are fixed test values.
 enum SeedAcceptance {
     private static let profileID = "seed" // the namespace xdial-seed imports the authority with
 
@@ -18,6 +20,9 @@ enum SeedAcceptance {
         let regionTargets: [String: String]
         let activeScenarioID: String
         let notes: [String]
+        /// The package's preset imported for the same Profile: what an untouched configuration must equal.
+        let expected: Profile
+        let expectedRegionTargets: [String: String]
     }
 
     static func run(olderSeedDirectory: String, output: String) -> Never {
@@ -39,11 +44,14 @@ enum SeedAcceptance {
                 if let failure = result.failure { throw failure }
                 return result
             }
-            func write(_ name: String, _ library: ProfileLibrary, _ targets: [String: String], _ notes: [String]) throws {
+            func write(_ name: String, _ library: ProfileLibrary, _ targets: [String: String], _ notes: [String],
+                       profileID: String = profileID) throws {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let expected = try importDocument(seed.text, profileID)
                 let report = Report(profile: library.snapshot(), regionTargets: targets,
-                                    activeScenarioID: library.activeScenarioID, notes: notes)
+                                    activeScenarioID: library.activeScenarioID, notes: notes,
+                                    expected: expected, expectedRegionTargets: seed.regionTargets(in: expected))
                 try encoder.encode(report).write(to: directory.appendingPathComponent(name + ".json"))
             }
 
@@ -98,14 +106,15 @@ enum SeedAcceptance {
                                                                    prefix: seed.name + " · ")
             notes.append(besideUpgraded.activeScenarioID == ownActive ? "own active Scenario kept" : "own active Scenario changed")
             notes.append("profile id: \(besideID)")
-            try write("beside", besideUpgraded, besideUpgrade.regionTargets ?? [:], notes)
+            try write("beside", besideUpgraded, besideUpgrade.regionTargets ?? [:], notes, profileID: besideID)
 
             // 4. The employee deleted the older preset's Profile: the upgrade must not add it back.
             let deleted = try beside.removingProfile(besideID)
             let afterDelete = try launch(seed, createdProfileID: nil, entry: joined.entry, library: deleted,
                                          targets: joined.regionTargets ?? [:])
             try write("deleted", deleted, afterDelete.regionTargets ?? [:],
-                      [afterDelete.library == nil && afterDelete.entry == nil ? "deleted preset stayed deleted" : "deleted preset came back"])
+                      [afterDelete.library == nil && afterDelete.entry == nil ? "deleted preset stayed deleted" : "deleted preset came back"],
+                      profileID: besideID)
             fputs("seed acceptance written to \(directory.path)\n", stdout)
             exit(0)
         } catch {

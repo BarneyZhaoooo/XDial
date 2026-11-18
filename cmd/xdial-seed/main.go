@@ -3,7 +3,7 @@
 //	xdial-seed legacy-document --authority DIR [--write FILE | --check FILE]
 //	xdial-seed check --authority DIR --platform PLATFORM --bundle APP [--profile-name NAME]
 //	xdial-seed fingerprint FILE
-//	xdial-seed effective --authority DIR --report FILE [--name-prefix PREFIX]
+//	xdial-seed effective --report FILE [--name-prefix PREFIX]
 //
 // DIR is the private packaging repository's preset directory: Seed.json (the
 // authority, mobile seed format) and RuleSets/ (offline rule files with
@@ -258,21 +258,19 @@ func fingerprint(args []string) error {
 	return nil
 }
 
-// effective compares the configuration an app applied with the authority. Only
-// objects the preset declares are compared; the user's own Profiles stay out of
-// it and are counted. The active Scenario is the user's choice and offline rule
-// files are checked on the package, so both are skipped. A Profile that joined
-// beside others shows its Scenario names with a prefix, which --name-prefix removes.
+// effective compares the configuration an app applied with what the package's
+// preset imports to for the same Profile (both written by XDial
+// --check-seed-acceptance, so app-side defaults appear on both sides); check
+// proves separately that the package preset equals the authority. Only objects
+// the preset declares are compared; the user's own Scenarios are counted. The
+// active Scenario is the user's choice and offline rule files are checked on
+// the package, so both are skipped. A Profile that joined beside others shows
+// its Scenario names with a prefix, which --name-prefix removes.
 func effective(args []string) error {
 	set := flag.NewFlagSet("effective", flag.ContinueOnError)
-	directory := set.String("authority", "", "preset directory")
 	path := set.String("report", "", "report written by XDial --check-seed-acceptance")
 	prefix := set.String("name-prefix", "", "Scenario name prefix to remove")
 	if err := set.Parse(args); err != nil {
-		return err
-	}
-	seed, want, _, err := authority(*directory)
-	if err != nil {
 		return err
 	}
 	data, err := os.ReadFile(*path)
@@ -280,20 +278,23 @@ func effective(args []string) error {
 		return err
 	}
 	var report struct {
-		Profile       config.Profile    `json:"profile"`
-		RegionTargets map[string]string `json:"regionTargets"`
+		Profile               config.Profile    `json:"profile"`
+		RegionTargets         map[string]string `json:"regionTargets"`
+		Expected              *config.Profile   `json:"expected"`
+		ExpectedRegionTargets map[string]string `json:"expectedRegionTargets"`
 	}
-	if err := json.Unmarshal(data, &report); err != nil {
-		return fmt.Errorf("invalid report: %v", err)
+	if err := json.Unmarshal(data, &report); err != nil || report.Expected == nil {
+		return fmt.Errorf("invalid report")
 	}
+	want := seedcheck.Fingerprint(&seedcheck.Seed{Profile: report.Expected, Regions: report.ExpectedRegionTargets}, nil)
 	ids := map[string]bool{}
-	for _, line := range seed.Profile.Lines {
+	for _, line := range report.Expected.Lines {
 		ids["line:"+line.ID] = true
 	}
-	for _, rule := range seed.Profile.RuleSets {
+	for _, rule := range report.Expected.RuleSets {
 		ids["rule:"+rule.ID] = true
 	}
-	for _, scenario := range seed.Profile.Scenarios {
+	for _, scenario := range report.Expected.Scenarios {
 		ids["scenario:"+scenario.ID] = true
 	}
 	applied := config.Profile{}
@@ -322,9 +323,9 @@ func effective(args []string) error {
 		for _, d := range differences {
 			fmt.Println("difference:", d)
 		}
-		return fmt.Errorf("the applied configuration differs from the authority in %d places", len(differences))
+		return fmt.Errorf("the applied configuration differs from the package preset in %d places", len(differences))
 	}
-	fmt.Printf("applied configuration routes like the authority: %d Scenarios, %d regions; %d Scenarios of the user's own kept\n",
+	fmt.Printf("applied configuration routes like the package preset: %d Scenarios, %d regions; %d Scenarios of the user's own kept\n",
 		len(applied.Scenarios), len(report.RegionTargets), others)
 	return nil
 }
