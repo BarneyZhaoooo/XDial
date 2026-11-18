@@ -1,8 +1,11 @@
 package seedcheck
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/kafeifei/xdial/core/config"
 )
 
 const authority = `{"format":"xdial-mobile-seed","schema_version":1,"revision":2,
@@ -68,6 +71,12 @@ func TestSecretsAndFormattingDoNotCount(t *testing.T) {
 	withPassword := strings.Replace(authority, `"vpn_server":"vpn.example.com:8443"`, `"vpn_server":"vpn.example.com:8443","vpn_password":"x"`, 1)
 	if d := Diff(want, Fingerprint(mustLoad(t, withPassword), nil), nil); len(d) != 0 {
 		t.Fatalf("a filled-in credential is not a preset difference: %v", d)
+	}
+	every := Fingerprint(&Seed{Profile: &config.Profile{Lines: []config.Line{{ID: "all", Type: "vpn",
+		VPNUsername: "user-secret", VPNPassword: "pass-secret", TrojanPassword: "trojan-secret", SSPass: "ss-secret",
+		VMessUUID: "uuid-secret", AnyTLSPassword: "anytls-secret", TailscaleAuthKey: "key-secret"}}}}, nil)
+	if printed, _ := json.Marshal(every); strings.Contains(string(printed), "secret") {
+		t.Fatalf("fingerprint carries credentials: %s", printed)
 	}
 	srs := strings.Replace(authority, `"format":"binary"`, `"format":"srs"`, 1)
 	if d := Diff(want, Fingerprint(mustLoad(t, srs), nil), nil); len(d) != 0 {

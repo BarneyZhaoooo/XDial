@@ -124,8 +124,13 @@ func sorted(values []string) []string {
 	return out
 }
 
-var secretLineFields = map[string]bool{"vpn_username": true, "vpn_password": true, "trojan_password": true,
-	"ss_password": true, "vmess_uuid": true, "anytls_password": true, "tailscale_auth_key": true}
+// withoutSecrets clears the user's account fields before a line is serialized,
+// so credentials never reach a fingerprint that the tool prints or compares.
+func withoutSecrets(line config.Line) config.Line {
+	line.VPNUsername, line.VPNPassword, line.TrojanPassword, line.SSPass = "", "", "", ""
+	line.VMessUUID, line.AnyTLSPassword, line.TailscaleAuthKey = "", "", ""
+	return line
+}
 
 // Fingerprint is the routing meaning of a seed. Map keys name the parts a
 // platform may declare as unsupported: "lines", "rule_sets", "scenarios",
@@ -135,13 +140,13 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	var lines []map[string]any
 	for _, line := range p.Lines {
 		var object map[string]any
-		data, _ := json.Marshal(line)
+		data, _ := json.Marshal(withoutSecrets(line))
 		_ = json.Unmarshal(data, &object)
 		for key, value := range object {
-			// Secrets are the user's; empty values are formatting, not meaning.
-			// A Direct line has no protocol options, so only what it is counts.
+			// Empty values are formatting, not meaning. A Direct line has no
+			// protocol options, so only what it is counts.
 			direct := line.Type == "direct" && key != "id" && key != "name" && key != "type" && key != "enabled"
-			if direct || secretLineFields[key] || strings.HasPrefix(key, "identity_") || key == "verified" || isEmpty(value) {
+			if direct || strings.HasPrefix(key, "identity_") || key == "verified" || isEmpty(value) {
 				delete(object, key)
 			}
 		}
