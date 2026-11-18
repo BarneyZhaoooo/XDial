@@ -537,4 +537,59 @@ final class ProfileLibraryMigrationTests: XCTestCase {
                                                                   owned: { $0 != "mine" }, prefix: "")
         XCTAssertEqual(kept.map(\.matchSSIDs), [[], [], ["OFFICE"]])
     }
+
+    func testReworkedRuleFollowsThePresetOnlyWhileUntouched() throws {
+        var previous = try phoneSeed()
+        previous.ruleSets[0].domains = ["example.com", "Shop.example"]
+        let created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in previous })
+        let current = try phoneSeed() // the next revision drops shop.example from the intranet rule
+        let history = ["intranet": [ShippedRuleContent(domains: ["shop.example", "EXAMPLE.com"], cidrs: [])]]
+        let updated = try ProfileLibraryMigration.addingMobileSeed(current, named: "心动", id: "seed", to: created,
+                                                                   ruleSetHistory: history)
+        XCTAssertEqual(updated.snapshot().ruleSets.first { $0.id == "intranet" }?.domains, ["example.com"])
+        XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(current, named: "心动", id: "seed", to: updated,
+                                                                    ruleSetHistory: history).snapshot(),
+                       updated.snapshot(), "applying the same revision again changes nothing")
+
+        var edited = created
+        let index = try XCTUnwrap(edited.profiles[0].profile.ruleSets.firstIndex { $0.id == "intranet" })
+        edited.profiles[0].profile.ruleSets[index].domains.append("mine.example")
+        edited = try edited.validated()
+        let kept = try ProfileLibraryMigration.addingMobileSeed(current, named: "心动", id: "seed", to: edited,
+                                                                ruleSetHistory: history)
+        XCTAssertEqual(kept.snapshot().ruleSets.first { $0.id == "intranet" }?.domains,
+                       ["example.com", "Shop.example", "mine.example"])
+    }
+
+    func testRuleHistoryFollowsTheImportedAndScopedIDs() throws {
+        let directory = try temporaryHome()
+        let data = Data(#"{"format":"xdial-mobile-seed","schema_version":1,"revision":3,"rule_set_history":{"intranet":[{"domains":["example.com","shop.example"]}]},"profile":{"rule_sets":[{"id":"intranet","type":"manual"},{"id":"cn","type":"url"}],"scenarios":[{"id":"office"}]}}"#.utf8)
+        try data.write(to: directory.appendingPathComponent("心动.json"))
+        let source = try XCTUnwrap(SeedProfile.load(directory: directory))
+        var imported = Profile()
+        imported.ruleSets = [RuleSet(id: "scoped-intranet", name: "公司内网", type: "manual"),
+                             RuleSet(id: "scoped-cn", name: "国内网站", type: "url")]
+        XCTAssertEqual(source.ruleSetHistory(in: imported),
+                       ["scoped-intranet": [ShippedRuleContent(domains: ["shop.example", "example.com"], cidrs: [])]])
+        for bad in [#""rule_set_history":{"cn":[{"domains":["a"]}]}"#, #""rule_set_history":{"intranet":[{"invert":true}]}"#] {
+            let text = String(decoding: data, as: UTF8.self).replacingOccurrences(
+                of: #""rule_set_history":{"intranet":[{"domains":["example.com","shop.example"]}]}"#, with: bad)
+            XCTAssertNotEqual(text, String(decoding: data, as: UTF8.self))
+            try Data(text.utf8).write(to: directory.appendingPathComponent("心动.json"))
+            XCTAssertThrowsError(try SeedProfile.load(directory: directory))
+        }
+
+        // Beside the user's own Profile the seed's rule IDs are scoped; the history follows them.
+        var previous = try phoneSeed()
+        previous.ruleSets[0].domains = ["example.com", "shop.example"]
+        var joined = try ProfileLibraryMigration.merging(previous, named: "心动", id: "seed",
+                                                         into: ProfileLibraryMigration.starterLibrary())
+        joined = try joined.validated()
+        let mapping = try XCTUnwrap(joined.profiles.first { $0.id == "seed" }).resourceIDs
+        let scopedIntranet = mapping?["intranet"] ?? "intranet"
+        let updated = try ProfileLibraryMigration.addingMobileSeed(
+            try phoneSeed(), named: "心动", id: "seed", to: joined,
+            ruleSetHistory: ["intranet": [ShippedRuleContent(domains: ["example.com", "shop.example"], cidrs: [])]])
+        XCTAssertEqual(updated.snapshot().ruleSets.first { $0.id == scopedIntranet }?.domains, ["example.com"])
+    }
 }

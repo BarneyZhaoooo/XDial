@@ -121,7 +121,8 @@ enum ProfileLibraryMigration {
                     // A ledger digest without the mobile prefix means the old desktop preset created this Profile.
                     let fromLegacySeed = entry.map { !$0.digest.hasPrefix("mobile-v1-") } ?? false
                     updated = try addingMobileSeed(incoming, named: seed.name, id: profileID, to: library,
-                                                   aligningLegacySeed: fromLegacySeed)
+                                                   aligningLegacySeed: fromLegacySeed,
+                                                   ruleSetHistory: seed.ruleSetHistory(in: incoming))
                 } else if entry != nil {
                     updated = try refreshingSeed(incoming, profileID: profileID, named: seed.name, in: library)
                 } else {
@@ -144,12 +145,18 @@ enum ProfileLibraryMigration {
     /// desktop preset (no revision) first receives the shared mobile preset:
     /// its untouched Scenarios take the shared routing. Later revisions only add
     /// what is missing, exactly as on iPhone.
+    /// `ruleSetHistory` (keyed by the imported rule IDs) lists the content earlier
+    /// revisions shipped for rules the preset reworked: such a rule takes the new
+    /// content only while it still equals one of them, so the user's edits stay.
     static func addingMobileSeed(_ incoming: Profile, named name: String, id: String,
-                                 to original: ProfileLibrary, aligningLegacySeed: Bool = false) throws -> ProfileLibrary {
+                                 to original: ProfileLibrary, aligningLegacySeed: Bool = false,
+                                 ruleSetHistory: [String: [ShippedRuleContent]] = [:]) throws -> ProfileLibrary {
         var library = original
         let existing = library.profiles.first(where: { $0.id == id })
         // A seed inserted beside other Profiles may have had colliding IDs scoped.
-        let incoming = ProfileLibrary.remap(incoming, using: existing?.resourceIDs ?? [:])
+        let scoping = existing?.resourceIDs ?? [:]
+        let incoming = ProfileLibrary.remap(incoming, using: scoping)
+        let history = Dictionary(ruleSetHistory.map { (scoping[$0.key] ?? $0.key, $0.value) }, uniquingKeysWith: { a, _ in a })
         if !library.profiles.contains(where: { $0.id == id }) {
             library.profiles.append(ProfileRecord(id: id, name: name, profile: Profile()))
         }
@@ -168,6 +175,19 @@ enum ProfileLibraryMigration {
         }
         for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
             draft.ruleSets.append(rule)
+        }
+        for rule in seed.ruleSets {
+            guard let shipped = history[rule.id], let index = draft.ruleSets.firstIndex(where: { $0.id == rule.id }) else {
+                continue
+            }
+            let current = ShippedRuleContent(draft.ruleSets[index])
+            guard current != ShippedRuleContent(rule) else { continue }
+            if shipped.contains(current) {
+                draft.ruleSets[index].domains = rule.domains
+                draft.ruleSets[index].cidrs = rule.cidrs
+            } else {
+                appLog("seed: \(name) kept the user's edits to rule \(rule.id)")
+            }
         }
         // Scenarios added later follow the names the Profile's own Scenarios use: a seed that
         // joined beside other Profiles shows "<name> · <Scenario>" (see appendTemplates).
@@ -339,6 +359,19 @@ enum ProfileLibraryMigration {
 
 /// A Profile document embedded by an enterprise build. Its file name is the
 /// Profile name, as with "Import from File".
+/// Matching content a preset revision shipped for a manual rule; order and case do not count.
+struct ShippedRuleContent: Hashable {
+    var domains: Set<String>
+    var cidrs: Set<String>
+
+    init(domains: [String], cidrs: [String]) {
+        self.domains = Set(domains.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+        self.cidrs = Set(cidrs.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+    }
+
+    init(_ rule: RuleSet) { self.init(domains: rule.domains, cidrs: rule.cidrs) }
+}
+
 struct SeedProfile: Equatable {
     let name: String
     let text: String
@@ -346,6 +379,17 @@ struct SeedProfile: Equatable {
     var revision: Int?
     var sourceScenarioIDs: [String] = []
     var regions: [String: String] = [:]
+    var sourceRuleSetIDs: [String] = []
+    /// Source rule ID -> content earlier revisions shipped (rule_set_history).
+    var shippedRuleContents: [String: [ShippedRuleContent]] = [:]
+
+    /// The rule history keyed by the IDs the import gave the seed's rules, matched by position.
+    func ruleSetHistory(in imported: Profile) -> [String: [ShippedRuleContent]] {
+        guard sourceRuleSetIDs.count == imported.ruleSets.count else { return [:] }
+        let ids = Dictionary(uniqueKeysWithValues: zip(sourceRuleSetIDs, imported.ruleSets.map(\.id)))
+        return Dictionary(shippedRuleContents.compactMap { key, value in ids[key].map { ($0, value) } },
+                          uniquingKeysWith: { a, _ in a })
+    }
 
     func regionTargets(in imported: Profile) -> [String: String] {
         guard sourceScenarioIDs.count == imported.scenarios.count else { return [:] }
@@ -394,9 +438,30 @@ struct SeedProfile: Equatable {
                   regions.allSatisfy({ (key, id) in
                       (key == "*" || (key.count == 2 && key.allSatisfy { $0.isASCII && $0.isLetter })) && ids.contains(id)
                   }) else { throw ProfileLibraryError.invalid("无效的地区与场景对应表") }
+            let rules = (object["rule_sets"] as? [[String: Any]]) ?? []
+            let ruleIDs = rules.compactMap { $0["id"] as? String }
+            var shipped: [String: [ShippedRuleContent]] = [:]
+            if let raw = root["rule_set_history"] {
+                guard let entries = raw as? [String: [[String: Any]]] else { throw ProfileLibraryError.invalid("无效的规则历史") }
+                for (ruleID, versions) in entries {
+                    guard rules.contains(where: { $0["id"] as? String == ruleID && $0["type"] as? String == "manual" }) else {
+                        throw ProfileLibraryError.invalid("规则历史指向不存在的手动规则")
+                    }
+                    shipped[ruleID] = try versions.map { version in
+                        guard Set(version.keys).isSubset(of: ["domains", "cidrs"]),
+                              let domains = (version["domains"] ?? [String]()) as? [String],
+                              let cidrs = (version["cidrs"] ?? [String]()) as? [String] else {
+                            throw ProfileLibraryError.invalid("无效的规则历史")
+                        }
+                        return ShippedRuleContent(domains: domains, cidrs: cidrs)
+                    }
+                }
+            }
             let profile = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             return SeedProfile(name: name, text: String(decoding: profile, as: UTF8.self),
-                               revision: root["revision"] as? Int, sourceScenarioIDs: ids, regions: regions)
+                               revision: root["revision"] as? Int, sourceScenarioIDs: ids, regions: regions,
+                               sourceRuleSetIDs: ruleIDs.count == rules.count ? ruleIDs : [],
+                               shippedRuleContents: shipped)
         }
         return SeedProfile(name: name, text: text)
     }

@@ -210,3 +210,39 @@ func TestMobileKeysExistInThePhoneModel(t *testing.T) {
 		}
 	}
 }
+
+func TestRuleHistoryIsValidatedAndCompared(t *testing.T) {
+	withHistory := strings.Replace(authority, `"revision":2,`,
+		`"revision":2,"rule_set_history":{"intranet":[{"domains":["example.com","shop.example"],"cidrs":[]}]},`, 1)
+	if withHistory == authority {
+		t.Fatal("fixture did not change")
+	}
+	seed := mustLoad(t, withHistory)
+	if len(seed.RuleHistory) != 1 {
+		t.Fatalf("history not loaded: %v", seed.RuleHistory)
+	}
+	want := Fingerprint(seed, nil)
+	reordered := strings.Replace(withHistory, `["example.com","shop.example"]`, `["SHOP.example","example.com"]`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, reordered), nil), nil); len(d) != 0 {
+		t.Fatalf("order and case of earlier content reported as differences: %v", d)
+	}
+	if d := Diff(want, Fingerprint(mustLoad(t, authority), nil), nil); len(d) == 0 {
+		t.Fatal("a package that drops the history must differ")
+	}
+	changed := strings.Replace(withHistory, `"shop.example"`, `"other.example"`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, changed), nil), nil); len(d) == 0 {
+		t.Fatal("changed earlier content must differ")
+	}
+	for name, bad := range map[string]string{
+		"url rule":    strings.Replace(withHistory, `"rule_set_history":{"intranet"`, `"rule_set_history":{"cn"`, 1),
+		"unknown":     strings.Replace(withHistory, `"rule_set_history":{"intranet"`, `"rule_set_history":{"gone"`, 1),
+		"extra field": strings.Replace(withHistory, `"cidrs":[]}]}`, `"cidrs":[],"invert":true}]}`, 1),
+	} {
+		if bad == withHistory {
+			t.Fatalf("%s: fixture did not change", name)
+		}
+		if _, err := Load([]byte(bad)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

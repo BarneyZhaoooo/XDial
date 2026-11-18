@@ -47,6 +47,16 @@ iPhone、Apple TV 和 Mac 包里必须是 `xdial-mobile-seed` 格式；只有旧
 - `region_scenarios` 可选：网络出口所在的地区（两位代码）对应哪个场景，`*` 是没列出的地区。
   留空时 App 只按场景登记的 Wi-Fi 自动选场景，也不会去查网络出口。
 - `profile_name` 可选：Mac 版嵌入时用作 Profile 名称（手机忽略）。同一份文件供所有平台打包，不要另维护副本。
+- `rule_set_history` 可选：预置改了已有手动规则的域名或网段时，在这里按规则 ID 列出之前各版发过的内容
+  （只有 `domains` 和 `cidrs`，不计顺序和大小写）。例如把 `shop.example.com` 移出「公司内网」：
+
+  ```json
+  "rule_set_history": {
+    "intranet": [{ "domains": ["corp.example.com", "shop.example.com"], "cidrs": ["10.0.0.0/8"] }]
+  }
+  ```
+
+  旧条目不要删，下次再改时把当时的内容加进列表。
 
 App 怎么用它：
 
@@ -54,6 +64,8 @@ App 怎么用它：
 - 本机已有配置、且这个 `revision` 还没加过：只添加缺的线路、规则和场景，用户自己建的、
   改过的和当前选中的场景都不动。预置线路如果和已有线路是同一类型、同一个服务器，
   就沿用已有的那条。每个 `revision` 只加一次，用户之后删掉的不会再回来。
+- `rule_set_history` 里列出的规则：用户的这条规则仍等于之前某一版发的内容（没改过）时换成新内容；
+  改过的保留，并在日志记 `seed: kept the user's edits to rule <ID>`。iPhone、Apple TV 和 Mac 规则相同。
 
 ## 随包规则
 
