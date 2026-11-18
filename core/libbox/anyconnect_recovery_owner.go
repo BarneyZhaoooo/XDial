@@ -97,6 +97,7 @@ func (c *anyConnectRuntimeCapability) ensureTransport(ctx context.Context, force
 		return context.Canceled
 	}
 	work := c.recovery
+	var wakeOwner *Libbox
 	if work == nil {
 		if c.networkManaged && c.lastRecoveryEpoch == c.networkEpoch && c.lastRecoveryRevision == c.revision {
 			if c.lastRecoveryError != nil {
@@ -129,8 +130,15 @@ func (c *anyConnectRuntimeCapability) ensureTransport(ctx context.Context, force
 		c.lastRecoverySettled = work.settled
 		c.recovery = work
 		go c.runRecovery(work)
+		if work.onDemand {
+			// Reported once per wake, by the use that started it.
+			wakeOwner = c.owner
+		}
 	}
 	c.mu.Unlock()
+	if wakeOwner != nil {
+		wakeOwner.reportAnyConnectLineWake()
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

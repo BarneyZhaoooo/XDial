@@ -221,7 +221,7 @@ func TestAnyConnectUsesShareOneWake(t *testing.T) {
 		hold:    map[int]chan struct{}{2: make(chan struct{})},
 		entered: map[int]chan struct{}{2: make(chan struct{})},
 	}
-	l, cb, _ := startIdleCapableAnyConnect(t, vpn)
+	l, cb, sink := startIdleCapableAnyConnect(t, vpn)
 	// Runs before the Stop registered by the start helper, which would
 	// otherwise wait forever on a connect this test failed to release.
 	var release sync.Once
@@ -253,6 +253,15 @@ func TestAnyConnectUsesShareOneWake(t *testing.T) {
 	}
 	if vpn.count() != 2 {
 		t.Fatalf("connects = %d, want one shared wake", vpn.count())
+	}
+	wakes := 0
+	for _, line := range sink.snapshot() {
+		if strings.HasPrefix(line.summary, "anyconnect line waking") {
+			wakes++
+		}
+	}
+	if wakes != 1 {
+		t.Fatalf("one wake was logged %d times", wakes)
 	}
 }
 

@@ -109,14 +109,9 @@ func (c *anyConnectRuntimeCapability) parkDormant(closed *session.ConnSession) b
 func (c *anyConnectRuntimeCapability) wakeForUse(ctx context.Context) error {
 	c.mu.Lock()
 	onDemand := c.dormant || (c.recovery != nil && c.recovery.onDemand)
-	wasDormant := c.dormant
-	owner := c.owner
 	c.mu.Unlock()
 	if !onDemand {
 		return errAnyConnectLineUnavailable
-	}
-	if wasDormant && owner != nil {
-		owner.reportAnyConnectLineWake()
 	}
 	return c.ensureTransport(ctx, false)
 }
