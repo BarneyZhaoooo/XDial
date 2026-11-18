@@ -51,7 +51,7 @@ struct HomeView: View {
                                 tailscaleSignInCard
                             }
                             if isDegraded {
-                                degradedCard
+                                routeCheckNote
                             }
                             if let suggested = suggestedScenario {
                                 suggestionCard(suggested)
@@ -288,7 +288,7 @@ struct HomeView: View {
 
     private var status: String { app.engine.status }
     private var isWorking: Bool {
-        ["connecting", "checking", "disconnecting", "reconnecting"].contains(status)
+        ["connecting", "disconnecting", "reconnecting"].contains(status)
     }
     private var isIdle: Bool { !isWorking && !app.hasActiveTunnel }
     private var isDegraded: Bool {
@@ -307,7 +307,7 @@ struct HomeView: View {
 
     private var phase: DialPhase {
         if isWorking || isPreparingConnection { return .working }
-        if app.requiresUserAction || app.tailscaleSetupLineID != nil || isDegraded { return .attention }
+        if app.requiresUserAction || app.tailscaleSetupLineID != nil { return .attention }
         if app.isConnected { return .connected }
         return .idle
     }
@@ -318,7 +318,6 @@ struct HomeView: View {
         }
         switch status {
         case "connecting": return app.tr("正在连接…", "Connecting…")
-        case "checking": return app.tr("正在检查线路…", "Checking the route…")
         case "disconnecting": return app.tr("正在断开…", "Disconnecting…")
         case "reconnecting": return app.tr("正在重连…", "Reconnecting…")
         case "action-required": return app.tr("需要登录 Tailscale", "Tailscale Sign-in Required")
@@ -450,7 +449,7 @@ struct HomeView: View {
 
     private func dialTapped() {
         guard !isPreparingConnection else { return }
-        if app.hasFormalTunnel || status == "connecting" || status == "checking" || status == "reconnecting" {
+        if app.hasFormalTunnel || status == "connecting" || status == "reconnecting" {
             app.disconnect()
         } else if app.tailscaleSetupLineID != nil {
             app.finishTailscaleSetup()
@@ -630,31 +629,21 @@ struct HomeView: View {
         }
     }
 
-    private var degradedCard: some View {
+    private var routeCheckNote: some View {
         let rechecking = app.engine.dataPathRechecking
-        let message: String = rechecking
-            ? app.tr("正在重新检测线路…", "Checking the route again…")
-            : app.tr(
-                "连接可以先用着，XDial 会自动再检测几次。打不开公司网站的话，点「详情」看看哪一步没通过。",
-                "You can keep using the connection; XDial checks again on its own. If company sites don't open, tap Details to see which step failed."
-            )
-        let recheckTitle: String = rechecking
-            ? app.tr("检测中…", "Checking…")
-            : app.tr("重新检测", "Check Again")
-        return noticeCard(
-            symbol: "wifi.exclamationmark",
-            tint: XDialTheme.warning,
-            title: app.tr("已连接，但线路自检没通过", "Connected, but the route check didn't pass"),
-            message: message,
-            identifier: "home-degraded-note"
-        ) {
-            Button(recheckTitle) { app.recheckConnection() }
-                .buttonStyle(XDialPillButtonStyle())
-                .disabled(rechecking)
-                .accessibilityIdentifier("home-degraded-recheck")
+        return HStack(spacing: 12) {
+            Text(rechecking
+                ? app.tr("正在复查线路", "Rechecking route")
+                : app.tr("线路自检未通过", "Route check failed"))
+            if !rechecking {
+                Button(app.tr("重试", "Retry")) { app.recheckConnection() }
+                    .accessibilityIdentifier("home-degraded-recheck")
+            }
             Button(app.tr("详情", "Details")) { showingProblemDetail = true }
-                .buttonStyle(XDialPillButtonStyle(tint: XDialTheme.inkSecondary))
         }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("home-degraded-note")
     }
 
     private var problemDetailText: String {

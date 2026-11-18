@@ -1205,7 +1205,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         armSystemOnDemandIfReady()
         engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
         if let summary {
-            engine?.dataPathSummary = dataPathDegradedPrefix + summary
+            engine?.dataPathSummary = recheckPolicy.shouldDeferProbe ? summary : dataPathDegradedPrefix + summary
         }
         engine?.dataPathRechecking = false
         recheckPolicy.markDegraded()
@@ -1699,7 +1699,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             engine?.dataPathSummary = acceptancePlan?.requiresAnyConnect == true
                 ? "正在检测 Direct、AnyConnect 与分流规则"
                 : "正在检测活动线路、域名解析与分流规则"
-            engine?.applySystemStatus("checking", connectedAt: connection.connectedDate)
+            engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
             appLog("DataPathProbe: begin")
         }
 
@@ -1747,6 +1747,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 self.engine?.dataPathSummary = outcome.summary
                 self.dataPathProbeID = nil
                 self.dataPathVerified = true
+                self.engine?.dataPathDidPass.send()
                 self.resetDegradedRecheck()
                 self.activeStartAttemptID = nil
                 self.startWatchdogTask?.cancel()
@@ -1963,7 +1964,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 dataPathAwaitingTailscaleLogin = false
                 if enteredActionRequired {
                     engine?.dataPathSummary = "Tailscale 已登录，正在重新执行完整连接验收"
-                    engine?.applySystemStatus("checking", connectedAt: connection.connectedDate)
+                    engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
                     armDataPathWatchdog(
                         probeID: probeID,
                         attemptID: attemptID,
@@ -2080,18 +2081,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         var ms: Int = 0
     }
 
-    private func probeConfiguredDataPath(plan: TunnelAcceptancePlan) async -> ProbeOutcome {
-        var addresses: [String: String] = [:]
-        var unavailable: [TunnelAcceptanceTarget] = []
-        var probeFailures: [String] = []
-        // 各线路同时试拨：一条慢线路不再把后面几条和分流测试一起拖进看门狗。
-        // 线路探针直接经指定 outbound 出去、不走路由匹配，不影响下面的分流命中计数。
+    private func probeLines(_ targets: [TunnelAcceptanceTarget]) async -> [String: OutboundAddressProbeResult] {
         recordProbeCheckpoint("开始线路试拨")
         var results: [String: OutboundAddressProbeResult] = [:]
-        var pendingLabels = plan.targets.map(\.label)
-        if !Task.isCancelled { dataPathProbeStage = Self.lineProbeStage(pendingLabels) }
         await withTaskGroup(of: (TunnelAcceptanceTarget, OutboundAddressProbeResult).self) { group in
-            for target in plan.targets {
+            for target in targets {
                 group.addTask { [weak self] in
                     guard let self else {
                         return (target, OutboundAddressProbeResult(address: nil, failure: "线路探针不可用"))
@@ -2103,36 +2097,25 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 }
             }
             for await (target, probe) in group {
+                guard !Task.isCancelled else { continue }
                 results[target.tag] = probe
                 recordTimeline(
                     "check.line",
                     result: probe.address != nil ? .ok
-                        : (Task.isCancelled ? .cancelled : ConnectionTimeline.classify(probeFailure: probe.failure)),
+                        : ConnectionTimeline.classify(probeFailure: probe.failure),
                     ms: probe.ms,
                     detail: target.label + (probe.failure.map { " " + ConnectionTimeline.failureKeywords($0) } ?? ""))
-                if let index = pendingLabels.firstIndex(of: target.label) {
-                    pendingLabels.remove(at: index)
-                }
-                if !Task.isCancelled, !pendingLabels.isEmpty {
-                    dataPathProbeStage = Self.lineProbeStage(pendingLabels)
-                }
             }
         }
-        guard !Task.isCancelled else {
-            return .cancelled
-        }
-        for target in plan.targets {
-            let probe = results[target.tag]
-            if let address = probe?.address {
-                addresses[target.tag] = address
-            } else {
-                unavailable.append(target)
-                if let failure = probe?.failure {
-                    probeFailures.append("\(target.label)：\(failure)")
-                }
-            }
-        }
-        recordProbeCheckpoint("线路试拨成功 \(addresses.count)/\(plan.targets.count)")
+        return results
+    }
+
+    private func probeConfiguredDataPath(plan: TunnelAcceptancePlan) async -> ProbeOutcome {
+        var addresses: [String: String] = [:]
+        var unavailable: [TunnelAcceptanceTarget] = []
+        var probeFailures: [String] = []
+        // 指定出口试拨绕过路由匹配，可与计数快照之间的系统请求并行。
+        async let lineResults = probeLines(plan.targets)
         dataPathProbeStage = "读取测试前分流命中计数"
         let baselineStartedAt = ProcessInfo.processInfo.systemUptime
         let baseline = await requestRoutingProbeSnapshot()
@@ -2188,6 +2171,21 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 )
             }
         } ?? false
+        dataPathProbeStage = "等待线路试拨"
+        let results = await lineResults
+        guard !Task.isCancelled else { return .cancelled }
+        for target in plan.targets {
+            let probe = results[target.tag]
+            if let address = probe?.address {
+                addresses[target.tag] = address
+            } else {
+                unavailable.append(target)
+                if let failure = probe?.failure {
+                    probeFailures.append("\(target.label)：\(failure)")
+                }
+            }
+        }
+        recordProbeCheckpoint("线路试拨成功 \(addresses.count)/\(plan.targets.count)")
         let result = ConfiguredDataPathResult(
             targetAddresses: addresses,
             targets: plan.targets,
@@ -2232,10 +2230,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 + failureDetails,
             timelineDetail: timelineDetail
         )
-    }
-
-    static func lineProbeStage(_ pendingLabels: [String]) -> String {
-        "试拨线路，等待 " + pendingLabels.joined(separator: "、")
     }
 
     /// 直接让 libbox 通过指定 outbound 访问出口地址，这一层绕过 route matcher，
@@ -3024,7 +3018,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         if pendingOnDemandEnvelope != nil {
             pendingOnDemandEnvelope = envelope
         }
-        guard plan != activeAcceptancePlan else { return }
+        guard plan != activeAcceptancePlan else {
+            if dataPathVerified { engine?.dataPathDidPass.send() }
+            return
+        }
         activeAcceptancePlan = plan
         guard let connection = manager?.connection, connection.status == .connected else { return }
         // 切换不断开连接：自检没通过时保留连接并提示，不按首次连接的规则断开。

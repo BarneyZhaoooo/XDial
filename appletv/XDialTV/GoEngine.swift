@@ -58,6 +58,8 @@ final class GoEngine: ObservableObject, TunnelEngine {
     @Published var dataPathRechecking = false
     @Published private(set) var connectedAt: Date?
     var statusPublisher: AnyPublisher<String, Never> { $status.eraseToAnyPublisher() }
+    let dataPathDidPass = PassthroughSubject<Void, Never>()
+    var dataPathVerifiedPublisher: AnyPublisher<Void, Never> { dataPathDidPass.eraseToAnyPublisher() }
     private var automaticReconnectSuppressed = false
 
     // 订阅解析结果直接用 AppState.swift 里定义的顶层 `ParseResult`(与 macOS 版
@@ -66,7 +68,7 @@ final class GoEngine: ObservableObject, TunnelEngine {
 
     var isConnected: Bool { status == "connected" }
     var isBusy: Bool {
-        status == "connecting" || status == "checking" ||
+        status == "connecting" ||
         status == "disconnecting" || status == "reconnecting"
     }
 

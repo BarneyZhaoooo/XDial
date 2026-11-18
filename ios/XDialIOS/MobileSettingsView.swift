@@ -236,7 +236,6 @@ struct MobileSettingsView: View {
         switch app.engine.status {
         case "connected": return app.tr("已连接", "Connected")
         case "connecting": return app.tr("正在连接", "Connecting")
-        case "checking": return app.tr("正在验证数据链路", "Checking data path")
         case "action-required": return app.tr("需要登录 Tailscale", "Tailscale sign-in required")
         case "disconnecting": return app.tr("正在断开", "Disconnecting")
         case "reconnecting": return app.tr("正在重连", "Reconnecting")

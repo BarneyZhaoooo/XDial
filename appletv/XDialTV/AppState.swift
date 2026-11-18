@@ -90,6 +90,7 @@ protocol TunnelEngine: AnyObject {
     /// `objectWillChange` 在属性赋值前发送，不能用它读取新的状态；状态机必须订阅
     /// 这个赋值后的流，否则一次同步的 connected -> disconnected 会被合并丢失。
     var statusPublisher: AnyPublisher<String, Never> { get }
+    var dataPathVerifiedPublisher: AnyPublisher<Void, Never> { get }
 
     func start(profileJSON: String)
     func stop()
@@ -127,6 +128,7 @@ protocol TunnelEngine: AnyObject {
 }
 
 extension TunnelEngine {
+    var dataPathVerifiedPublisher: AnyPublisher<Void, Never> { Empty().eraseToAnyPublisher() }
     var dataPathRechecking: Bool { false }
     var connectedAt: Date? { nil }
     var statusPublisher: AnyPublisher<String, Never> {
@@ -542,6 +544,7 @@ final class AppState: ObservableObject {
     /// 通过 init(engine:) 或后续绑定替换成真实引擎。
     let engine: TunnelEngine
     private var engineSub: AnyCancellable?
+    private var verificationSub: AnyCancellable?
     private var engineStatusSub: AnyCancellable?
 
     /// 系统连接管理层必须与 AppState 同生命周期；其反向 engine 引用是 weak，不成环。
@@ -1143,7 +1146,6 @@ final class AppState: ObservableObject {
         switch engine.status {
         case "connected": return tr("已连接", "Connected")
         case "connecting": return tr("正在连接…", "Connecting…")
-        case "checking": return tr("正在验证数据链路…", "Checking data path…")
         case "action-required": return tr("需要登录 Tailscale", "Tailscale Sign-in Required")
         case "disconnecting": return tr("正在断开…", "Disconnecting…")
         case "reconnecting": return tr("正在重连…", "Reconnecting…")
@@ -1208,6 +1210,9 @@ final class AppState: ObservableObject {
             guard let self else { return }
             self.objectWillChange.send()
         }
+        verificationSub = engine.dataPathVerifiedPublisher.sink { [weak self] in
+            self?.markUsedLinesVerified()
+        }
         engineStatusSub = engine.statusPublisher
             .removeDuplicates()
             .sink { [weak self] status in
@@ -1241,9 +1246,6 @@ final class AppState: ObservableObject {
             autoReconnectTask?.cancel()
             autoReconnectTask = nil
             disconnectRequested = false
-            // Tailscale 配置会话运行的是隔离副本，不代表用户当前场景的数据面已通过验收。
-            // 只有正式连接成功后，才把当前场景实际使用的线路标记为已验证。
-            markUsedLinesVerified()
             #if os(iOS)
             refreshScenarioCatalog()
             #endif
@@ -1291,7 +1293,7 @@ final class AppState: ObservableObject {
             return
         }
         let wasUnexpected = hadRunningConfiguration
-            || ["connected", "checking", "action-required", "reconnecting"].contains(previous)
+            || ["connected", "action-required", "reconnecting"].contains(previous)
             || (previous == "connecting" && autoReconnectAttempt > 0)
         // 系统已经接管时不再从主 App 同时 start，避免两个恢复路径竞争同一会话。
         guard tunnelManager?.systemOnDemandActive != true else { return }
@@ -1368,7 +1370,7 @@ final class AppState: ObservableObject {
     }
 
     private func markUsedLinesVerified() {
-        guard let s = activeScenario else { return }
+        guard !hasPendingRuntimeChanges, let s = activeScenario else { return }
 
         var usedIDs = Set(s.bindings.map { $0.lineID })
         if !s.defaultLineID.isEmpty { usedIDs.insert(s.defaultLineID) }
@@ -3116,7 +3118,6 @@ extension AppState {
         }
         updatePendingRuntimeChanges()
         if base != nil || snapshotScenario != running {
-            markUsedLinesVerified()
             tunnelManager?.adoptSwitchedScenario(running)
         }
     }
