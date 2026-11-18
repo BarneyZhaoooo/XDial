@@ -30,6 +30,11 @@ final class TunnelActivityUpdater: @unchecked Sendable {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
+                // 状态采样不依赖流量是否变化，也不依赖引擎能否提供计数。
+                let activities = Activity<XDialConnectionAttributes>.activities
+                report.sawActivities(activities.count)
+                report.lastActivityState = activities.isEmpty ? "-" : activities
+                    .map { String(describing: $0.activityState) }.sorted().joined(separator: ",")
                 report.flushIfDue()
                 guard let json = readTotals(),
                       let totals = try? JSONDecoder().decode(Totals.self, from: Data(json.utf8)) else {
@@ -47,9 +52,6 @@ final class TunnelActivityUpdater: @unchecked Sendable {
                 let down = Double(totals.downloadBytes - last.totals.downloadBytes) / elapsed
                 let up = Double(totals.uploadBytes - last.totals.uploadBytes) / elapsed
 
-                let activities = Activity<XDialConnectionAttributes>.activities
-                report.sawActivities(activities.count)
-
                 // 显示出来的数字没变就不更新，省电。
                 let shown = (XDialSpeedFormat.full(down), XDialSpeedFormat.full(up))
                 if let lastShown, lastShown == shown {
@@ -64,7 +66,6 @@ final class TunnelActivityUpdater: @unchecked Sendable {
                         report.notConnected += 1
                         continue
                     }
-                    report.lastActivityState = String(describing: activity.activityState)
                     state.downloadBytesPerSecond = down
                     state.uploadBytesPerSecond = up
                     let started = Date()
@@ -157,8 +158,11 @@ private struct UpdateReport {
             state=\(state, privacy: .public)
             """)
         let visible = visibleActivities
+        let lastSent = lastSentAt
         self = UpdateReport()
         visibleActivities = visible
+        // 上一次发送属于整段连接，不能随统计窗口清空，否则长时间停更会被漏掉。
+        lastSentAt = lastSent
         windowStart = now
     }
 }
