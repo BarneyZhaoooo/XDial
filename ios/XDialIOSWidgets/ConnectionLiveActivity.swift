@@ -7,7 +7,7 @@ import WidgetKit
 struct ConnectionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: XDialConnectionAttributes.self) { context in
-            LockScreenView(attributes: context.attributes, state: context.state)
+            XDialActivityLockScreenView(state: context.state, tint: Self.tint(for: context.state.phase))
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -23,6 +23,12 @@ struct ConnectionLiveActivity: Widget {
                         Text(context.state.title)
                             .font(.headline)
                             .lineLimit(1)
+                        if let detail = context.state.detail, !detail.isEmpty {
+                            Text(detail)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(tint)
+                                .lineLimit(1)
+                        }
                         Text(context.state.scenarioName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -31,7 +37,7 @@ struct ConnectionLiveActivity: Widget {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    ElapsedText(connectedAt: context.state.connectedAt)
+                    XDialElapsedText(connectedAt: context.state.connectedAt)
                         .font(.system(.title3, design: .rounded).monospacedDigit())
                         .foregroundStyle(tint)
                         .frame(maxHeight: .infinity)
@@ -68,61 +74,6 @@ struct ConnectionLiveActivity: Widget {
         case .working: return Color(red: 0.64, green: 0.70, blue: 0.74)
         case .connected: return Color(red: 0.44, green: 0.80, blue: 0.61)
         case .attention: return Color(red: 0.88, green: 0.70, blue: 0.40)
-        }
-    }
-}
-
-private struct LockScreenView: View {
-    let attributes: XDialConnectionAttributes
-    let state: XDialConnectionAttributes.ContentState
-
-    var body: some View {
-        let tint = ConnectionLiveActivity.tint(for: state.phase)
-        HStack(spacing: 14) {
-            DialGlyph(filled: state.phase != .working, color: tint)
-                .frame(width: 44, height: 44)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(state.scenarioName)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                ElapsedText(connectedAt: state.connectedAt)
-                    .font(.system(.title3, design: .rounded).monospacedDigit())
-                    .foregroundStyle(tint)
-                if state.connectedAt != nil {
-                    HStack(spacing: 10) {
-                        SpeedLabel(symbol: "arrow.down", value: state.downloadBytesPerSecond)
-                        SpeedLabel(symbol: "arrow.up", value: state.uploadBytesPerSecond)
-                    }
-                    .foregroundStyle(.white.opacity(0.75))
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
-    }
-}
-
-/// 连上以后的计时。系统自己每秒刷新，不需要 App 在后台更新。
-private struct ElapsedText: View {
-    let connectedAt: Date?
-
-    var body: some View {
-        if let connectedAt {
-            Text(timerInterval: connectedAt...Date.distantFuture, countsDown: false)
-                .multilineTextAlignment(.trailing)
-        } else {
-            Text("…")
         }
     }
 }
@@ -222,28 +173,11 @@ private struct SpeedRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SpeedLabel(symbol: "arrow.down", value: state.downloadBytesPerSecond, tint: tint)
+            XDialSpeedLabel(symbol: "arrow.down", value: state.downloadBytesPerSecond, tint: tint)
                 .frame(maxWidth: .infinity)
-            SpeedLabel(symbol: "arrow.up", value: state.uploadBytesPerSecond, tint: tint)
+            XDialSpeedLabel(symbol: "arrow.up", value: state.uploadBytesPerSecond, tint: tint)
                 .frame(maxWidth: .infinity)
         }
         .font(.subheadline)
-    }
-}
-
-private struct SpeedLabel: View {
-    let symbol: String
-    let value: Double?
-    var tint: Color?
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(tint ?? .primary)
-            Text(XDialSpeedFormat.full(value))
-                .font(.system(.footnote, design: .rounded).monospacedDigit())
-                .contentTransition(.numericText())
-        }
     }
 }

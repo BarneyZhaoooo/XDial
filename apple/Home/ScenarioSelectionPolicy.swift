@@ -42,6 +42,13 @@ enum ScenarioNetworkIdentity {
             .map { String(format: "%02x", $0) }.joined()
         return (path ?? "") + ":wifi:" + identity
     }
+
+    /// Short, non-reversible label for "which network was this" in diagnostics:
+    /// equal on the same network, without gateway addresses or the Wi-Fi name.
+    static func diagnosticToken(path: String?, ssid: String?) -> String {
+        SHA256.hash(data: Data(key(path: path, ssid: ssid).utf8))
+            .prefix(3).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 /// 一次判断的结论：选哪个场景，凭什么。

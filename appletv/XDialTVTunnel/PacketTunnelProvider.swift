@@ -2382,17 +2382,23 @@ extension PacketTunnelProvider {
         let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         var pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
+        let networkToken = ScenarioNetworkIdentity.diagnosticToken(path: network, ssid: ssid)
+        var evidence = RegionProbeEvidence()
         if pick == nil, !policy.regionScenarios.isEmpty {
             var probeError: NSError?
             let regionStartedAt = ProcessInfo.processInfo.systemUptime
-            let code = engine.probeOutboundCountry("direct", timeoutMS: 8_000, error: &probeError)
-            let regionMS = ConnectionTimeline.elapsedMilliseconds(since: regionStartedAt)
+            let raw = engine.probeOutboundCountryEvidence("direct", timeoutMS: 8_000, error: &probeError)
+            evidence = RegionProbeEvidence.decode(raw)
+            evidence.ms = evidence.ms ?? ConnectionTimeline.elapsedMilliseconds(since: regionStartedAt)
+            let code = evidence.code ?? ""
+            let basis = "path=direct network=\(networkToken) service=\(evidence.endpoint ?? "none")"
+                + (evidence.attempts.isEmpty ? "" : " failed=\(evidence.attempts)")
             if let probeError {
                 let failure = probeError.localizedDescription
                 recordTimeline("region_probe", result: ConnectionTimeline.classify(probeFailure: failure),
-                               ms: regionMS, detail: ConnectionTimeline.failureKeywords(failure))
+                               ms: evidence.ms, detail: basis + " " + ConnectionTimeline.failureKeywords(failure))
             } else {
-                recordTimeline("region_probe", result: .ok, ms: regionMS, detail: "region=\(code)")
+                recordTimeline("region_probe", result: .ok, ms: evidence.ms, detail: "region=\(code) " + basis)
             }
             if probeError == nil, code.count == 2, code.allSatisfy({ $0.isASCII && $0.isUppercase }) {
                 exit = .found(code: code, viaTunnel: true)
@@ -2416,6 +2422,11 @@ extension PacketTunnelProvider {
             picked: pick != nil,
             byTunnel: true
         )
+        var survey = record
+        survey.exitEndpoint = evidence.endpoint
+        survey.exitAttempts = evidence.attempts.isEmpty ? nil : evidence.attempts
+        survey.exitMS = evidence.ms
+        survey.networkToken = networkToken
 
         let validation: @Sendable () -> Bool = { [weak self] in
             guard let self, case .available(let latest) = ScenarioSwitchCatalogStore.load(),
@@ -2426,10 +2437,15 @@ extension PacketTunnelProvider {
             self.scenarioLock.unlock()
             return valid && self.currentScenarioState().lastSwitch == previousSwitch && self.readCurrentSSID() == ssid
         }
-        guard validation() else { completion(currentScenarioState()); return }
+        guard validation() else {
+            recordTimeline("scenario_decision_discarded", result: .cancelled,
+                           detail: "network or catalog changed during the lookup")
+            completion(currentScenarioState())
+            return
+        }
         var shouldSwitch = false
         let state = updateScenarioState { state in
-            state.lastSurvey = record
+            state.lastSurvey = survey
             // 这次没判断出来（比如刚好断网）就保留上一次的结论。
             guard let pick else { return }
             state.lastPick = pick
@@ -2555,4 +2571,26 @@ private func providerErrorStatic(_ code: Int, _ message: String) -> NSError {
     #endif
     return NSError(domain: domain, code: code,
             userInfo: [NSLocalizedDescriptionKey: message])
+}
+
+/// Evidence for one region lookup, decoded from `ProbeOutboundCountryEvidence`.
+struct RegionProbeEvidence {
+    var code: String?
+    var endpoint: String?
+    /// "service:code" for each attempt that failed before the answer.
+    var attempts = ""
+    var ms: Int?
+
+    static func decode(_ raw: String) -> RegionProbeEvidence {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return RegionProbeEvidence()
+        }
+        var evidence = RegionProbeEvidence()
+        evidence.code = (object["code"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        evidence.endpoint = (object["endpoint"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        evidence.attempts = (object["attempts"] as? [String] ?? []).joined(separator: ",")
+        evidence.ms = (object["duration_ms"] as? NSNumber)?.intValue
+        return evidence
+    }
 }

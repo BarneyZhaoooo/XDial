@@ -400,7 +400,9 @@ enum MobileDiagnosticsService {
         }
         if let scenarioName {
             let safe = redacted(scenarioName, using: profile) ?? scenarioName
-            sections.append((isChinese ? "当前场景：" : "Current scenario: ") + safe)
+            // The selected scenario is a choice; the verified exit region is in the
+            // automatic-scenario line with its evidence.
+            sections.append((isChinese ? "当前所选场景（不是地区检测结果）：" : "Selected scenario (not a region check result): ") + safe)
         }
         if let timeline {
             let rendered = ConnectionTimelineReport.render(timeline, isChinese: isChinese)

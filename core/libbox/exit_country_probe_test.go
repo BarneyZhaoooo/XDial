@@ -5,6 +5,7 @@ package libbox
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,5 +119,25 @@ func TestProbeOutboundCountryRequiresARunningConnection(t *testing.T) {
 	instance := &Libbox{}
 	if _, err := instance.ProbeOutboundCountry("direct", 5_000); err == nil {
 		t.Fatal("probe ran without a running connection")
+	}
+}
+
+func TestProbeOutboundCountryEvidenceIsReturnedOnFailure(t *testing.T) {
+	instance := &Libbox{}
+	raw, err := instance.ProbeOutboundCountryEvidence("direct", 5_000)
+	if err == nil {
+		t.Fatal("probe ran without a running connection")
+	}
+	var evidence outboundCountryEvidence
+	if jsonErr := json.Unmarshal([]byte(raw), &evidence); jsonErr != nil {
+		t.Fatalf("evidence is not JSON: %q", raw)
+	}
+	if evidence.Code != "" || evidence.Endpoint != "" {
+		t.Fatalf("failed probe reported a region: %+v", evidence)
+	}
+	for _, label := range []string{outboundCountryProbeEndpoints[0].label, outboundCountryProbeEndpoints[1].label} {
+		if label == "" {
+			t.Fatal("country endpoint has no diagnostic label")
+		}
 	}
 }

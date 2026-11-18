@@ -154,7 +154,7 @@ final class ConnectionTimelineTests: XCTestCase {
             environment: "1.2 (34) · iOS 27.3 · iPhone", scenarioName: "在国内",
             timeline: file, isChinese: true)
         XCTAssertTrue(report.contains("环境：1.2 (34) · iOS 27.3 · iPhone"))
-        XCTAssertTrue(report.contains("当前场景：在国内"))
+        XCTAssertTrue(report.contains("当前所选场景（不是地区检测结果）：在国内"))
         XCTAssertTrue(report.contains("app.check.line connect 0.9s"))
         XCTAssertFalse(report.contains("hk.private.example"))
         XCTAssertFalse(report.contains("s3cret-pass"))

@@ -306,6 +306,10 @@ protocol TunnelManaging: AnyObject {
 struct ExitCountryProbeResult: Equatable, Sendable {
     let code: String?
     let failure: String?
+    /// Which service answered and what failed first; diagnostics only.
+    var endpoint: String? = nil
+    var attempts: String? = nil
+    var ms: Int? = nil
 }
 
 extension TunnelManaging {
