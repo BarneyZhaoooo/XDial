@@ -131,44 +131,25 @@ extension AppState {
         do { ledger = try SeedProfileLedger.load() }
         catch { profileOperationError = "无法读取预置配置记录：\(error.localizedDescription)"; return }
         let entry = ledger.entries[seed.name]
-
-        let profileID = createdProfileID ?? entry?.profileID ?? UUID().uuidString.lowercased()
-        if createdProfileID == nil, let entry, entry.isNewer(than: seed) {
-            regionScenarioTargets = entry.regionTargets ?? [:]
+        let original = profileLibrary
+        let result = ProfileLibraryMigration.applying(seed, createdProfileID: createdProfileID, entry: entry, to: original,
+                                                      currentRegionTargets: regionScenarioTargets) {
+            try ProfileDocumentService.importDocument($0, profileID: $1)
+        }
+        if let targets = result.regionTargets { regionScenarioTargets = targets }
+        if let failure = result.failure {
+            profileOperationError = (entry == nil ? "未能加入预置配置「\(seed.name)」：" : "未能更新「\(seed.name)」：")
+                + failure.localizedDescription
             return
         }
-        if !seed.regions.isEmpty,
-           let imported = try? ProfileDocumentService.importDocument(seed.text, profileID: profileID) {
-            regionScenarioTargets = seed.regionTargets(in: imported)
-        }
-        guard entry?.digest != seed.digest else { return }
-        if createdProfileID == nil {
-            let original = profileLibrary
-            do {
-                if entry != nil && !original.profiles.contains(where: { $0.id == profileID }) { return }
-                let incoming = try ProfileDocumentService.importDocument(seed.text, profileID: profileID)
-                if seed.revision != nil {
-                    // A ledger digest without the mobile prefix means the old desktop preset created this Profile.
-                    let fromLegacySeed = entry.map { !$0.digest.hasPrefix("mobile-v1-") } ?? false
-                    profileLibrary = try ProfileLibraryMigration.addingMobileSeed(incoming, named: seed.name, id: profileID,
-                                                                                  to: original, aligningLegacySeed: fromLegacySeed)
-                } else if entry != nil {
-                    profileLibrary = try ProfileLibraryMigration.refreshingSeed(incoming, profileID: profileID,
-                                                                                named: seed.name, in: original)
-                } else {
-                    profileLibrary = try ProfileLibraryMigration.merging(incoming, named: seed.name, id: profileID, into: original)
-                }
-            } catch {
-                profileLibrary = original
-                profileOperationError = (entry == nil ? "未能加入预置配置「\(seed.name)」：" : "未能更新「\(seed.name)」：")
-                    + error.localizedDescription
-                return
-            }
+        if let library = result.library {
+            profileLibrary = library
             guard persistProfileLibrary() else { profileLibrary = original; return }
             profile = profileLibrary.snapshot()
         }
+        guard let applied = result.entry else { return }
         var updated = ledger
-        updated.entries[seed.name] = .init(profileID: profileID, digest: seed.digest, regionTargets: regionScenarioTargets)
+        updated.entries[seed.name] = applied
         do { try updated.save() }
         catch { profileOperationError = "无法保存预置配置记录：\(error.localizedDescription)" }
     }

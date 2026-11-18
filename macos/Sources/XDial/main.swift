@@ -8,6 +8,10 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-settings-preview")
    CommandLine.arguments.indices.contains(index + 1) {
     MainActor.assumeIsolated { SettingsLayoutPreview.run(directory: CommandLine.arguments[index + 1]) }
 }
+if let index = CommandLine.arguments.firstIndex(of: "--check-seed-acceptance"),
+   CommandLine.arguments.indices.contains(index + 2) {
+    SeedAcceptance.run(olderSeedDirectory: CommandLine.arguments[index + 1], output: CommandLine.arguments[index + 2])
+}
 #endif
 
 #if !XDIAL_STORE

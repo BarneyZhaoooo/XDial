@@ -3,12 +3,15 @@
 //	xdial-seed legacy-document --authority DIR [--write FILE | --check FILE]
 //	xdial-seed check --authority DIR --platform PLATFORM --bundle APP [--profile-name NAME]
 //	xdial-seed fingerprint FILE
+//	xdial-seed effective --authority DIR --report FILE [--name-prefix PREFIX]
 //
 // DIR is the private packaging repository's preset directory: Seed.json (the
 // authority, mobile seed format) and RuleSets/ (offline rule files with
 // manifest.json). check exits non-zero and lists every difference in routing
 // meaning between the package and the authority, except capability limits the
-// platform declares below. Nothing here contains company configuration.
+// platform declares below. effective does the same for the configuration an app
+// actually applied (a report from XDial --check-seed-acceptance). Nothing here
+// contains company configuration.
 package main
 
 import (
@@ -21,6 +24,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kafeifei/xdial/core/config"
 	"github.com/kafeifei/xdial/core/seedcheck"
 )
 
@@ -103,6 +107,8 @@ func main() {
 		err = check(os.Args[2:])
 	case "fingerprint":
 		err = fingerprint(os.Args[2:])
+	case "effective":
+		err = effective(os.Args[2:])
 	default:
 		usage()
 	}
@@ -249,5 +255,76 @@ func fingerprint(args []string) error {
 	}
 	out, _ := json.MarshalIndent(seedcheck.Fingerprint(seed, nil), "", "  ")
 	fmt.Println(string(out))
+	return nil
+}
+
+// effective compares the configuration an app applied with the authority. Only
+// objects the preset declares are compared; the user's own Profiles stay out of
+// it and are counted. The active Scenario is the user's choice and offline rule
+// files are checked on the package, so both are skipped. A Profile that joined
+// beside others shows its Scenario names with a prefix, which --name-prefix removes.
+func effective(args []string) error {
+	set := flag.NewFlagSet("effective", flag.ContinueOnError)
+	directory := set.String("authority", "", "preset directory")
+	path := set.String("report", "", "report written by XDial --check-seed-acceptance")
+	prefix := set.String("name-prefix", "", "Scenario name prefix to remove")
+	if err := set.Parse(args); err != nil {
+		return err
+	}
+	seed, want, _, err := authority(*directory)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(*path)
+	if err != nil {
+		return err
+	}
+	var report struct {
+		Profile       config.Profile    `json:"profile"`
+		RegionTargets map[string]string `json:"regionTargets"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return fmt.Errorf("invalid report: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, line := range seed.Profile.Lines {
+		ids["line:"+line.ID] = true
+	}
+	for _, rule := range seed.Profile.RuleSets {
+		ids["rule:"+rule.ID] = true
+	}
+	for _, scenario := range seed.Profile.Scenarios {
+		ids["scenario:"+scenario.ID] = true
+	}
+	applied := config.Profile{}
+	others := 0
+	for _, line := range report.Profile.Lines {
+		if ids["line:"+line.ID] {
+			applied.Lines = append(applied.Lines, line)
+		}
+	}
+	for _, rule := range report.Profile.RuleSets {
+		if ids["rule:"+rule.ID] {
+			applied.RuleSets = append(applied.RuleSets, rule)
+		}
+	}
+	for _, scenario := range report.Profile.Scenarios {
+		if !ids["scenario:"+scenario.ID] {
+			others++
+			continue
+		}
+		scenario.Name = strings.TrimPrefix(scenario.Name, *prefix)
+		applied.Scenarios = append(applied.Scenarios, scenario)
+	}
+	got := seedcheck.Fingerprint(&seedcheck.Seed{Profile: &applied, Regions: report.RegionTargets}, nil)
+	differences := seedcheck.Diff(want, got, []string{"active_scenario", "offline_rules"})
+	if len(differences) > 0 {
+		for _, d := range differences {
+			fmt.Println("difference:", d)
+		}
+		return fmt.Errorf("the applied configuration differs from the authority in %d places", len(differences))
+	}
+	fmt.Printf("applied configuration routes like the authority: %d Scenarios, %d regions; %d Scenarios of the user's own kept\n",
+		len(applied.Scenarios), len(report.RegionTargets), others)
 	return nil
 }

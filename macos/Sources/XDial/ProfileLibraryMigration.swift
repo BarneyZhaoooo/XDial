@@ -77,6 +77,67 @@ enum ProfileLibraryMigration {
         return result
     }
 
+    /// What applying the bundled seed at launch decided. `library` is nil when the
+    /// library stays as it is, `entry` is nil when the ledger stays as it is, and
+    /// `regionTargets` is nil when the current region targets stay.
+    struct SeedApplication {
+        var library: ProfileLibrary?
+        var entry: SeedProfileLedger.Entry?
+        var regionTargets: [String: String]?
+        var failure: Error?
+    }
+
+    /// The launch-time seed decision, without storage, so tests run exactly what the app runs.
+    /// The seed joins the shared library once and later builds update what it owns.
+    /// A seed Profile the user deleted is not added again.
+    static func applying(_ seed: SeedProfile, createdProfileID: String?, entry: SeedProfileLedger.Entry?,
+                         to library: ProfileLibrary, currentRegionTargets: [String: String],
+                         importDocument: (String, String) throws -> Profile) -> SeedApplication {
+        let profileID = createdProfileID ?? entry?.profileID ?? UUID().uuidString.lowercased()
+        if createdProfileID == nil, let entry, entry.isNewer(than: seed) {
+            return SeedApplication(regionTargets: entry.regionTargets ?? [:])
+        }
+        var regions: [String: String]?
+        if !seed.regions.isEmpty, let imported = try? importDocument(seed.text, profileID) {
+            regions = seed.regionTargets(in: imported)
+        }
+        // Region targets name imported Scenario IDs; when they collided with IDs already in
+        // the library, the Profile records the scoped IDs it uses instead.
+        func scoped(_ library: ProfileLibrary) -> [String: String]? {
+            guard let regions, let mapping = library.profiles.first(where: { $0.id == profileID })?.resourceIDs else {
+                return regions
+            }
+            return regions.mapValues { mapping[$0] ?? $0 }
+        }
+        guard entry?.digest != seed.digest else { return SeedApplication(regionTargets: scoped(library)) }
+        var updated: ProfileLibrary?
+        if createdProfileID == nil {
+            if entry != nil && !library.profiles.contains(where: { $0.id == profileID }) {
+                return SeedApplication(regionTargets: scoped(library))
+            }
+            do {
+                let incoming = try importDocument(seed.text, profileID)
+                if seed.revision != nil {
+                    // A ledger digest without the mobile prefix means the old desktop preset created this Profile.
+                    let fromLegacySeed = entry.map { !$0.digest.hasPrefix("mobile-v1-") } ?? false
+                    updated = try addingMobileSeed(incoming, named: seed.name, id: profileID, to: library,
+                                                   aligningLegacySeed: fromLegacySeed)
+                } else if entry != nil {
+                    updated = try refreshingSeed(incoming, profileID: profileID, named: seed.name, in: library)
+                } else {
+                    updated = try merging(incoming, named: seed.name, id: profileID, into: library)
+                }
+            } catch {
+                return SeedApplication(regionTargets: regions, failure: error)
+            }
+        }
+        let targets = scoped(updated ?? library)
+        return SeedApplication(library: updated,
+                               entry: .init(profileID: profileID, digest: seed.digest,
+                                            regionTargets: targets ?? currentRegionTargets),
+                               regionTargets: targets)
+    }
+
     /// Apply one mobile seed revision using the existing global resource owners.
     /// Existing routes, credentials and the selected Scenario are user choices.
     /// `aligningLegacySeed` is set once, when a Profile created by the older
