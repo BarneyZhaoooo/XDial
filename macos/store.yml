@@ -87,6 +87,27 @@ targets:
       PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Provider
       CODE_SIGN_ENTITLEMENTS: Store/Provider.entitlements
       SKIP_INSTALL: YES
+      # The rule embed reads the private config directory named at build time.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      # Same as the Developer ID extension: the company's bundled China rule
+      # sets let the first connection in China succeed when downloads fail.
+      - name: Embed enterprise offline rules
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          source_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-${SRCROOT}/../ios/PrivateConfig}/RuleSets"
+          destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/SeedProfile/RuleSets"
+          rm -rf "${destination}"
+          if [ -f "${source_dir}/manifest.json" ]; then
+            mkdir -p "${destination}"
+            cp "${source_dir}/manifest.json" "${destination}/"
+            for rule in "${source_dir}"/*.srs; do
+              if [ -f "${rule}" ]; then cp "${rule}" "${destination}/"; fi
+            done
+          else
+            rmdir "${destination%/*}" 2>/dev/null || true
+          fi
     dependencies:
       - framework: ../build/frameworks/macos/Libbox.xcframework
         embed: false

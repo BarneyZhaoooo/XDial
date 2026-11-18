@@ -82,6 +82,9 @@ enum ProfileLibraryMigration {
     static func addingMobileSeed(_ incoming: Profile, named name: String, id: String,
                                  to original: ProfileLibrary) throws -> ProfileLibrary {
         var library = original
+        let existing = library.profiles.first(where: { $0.id == id })
+        // A seed inserted beside other Profiles may have had colliding IDs scoped.
+        let incoming = ProfileLibrary.remap(incoming, using: existing?.resourceIDs ?? [:])
         if !library.profiles.contains(where: { $0.id == id }) {
             library.profiles.append(ProfileRecord(id: id, name: name, profile: Profile()))
         }
@@ -101,6 +104,10 @@ enum ProfileLibraryMigration {
         for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
             draft.ruleSets.append(rule)
         }
+        if let previous = existing?.baseline {
+            draft.scenarios = refreshedSeedScenarios(draft.scenarios, previous: previous, seed: seed,
+                                                     owned: { library.scenarioSources[$0] == id }, prefix: name + " · ")
+        }
         var claimed = Set(draft.scenarios.flatMap(\.matchSSIDs))
         for var scene in seed.scenarios where !draft.scenarios.contains(where: { $0.id == scene.id }) {
             scene.matchSSIDs.removeAll { !claimed.insert($0).inserted }
@@ -116,6 +123,38 @@ enum ProfileLibraryMigration {
             library.profiles[index].baseline = seed
         }
         return try library.validated()
+    }
+
+    /// Three-way update of the Scenarios a seed created: each field takes the new
+    /// seed's value only while it still equals what the previous seed shipped.
+    /// Anything the user changed (name, exits, rules, icon, Wi-Fi) is kept, so
+    /// applying the same seed again changes nothing.
+    static func refreshedSeedScenarios(_ scenarios: [Scenario], previous: Profile, seed: Profile,
+                                       owned: (String) -> Bool, prefix: String) -> [Scenario] {
+        var result = scenarios
+        for source in seed.scenarios {
+            guard owned(source.id),
+                  let old = previous.scenarios.first(where: { $0.id == source.id }),
+                  let index = result.firstIndex(where: { $0.id == source.id }) else { continue }
+            var scene = result[index]
+            if scene.name == old.name { scene.name = source.name }
+            else if scene.name == prefix + old.name { scene.name = prefix + source.name }
+            if scene.defaultLineID == old.defaultLineID, scene.defaultSubscriptionID == old.defaultSubscriptionID {
+                scene.defaultLineID = source.defaultLineID
+                scene.defaultSubscriptionID = source.defaultSubscriptionID
+            }
+            if scene.bindings == old.bindings, scene.matchOrder == old.matchOrder {
+                scene.bindings = source.bindings
+                scene.matchOrder = source.matchOrder
+            }
+            if scene.iconOverride == old.iconOverride { scene.iconOverride = source.iconOverride }
+            if Set(scene.matchSSIDs) == Set(old.matchSSIDs) {
+                let others = Set(result.filter { $0.id != scene.id }.flatMap(\.matchSSIDs))
+                scene.matchSSIDs = source.matchSSIDs.filter { !others.contains($0) }
+            }
+            result[index] = scene
+        }
+        return result
     }
 
     /// A newer seed overwrites the content it owns, like a subscription refresh, but
