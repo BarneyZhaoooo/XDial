@@ -169,6 +169,12 @@ enum ProfileLibraryMigration {
         for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
             draft.ruleSets.append(rule)
         }
+        // Scenarios added later follow the names the Profile's own Scenarios use: a seed that
+        // joined beside other Profiles shows "<name> · <Scenario>" (see appendTemplates).
+        // Decided before alignment renames anything.
+        let prefixed = seedScenariosArePrefixed(draft.scenarios, baseline: existing?.baseline, prefix: name + " · ",
+                                                owned: { library.scenarioSources[$0] == id },
+                                                besideOthers: library.profiles.contains { $0.id != id })
         if aligningLegacySeed, let previous = existing?.baseline {
             draft.scenarios = refreshedSeedScenarios(draft.scenarios, previous: previous, seed: seed,
                                                      owned: { library.scenarioSources[$0] == id }, prefix: name + " · ")
@@ -179,6 +185,7 @@ enum ProfileLibraryMigration {
         var claimed = Set(draft.scenarios.flatMap(\.matchSSIDs))
         for var scene in seed.scenarios where !draft.scenarios.contains(where: { $0.id == scene.id }) {
             scene.matchSSIDs.removeAll { !claimed.insert($0).inserted }
+            if prefixed { scene.name = name + " · " + scene.name }
             draft.scenarios.append(scene)
             library.scenarioSources[scene.id] = id
         }
@@ -191,6 +198,19 @@ enum ProfileLibraryMigration {
             library.profiles[index].baseline = seed
         }
         return try library.validated()
+    }
+
+    /// Whether the seed's Scenarios carry the "<name> · " prefix. The names its existing
+    /// Scenarios still have decide; only when the user renamed all of them does it fall
+    /// back to whether other Profiles exist.
+    static func seedScenariosArePrefixed(_ scenarios: [Scenario], baseline: Profile?, prefix: String,
+                                         owned: (String) -> Bool, besideOthers: Bool) -> Bool {
+        for scene in scenarios where owned(scene.id) {
+            guard let shipped = baseline?.scenarios.first(where: { $0.id == scene.id }) else { continue }
+            if scene.name == prefix + shipped.name { return true }
+            if scene.name == shipped.name { return false }
+        }
+        return besideOthers
     }
 
     /// Three-way update of the Scenarios a seed created: each field takes the new

@@ -191,7 +191,8 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         XCTAssertEqual(updated.activeScenarioID, selection)
         XCTAssertEqual(updated.scenarios.first?.defaultLineID, "saved")
         XCTAssertEqual(updated.snapshot().lines.first { $0.id == "saved" }?.vpnPassword, "Ｐass word")
-        XCTAssertEqual(updated.scenarios.prefix(2).map(\.name), ["Office", "Away"])
+        // Joined beside the existing Profile, the preset's Scenarios carry its name, as file imports do.
+        XCTAssertEqual(updated.scenarios.prefix(2).map(\.name), ["Seed · Office", "Seed · Away"])
         var edited = updated
         edited.scenarios[0].defaultLineID = "direct"
         let next = try ProfileLibraryMigration.addingMobileSeed(incoming, named: "Seed", id: "seed", to: edited)
@@ -491,5 +492,30 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         XCTAssertEqual(created.scenarios.map(\.name), ["在公司", "在国内", "在国外", "在香港"])
         XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(seed, named: "心动", id: "seed", to: created).scenarios,
                        created.scenarios)
+    }
+    func testScenariosAddedBesideOtherProfilesKeepThePresetPrefix() throws {
+        // The old desktop preset joined beside the user's own Profile, so its Scenarios are prefixed.
+        let joined = try ProfileLibraryMigration.merging(desktopSeed(), named: "心动", id: "seed",
+                                                         into: ProfileLibraryMigration.starterLibrary())
+        XCTAssertEqual(joined.scenarios.filter { joined.scenarioSources[$0.id] == "seed" }.map(\.name), ["心动 · 公司", "心动 · 国内"])
+        var renamed = joined
+        let index = try XCTUnwrap(renamed.scenarios.firstIndex { $0.id == "domestic" })
+        renamed.scenarios[index].name = "我的国内"
+        renamed = try renamed.validated()
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: renamed,
+                                                                    aligningLegacySeed: true)
+        XCTAssertEqual(upgraded.scenarios.filter { upgraded.scenarioSources[$0.id] == "seed" }.map(\.name),
+                       ["心动 · 在公司", "我的国内", "心动 · 在国外", "心动 · 在香港"])
+    }
+
+    func testScenariosAddedToTheOnlyProfileStayUnprefixed() throws {
+        let seed = try phoneSeed()
+        var created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in seed })
+        // A Profile added later does not rename what the preset already shows.
+        try created.insert(ProfileRecord(id: "mine", name: "自己的", profile: Profile()))
+        var changed = seed
+        changed.scenarios.append(Scenario(id: "extra", name: "新场景", defaultLineID: "direct"))
+        let next = try ProfileLibraryMigration.addingMobileSeed(changed, named: "心动", id: "seed", to: created)
+        XCTAssertEqual(next.scenarios.first { $0.id == "extra" }?.name, "新场景")
     }
 }
