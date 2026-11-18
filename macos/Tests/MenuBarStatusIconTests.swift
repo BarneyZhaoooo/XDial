@@ -56,6 +56,29 @@ final class MenuBarStatusIconTests: XCTestCase {
         )
     }
 
+    func testTrafficImageContainsBothRowsAndPreservesTemplateTinting() throws {
+        for badge in [MenuBarStatusIcon.Badge.none, .update] {
+            let icon = MenuBarStatusIcon.image(
+                connection: .connected, badge: badge, menuBarTone: .dark
+            )
+            let image = MenuBarStatusIcon.imageWithTrafficRates(
+                icon: icon, menuBarTone: .dark, download: "1.2 MB/s", upload: "20.4 KB/s"
+            )
+            XCTAssertEqual(image.isTemplate, icon.isTemplate)
+            let data = try XCTUnwrap(image.tiffRepresentation)
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+            let middle = bitmap.pixelsHigh / 2
+            let textStart = bitmap.pixelsWide / 2
+            for row in [0..<middle, middle..<bitmap.pixelsHigh] {
+                XCTAssertTrue(row.contains { y in
+                    (textStart..<bitmap.pixelsWide).contains { x in
+                        (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5
+                    }
+                })
+            }
+        }
+    }
+
     // MARK: - Disconnected：空心环 + 实心指孔，整组 0.45
 
     func testDisconnectedIsHollowRingWithSolidHolesAtIdleOpacity() throws {
