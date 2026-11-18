@@ -191,7 +191,8 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         XCTAssertEqual(updated.activeScenarioID, selection)
         XCTAssertEqual(updated.scenarios.first?.defaultLineID, "saved")
         XCTAssertEqual(updated.snapshot().lines.first { $0.id == "saved" }?.vpnPassword, "Ｐass word")
-        XCTAssertEqual(updated.scenarios.prefix(2).map(\.name), ["Office", "Away"])
+        // Joined beside the existing Profile, the preset's Scenarios carry its name, as file imports do.
+        XCTAssertEqual(updated.scenarios.prefix(2).map(\.name), ["Seed · Office", "Seed · Away"])
         var edited = updated
         edited.scenarios[0].defaultLineID = "direct"
         let next = try ProfileLibraryMigration.addingMobileSeed(incoming, named: "Seed", id: "seed", to: edited)
@@ -392,5 +393,148 @@ final class ProfileLibraryMigrationTests: XCTestCase {
                                                                    named: "公司", in: library)
         XCTAssertEqual(refreshed.scenarios.map(\.id).filter { $0.hasPrefix("seed-") }, ["seed-office", "seed-remote", "seed-travel"])
         XCTAssertEqual(refreshed.scenarios.count, library.scenarios.count + 1)
+    }
+
+    // Mac builds up to 45 shipped the two-Scenario desktop seed; the phone seed
+    // has four with different routing. Same IDs, so an upgrade must add the
+    // missing Scenarios and adopt the new routing only where the user did not
+    // change it.
+    private func desktopSeed() throws -> Profile {
+        try JSONDecoder().decode(Profile.self, from: Data(#"""
+        {"lines":[{"id":"direct","name":"直连","type":"direct","enabled":true},
+                  {"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}],
+         "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"domains":["example.com"]}],
+         "scenarios":[{"id":"office","name":"公司","default_line_id":"direct","match_ssids":["OFFICE"]},
+                      {"id":"domestic","name":"国内","default_line_id":"direct","bindings":[{"rule_set_id":"intranet","line_id":"vpn"}]}],
+         "active_scenario_id":"office"}
+        """#.utf8))
+    }
+
+    private func phoneSeed() throws -> Profile {
+        try JSONDecoder().decode(Profile.self, from: Data(#"""
+        {"lines":[{"id":"direct","name":"直连","type":"direct","enabled":true},
+                  {"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}],
+         "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"domains":["example.com"]},
+                      {"id":"lan","name":"本地局域网","type":"manual","enabled":true,"cidrs":["192.168.0.0/16"]},
+                      {"id":"cn","name":"国内网站","type":"manual","enabled":true,"domains":["cn"]}],
+         "scenarios":[{"id":"office","name":"在公司","default_line_id":"direct","match_ssids":["OFFICE"]},
+                      {"id":"domestic","name":"在国内","default_line_id":"vpn","bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"lan","line_id":"direct"},{"rule_set_id":"cn","line_id":"direct"}]},
+                      {"id":"overseas","name":"在国外","default_line_id":"direct","bindings":[{"rule_set_id":"lan","line_id":"direct"},{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"vpn"}]},
+                      {"id":"hongkong","name":"在香港","default_line_id":"direct","bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"vpn"}]}],
+         "active_scenario_id":"domestic"}
+        """#.utf8))
+    }
+
+    private func desktopSeedLibrary() throws -> ProfileLibrary {
+        let old = try desktopSeed()
+        var library = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v1"), id: "seed") { _, _ in old })
+        // The employee filled in their account and chose a Scenario by hand.
+        let index = try XCTUnwrap(library.profiles[0].profile.lines.firstIndex { $0.id == "vpn" })
+        library.profiles[0].profile.lines[index].vpnUsername = "employee"
+        library.profiles[0].profile.lines[index].vpnPassword = "secret"
+        library.activeScenarioID = "domestic"
+        return try library.validated()
+    }
+
+    func testPhoneSeedUpgradesUntouchedDesktopSeedScenarios() throws {
+        let library = try desktopSeedLibrary()
+        XCTAssertEqual(library.scenarios.map(\.name), ["公司", "国内"])
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library, aligningLegacySeed: true)
+        XCTAssertEqual(upgraded.scenarios.map(\.id), ["office", "domestic", "overseas", "hongkong"])
+        XCTAssertEqual(upgraded.scenarios.map(\.name), ["在公司", "在国内", "在国外", "在香港"])
+        let domestic = try XCTUnwrap(upgraded.scenarios.first { $0.id == "domestic" })
+        XCTAssertEqual(domestic.defaultLineID, "vpn")
+        XCTAssertEqual(domestic.bindings.map(\.ruleSetID), ["intranet", "lan", "cn"])
+        XCTAssertEqual(upgraded.scenarios.first { $0.id == "office" }?.matchSSIDs, ["OFFICE"])
+        XCTAssertEqual(upgraded.activeScenarioID, "domestic")
+        let vpn = try XCTUnwrap(upgraded.snapshot().lines.first { $0.id == "vpn" })
+        XCTAssertEqual(vpn.vpnUsername, "employee")
+        XCTAssertEqual(vpn.vpnPassword, "secret")
+        XCTAssertEqual(Set(upgraded.snapshot().ruleSets.map(\.id)), ["intranet", "lan", "cn"])
+        // Idempotent: the same seed again changes nothing.
+        XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: upgraded, aligningLegacySeed: true), upgraded)
+    }
+
+    func testPhoneSeedKeepsWhatTheUserChangedInDesktopSeedScenarios() throws {
+        var library = try desktopSeedLibrary()
+        let index = try XCTUnwrap(library.scenarios.firstIndex { $0.id == "domestic" })
+        library.scenarios[index].name = "我的国内"
+        library.scenarios[index].bindings = []
+        library.scenarios.append(Scenario(id: "mine", name: "自己的", defaultLineID: "direct"))
+        library = try library.validated()
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library, aligningLegacySeed: true)
+        let domestic = try XCTUnwrap(upgraded.scenarios.first { $0.id == "domestic" })
+        XCTAssertEqual(domestic.name, "我的国内")
+        XCTAssertEqual(domestic.bindings, [])
+        // The default exit was untouched, so it follows the new seed.
+        XCTAssertEqual(domestic.defaultLineID, "vpn")
+        XCTAssertTrue(upgraded.scenarios.contains { $0.id == "mine" && $0.name == "自己的" })
+        XCTAssertEqual(Set(upgraded.scenarios.map(\.id)), ["office", "domestic", "overseas", "hongkong", "mine"])
+        // Only the user's own changes are reported as the reason the Mac differs from the phone.
+        XCTAssertEqual(ProfileLibraryMigration.keptCustomizations(upgraded.scenarios, seed: try phoneSeed(), prefix: "心动 · "),
+                       ["Scenario domestic (name, rules)"])
+    }
+
+    func testLaterRevisionsOnlyAddWhatIsMissingLikeIPhone() throws {
+        let seed = try phoneSeed()
+        let created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in seed })
+        var changed = seed
+        changed.scenarios[1].defaultLineID = "direct"
+        changed.scenarios.append(Scenario(id: "extra", name: "新场景", defaultLineID: "direct"))
+        let next = try ProfileLibraryMigration.addingMobileSeed(changed, named: "心动", id: "seed", to: created)
+        XCTAssertEqual(next.scenarios.first { $0.id == "domestic" }?.defaultLineID, "vpn")
+        XCTAssertTrue(next.scenarios.contains { $0.id == "extra" })
+    }
+
+    func testPhoneSeedOnFreshInstallCreatesAllFourScenarios() throws {
+        let seed = try phoneSeed()
+        let created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in seed })
+        XCTAssertEqual(created.scenarios.map(\.name), ["在公司", "在国内", "在国外", "在香港"])
+        XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(seed, named: "心动", id: "seed", to: created).scenarios,
+                       created.scenarios)
+    }
+    func testScenariosAddedBesideOtherProfilesKeepThePresetPrefix() throws {
+        // The old desktop preset joined beside the user's own Profile, so its Scenarios are prefixed.
+        let joined = try ProfileLibraryMigration.merging(desktopSeed(), named: "心动", id: "seed",
+                                                         into: ProfileLibraryMigration.starterLibrary())
+        XCTAssertEqual(joined.scenarios.filter { joined.scenarioSources[$0.id] == "seed" }.map(\.name), ["心动 · 公司", "心动 · 国内"])
+        var renamed = joined
+        let index = try XCTUnwrap(renamed.scenarios.firstIndex { $0.id == "domestic" })
+        renamed.scenarios[index].name = "我的国内"
+        renamed = try renamed.validated()
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: renamed,
+                                                                    aligningLegacySeed: true)
+        XCTAssertEqual(upgraded.scenarios.filter { upgraded.scenarioSources[$0.id] == "seed" }.map(\.name),
+                       ["心动 · 在公司", "我的国内", "心动 · 在国外", "心动 · 在香港"])
+    }
+
+    func testScenariosAddedToTheOnlyProfileStayUnprefixed() throws {
+        let seed = try phoneSeed()
+        var created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in seed })
+        // A Profile added later does not rename what the preset already shows.
+        try created.insert(ProfileRecord(id: "mine", name: "自己的", profile: Profile()))
+        var changed = seed
+        changed.scenarios.append(Scenario(id: "extra", name: "新场景", defaultLineID: "direct"))
+        let next = try ProfileLibraryMigration.addingMobileSeed(changed, named: "心动", id: "seed", to: created)
+        XCTAssertEqual(next.scenarios.first { $0.id == "extra" }?.name, "新场景")
+    }
+
+    func testAlignmentMovesWiFiBetweenUnchangedScenarios() {
+        var previous = Profile()
+        previous.scenarios = [Scenario(id: "a", name: "A", defaultLineID: "direct"),
+                              Scenario(id: "b", name: "B", matchSSIDs: ["OFFICE"], defaultLineID: "direct")]
+        var seed = previous
+        seed.scenarios[0].matchSSIDs = ["OFFICE"]
+        seed.scenarios[1].matchSSIDs = []
+        let moved = ProfileLibraryMigration.refreshedSeedScenarios(previous.scenarios, previous: previous, seed: seed,
+                                                                   owned: { _ in true }, prefix: "")
+        XCTAssertEqual(moved.map(\.matchSSIDs), [["OFFICE"], []])
+        // A trigger the user put on a Scenario outside the seed stays there.
+        let mine = Scenario(id: "mine", name: "Mine", matchSSIDs: ["OFFICE"], defaultLineID: "direct")
+        var claimed = previous.scenarios
+        claimed[1].matchSSIDs = []
+        let kept = ProfileLibraryMigration.refreshedSeedScenarios(claimed + [mine], previous: previous, seed: seed,
+                                                                  owned: { $0 != "mine" }, prefix: "")
+        XCTAssertEqual(kept.map(\.matchSSIDs), [[], [], ["OFFICE"]])
     }
 }

@@ -202,7 +202,7 @@ targets:
           set -eu
           destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/PrivateConfig"
           rm -rf "${destination}"
-          source_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-}"
+          source_dir="${XDIAL_PRIVATE_CONFIG_DIR:-${XDIAL_IOS_PRIVATE_CONFIG_DIR:-}}"
           # 明确指定的目录必须存在；只有默认的 ios/PrivateConfig 可以没有。
           if [ -n "${source_dir}" ] && [ ! -f "${source_dir}/Seed.json" ]; then
             echo "error: private build configuration not found: ${source_dir}/Seed.json" >&2

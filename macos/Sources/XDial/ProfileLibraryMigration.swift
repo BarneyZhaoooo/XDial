@@ -77,11 +77,79 @@ enum ProfileLibraryMigration {
         return result
     }
 
+    /// What applying the bundled seed at launch decided. `library` is nil when the
+    /// library stays as it is, `entry` is nil when the ledger stays as it is, and
+    /// `regionTargets` is nil when the current region targets stay.
+    struct SeedApplication {
+        var library: ProfileLibrary?
+        var entry: SeedProfileLedger.Entry?
+        var regionTargets: [String: String]?
+        var failure: Error?
+    }
+
+    /// The launch-time seed decision, without storage, so tests run exactly what the app runs.
+    /// The seed joins the shared library once and later builds update what it owns.
+    /// A seed Profile the user deleted is not added again.
+    static func applying(_ seed: SeedProfile, createdProfileID: String?, entry: SeedProfileLedger.Entry?,
+                         to library: ProfileLibrary, currentRegionTargets: [String: String],
+                         importDocument: (String, String) throws -> Profile) -> SeedApplication {
+        let profileID = createdProfileID ?? entry?.profileID ?? UUID().uuidString.lowercased()
+        if createdProfileID == nil, let entry, entry.isNewer(than: seed) {
+            return SeedApplication(regionTargets: entry.regionTargets ?? [:])
+        }
+        var regions: [String: String]?
+        if !seed.regions.isEmpty, let imported = try? importDocument(seed.text, profileID) {
+            regions = seed.regionTargets(in: imported)
+        }
+        // Region targets name imported Scenario IDs; when they collided with IDs already in
+        // the library, the Profile records the scoped IDs it uses instead.
+        func scoped(_ library: ProfileLibrary) -> [String: String]? {
+            guard let regions, let mapping = library.profiles.first(where: { $0.id == profileID })?.resourceIDs else {
+                return regions
+            }
+            return regions.mapValues { mapping[$0] ?? $0 }
+        }
+        guard entry?.digest != seed.digest else { return SeedApplication(regionTargets: scoped(library)) }
+        var updated: ProfileLibrary?
+        if createdProfileID == nil {
+            if entry != nil && !library.profiles.contains(where: { $0.id == profileID }) {
+                return SeedApplication(regionTargets: scoped(library))
+            }
+            do {
+                let incoming = try importDocument(seed.text, profileID)
+                if seed.revision != nil {
+                    // A ledger digest without the mobile prefix means the old desktop preset created this Profile.
+                    let fromLegacySeed = entry.map { !$0.digest.hasPrefix("mobile-v1-") } ?? false
+                    updated = try addingMobileSeed(incoming, named: seed.name, id: profileID, to: library,
+                                                   aligningLegacySeed: fromLegacySeed)
+                } else if entry != nil {
+                    updated = try refreshingSeed(incoming, profileID: profileID, named: seed.name, in: library)
+                } else {
+                    updated = try merging(incoming, named: seed.name, id: profileID, into: library)
+                }
+            } catch {
+                return SeedApplication(regionTargets: regions, failure: error)
+            }
+        }
+        let targets = scoped(updated ?? library)
+        return SeedApplication(library: updated,
+                               entry: .init(profileID: profileID, digest: seed.digest,
+                                            regionTargets: targets ?? currentRegionTargets),
+                               regionTargets: targets)
+    }
+
     /// Apply one mobile seed revision using the existing global resource owners.
     /// Existing routes, credentials and the selected Scenario are user choices.
+    /// `aligningLegacySeed` is set once, when a Profile created by the older
+    /// desktop preset (no revision) first receives the shared mobile preset:
+    /// its untouched Scenarios take the shared routing. Later revisions only add
+    /// what is missing, exactly as on iPhone.
     static func addingMobileSeed(_ incoming: Profile, named name: String, id: String,
-                                 to original: ProfileLibrary) throws -> ProfileLibrary {
+                                 to original: ProfileLibrary, aligningLegacySeed: Bool = false) throws -> ProfileLibrary {
         var library = original
+        let existing = library.profiles.first(where: { $0.id == id })
+        // A seed inserted beside other Profiles may have had colliding IDs scoped.
+        let incoming = ProfileLibrary.remap(incoming, using: existing?.resourceIDs ?? [:])
         if !library.profiles.contains(where: { $0.id == id }) {
             library.profiles.append(ProfileRecord(id: id, name: name, profile: Profile()))
         }
@@ -101,9 +169,23 @@ enum ProfileLibraryMigration {
         for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
             draft.ruleSets.append(rule)
         }
+        // Scenarios added later follow the names the Profile's own Scenarios use: a seed that
+        // joined beside other Profiles shows "<name> · <Scenario>" (see appendTemplates).
+        // Decided before alignment renames anything.
+        let prefixed = seedScenariosArePrefixed(draft.scenarios, baseline: existing?.baseline, prefix: name + " · ",
+                                                owned: { library.scenarioSources[$0] == id },
+                                                besideOthers: library.profiles.contains { $0.id != id })
+        if aligningLegacySeed, let previous = existing?.baseline {
+            draft.scenarios = refreshedSeedScenarios(draft.scenarios, previous: previous, seed: seed,
+                                                     owned: { library.scenarioSources[$0] == id }, prefix: name + " · ")
+            for note in keptCustomizations(draft.scenarios, seed: seed, prefix: name + " · ") {
+                appLog("seed: \(name) kept the user's change: \(note)")
+            }
+        }
         var claimed = Set(draft.scenarios.flatMap(\.matchSSIDs))
         for var scene in seed.scenarios where !draft.scenarios.contains(where: { $0.id == scene.id }) {
             scene.matchSSIDs.removeAll { !claimed.insert($0).inserted }
+            if prefixed { scene.name = name + " · " + scene.name }
             draft.scenarios.append(scene)
             library.scenarioSources[scene.id] = id
         }
@@ -116,6 +198,78 @@ enum ProfileLibraryMigration {
             library.profiles[index].baseline = seed
         }
         return try library.validated()
+    }
+
+    /// Whether the seed's Scenarios carry the "<name> · " prefix. The names its existing
+    /// Scenarios still have decide; only when the user renamed all of them does it fall
+    /// back to whether other Profiles exist.
+    static func seedScenariosArePrefixed(_ scenarios: [Scenario], baseline: Profile?, prefix: String,
+                                         owned: (String) -> Bool, besideOthers: Bool) -> Bool {
+        for scene in scenarios where owned(scene.id) {
+            guard let shipped = baseline?.scenarios.first(where: { $0.id == scene.id }) else { continue }
+            if scene.name == prefix + shipped.name { return true }
+            if scene.name == shipped.name { return false }
+        }
+        return besideOthers
+    }
+
+    /// Three-way update of the Scenarios a seed created: each field takes the new
+    /// seed's value only while it still equals what the previous seed shipped.
+    /// Anything the user changed (name, exits, rules, icon, Wi-Fi) is kept, so
+    /// applying the same seed again changes nothing.
+    static func refreshedSeedScenarios(_ scenarios: [Scenario], previous: Profile, seed: Profile,
+                                       owned: (String) -> Bool, prefix: String) -> [Scenario] {
+        var result = scenarios
+        // Wi-Fi triggers are settled together: a Scenario still on the previous seed's
+        // triggers takes the new seed's, and only triggers that stay where they are
+        // (the user's, or outside this seed) are reserved. Checking one Scenario at a
+        // time would drop a trigger the seed moves to a Scenario processed earlier.
+        let followsSeedWiFi = Set(seed.scenarios.compactMap { source -> String? in
+            guard owned(source.id), let old = previous.scenarios.first(where: { $0.id == source.id }),
+                  let scene = scenarios.first(where: { $0.id == source.id }),
+                  Set(scene.matchSSIDs) == Set(old.matchSSIDs) else { return nil }
+            return source.id
+        })
+        let reserved = Set(scenarios.filter { !followsSeedWiFi.contains($0.id) }.flatMap(\.matchSSIDs))
+        for source in seed.scenarios {
+            guard owned(source.id),
+                  let old = previous.scenarios.first(where: { $0.id == source.id }),
+                  let index = result.firstIndex(where: { $0.id == source.id }) else { continue }
+            var scene = result[index]
+            if scene.name == old.name { scene.name = source.name }
+            else if scene.name == prefix + old.name { scene.name = prefix + source.name }
+            if scene.defaultLineID == old.defaultLineID, scene.defaultSubscriptionID == old.defaultSubscriptionID {
+                scene.defaultLineID = source.defaultLineID
+                scene.defaultSubscriptionID = source.defaultSubscriptionID
+            }
+            if scene.bindings == old.bindings, scene.matchOrder == old.matchOrder {
+                scene.bindings = source.bindings
+                scene.matchOrder = source.matchOrder
+            }
+            if scene.iconOverride == old.iconOverride { scene.iconOverride = source.iconOverride }
+            if followsSeedWiFi.contains(scene.id) {
+                scene.matchSSIDs = source.matchSSIDs.filter { !reserved.contains($0) }
+            }
+            result[index] = scene
+        }
+        return result
+    }
+
+    /// What still differs from the shared preset after alignment, i.e. what the
+    /// user changed, so the log explains why a Mac and an iPhone route differently.
+    static func keptCustomizations(_ scenarios: [Scenario], seed: Profile, prefix: String) -> [String] {
+        seed.scenarios.compactMap { source in
+            guard let scene = scenarios.first(where: { $0.id == source.id }) else { return nil }
+            var fields: [String] = []
+            if scene.name != source.name && scene.name != prefix + source.name { fields.append("name") }
+            if scene.defaultLineID != source.defaultLineID || scene.defaultSubscriptionID != source.defaultSubscriptionID {
+                fields.append("default exit")
+            }
+            if scene.bindings != source.bindings || scene.matchOrder != source.matchOrder { fields.append("rules") }
+            if scene.iconOverride != source.iconOverride { fields.append("icon") }
+            if Set(scene.matchSSIDs) != Set(source.matchSSIDs) { fields.append("Wi-Fi") }
+            return fields.isEmpty ? nil : "Scenario \(source.id) (\(fields.joined(separator: ", ")))"
+        }
     }
 
     /// A newer seed overwrites the content it owns, like a subscription refresh, but

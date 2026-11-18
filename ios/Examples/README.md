@@ -3,11 +3,22 @@
 `Seed.example.json` 只演示格式，用的都是保留的示例域名，不应写入凭据、私有域名或真实规则地址。
 实际的预置配置保存在仓库外或企业私有仓库里，打包时带进 App。
 
+每条线路和规则都要写明 `enabled`；trojan、shadowsocks、vmess 线路还要写明端口（以及 shadowsocks 的 `ss_method`）。
+这些字段省略时，手机和 Mac 读出的默认值不同（例如手机当作启用，Mac 当作停用），`xdial-seed check` 会拒绝这样的预置。
+共享预置也只能用手机能读的内容：规则类型只有 `url` 和 `manual`，格式为 `auto`、`srs`、`json` 或 `text`，
+不支持 `invert`、`no_resolve`、`fetch_line_id`、按应用/进程匹配、分组条件、场景的 `match_order` 和订阅。
+Mac 能读得更多，但用了这些内容时手机会丢掉或拒绝整个预置，所以检查直接拒绝。
+规则对象要写全 `id`、`name`、`type`、`enabled`、`url`、`format`、`domains`、`cidrs`（手机解码需要每一项，没有的写空值）；
+线路类型写 `shadowsocks`，不要写简称 `ss`。检查还按手机的规则核对引用：每个场景有且只有一条存在的默认线路，
+绑定的规则和线路都要存在且不重复，地区只能是 `*` 或两个字母且不重复，规则地址必须是远程 HTTPS。
+iPhone、Apple TV 和 Mac 包里必须是 `xdial-mobile-seed` 格式；只有旧版桌面包用普通的配置文档。
+
 ## 放在哪儿
 
 构建时依次查找：
 
-1. 构建设置 `XDIAL_IOS_PRIVATE_CONFIG_DIR` 指向的目录（必须存在）。
+1. 构建设置 `XDIAL_PRIVATE_CONFIG_DIR`（旧名 `XDIAL_IOS_PRIVATE_CONFIG_DIR`）指向的目录（必须存在）。
+   Mac 构建读取同一个目录，见 [Mac 预置说明](../../macos/Examples/README.md#与手机共用一份预置)。
 2. 被忽略的 `ios/PrivateConfig/`。
 
 目录里可以有：
@@ -35,6 +46,7 @@
 - `revision` 是预置的版本。预置内容有增删时加一，已经装了旧包的用户升级后会补上新内容。
 - `region_scenarios` 可选：网络出口所在的地区（两位代码）对应哪个场景，`*` 是没列出的地区。
   留空时 App 只按场景登记的 Wi-Fi 自动选场景，也不会去查网络出口。
+- `profile_name` 可选：Mac 版嵌入时用作 Profile 名称（手机忽略）。同一份文件供所有平台打包，不要另维护副本。
 
 App 怎么用它：
 
