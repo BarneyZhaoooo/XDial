@@ -311,21 +311,24 @@ struct TunnelAcceptancePlan: Codable, Sendable, Equatable {
 /// 从主 App 发起探测，流量会像 Safari/其他 App 一样完整经过系统路由 → packetFlow →
 /// sing-box → 实际出口。扩展进程内部自拨成功不能替代这条端到端断言。
 enum DataPathProbe {
-    private static let configuredDirectURLs = [
-        URL(string: "https://1.0.0.1/cdn-cgi/trace")!,
-    ]
-    private static let hostnameURLs = [
-        URL(string: "https://www.apple.com/library/test/success.html")!,
-    ]
-    private static let configuredAnyConnectURLs = [
-        URL(string: "https://1.1.1.1/cdn-cgi/trace")!,
-    ]
+    private static let directURL = URL(string: "https://1.0.0.1/cdn-cgi/trace")!
+    private static let hostnameURL = URL(string: "https://www.apple.com/library/test/success.html")!
+    private static let currentURL = URL(string: "https://1.1.1.1/cdn-cgi/trace")!
 
     /// Outcome and duration of one probe request, for the connection timeline.
     struct CheckRecord: Sendable, Equatable {
         let result: ConnectionTimeline.Result
         let ms: Int
         var completedAt: Int64 = ConnectionTimeline.nowMilliseconds()
+        var urlErrorCode: Int?
+        var errorDetail: String { urlErrorCode.map { " NSURLError=\($0)" } ?? "" }
+
+        static func failed(_ error: Error, since start: TimeInterval) -> Self {
+            let nsError = error as NSError
+            return Self(result: ConnectionTimeline.classify(error), ms: ConnectionTimeline.elapsedMilliseconds(since: start),
+                        urlErrorCode: nsError.domain == NSURLErrorDomain ? nsError.code : nil)
+        }
+
         static let notRun = CheckRecord(result: .notRun, ms: 0)
     }
 
@@ -358,7 +361,7 @@ enum DataPathProbe {
             let routedAnyConnect = routedAnyConnectEgressIP ?? "不可用"
             return "线路探测：Direct \(directLine) · AnyConnect \(anyConnectLine)；"
                 + "分流探测：1.0.0.1→\(routedDirect) · 1.1.1.1→\(routedAnyConnect)；"
-                + "路由命中：\(splitRoutingOK ? "通过" : "未通过")；DNS：\(hostnameOK ? "通过" : "未通过")"
+                + "路由命中：\(splitRoutingOK ? "通过" : "未通过")；域名 HTTPS：\(hostnameOK ? "通过" : "未通过")"
         }
 
         var failureMessage: String {
@@ -375,7 +378,7 @@ enum DataPathProbe {
                 return "分流器未按当前配置选择线路，已自动断开"
             }
             if !hostnameOK {
-                return "系统隧道已启动，但域名解析不通，已自动断开"
+                return "系统隧道已启动，但域名 HTTPS 请求失败，已自动断开"
             }
             return "系统隧道已启动，但出口流量不通，已自动断开"
         }
@@ -400,10 +403,10 @@ enum DataPathProbe {
         anyConnectLineEgressIP: String?,
         includeSplitTarget: Bool = true
     ) async -> Result {
-        async let directTrace = firstTrace(configuredDirectURLs)
-        async let hostnameOK = firstReachable(hostnameURLs)
+        async let directTrace = trace(directURL)
+        async let hostnameOK = httpsCheck(probeRequest(hostnameURL))
         let anyConnect = includeSplitTarget
-            ? await firstTrace(configuredAnyConnectURLs)
+            ? await trace(currentURL)
             : TraceResult(reachable: false, address: nil, check: .notRun)
         let (direct, hostname) = await (directTrace, hostnameOK)
         return Result(
@@ -425,33 +428,20 @@ enum DataPathProbe {
         var check: CheckRecord = .notRun
     }
 
-    private static func firstTrace(_ urls: [URL]) async -> TraceResult {
-        let configuration = probeConfiguration()
-        let session = URLSession(configuration: configuration)
+    private static func trace(_ url: URL) async -> TraceResult {
+        let session = URLSession(configuration: probeConfiguration())
         defer { session.invalidateAndCancel() }
         let startedAt = ProcessInfo.processInfo.systemUptime
-        var last: ConnectionTimeline.Result = .notRun
-
-        for url in urls {
-            if Task.isCancelled {
-                return TraceResult(reachable: false, address: nil, check: CheckRecord(
-                    result: .cancelled, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
-            }
-            do {
-                let (data, response) = try await session.data(for: probeRequest(url))
-                if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                   let address = parseTraceIPAddress(data) {
-                    return TraceResult(reachable: true, address: address, check: CheckRecord(
-                        result: .ok, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
-                }
-                last = .http
-            } catch {
-                last = ConnectionTimeline.classify(error)
-                continue
-            }
+        do {
+            let (data, response) = try await session.data(for: probeRequest(url))
+            let http = response as? HTTPURLResponse
+            let address = http.flatMap { (200..<300).contains($0.statusCode) ? parseTraceIPAddress(data) : nil }
+            let check = CheckRecord(result: address == nil ? .http : .ok,
+                                    ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
+            return TraceResult(reachable: address != nil, address: address, check: check)
+        } catch {
+            return TraceResult(reachable: false, address: nil, check: .failed(error, since: startedAt))
         }
-        return TraceResult(reachable: false, address: nil, check: CheckRecord(
-            result: last, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
     }
 
     static func parseTraceIPAddress(_ data: Data) -> String? {
@@ -469,29 +459,29 @@ enum DataPathProbe {
         return nil
     }
 
-    private static func firstReachable(_ urls: [URL]) async -> CheckRecord {
-        let configuration = probeConfiguration()
-        let session = URLSession(configuration: configuration)
+    // A HEAD response (including 404) proves TLS reached this independent IP.
+    // Only the router counters can say which Line carried the request.
+    static func alternateHTTPSCheck() async -> CheckRecord {
+        var request = probeRequest(URL(string: "https://223.5.5.5/")!)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 3
+        return await httpsCheck(request, requireOriginalTarget: true)
+    }
+
+    private static func httpsCheck(_ request: URLRequest, requireOriginalTarget: Bool = false) async -> CheckRecord {
+        let session = URLSession(configuration: probeConfiguration())
         defer { session.invalidateAndCancel() }
         let startedAt = ProcessInfo.processInfo.systemUptime
-        var last: ConnectionTimeline.Result = .notRun
-
-        for url in urls {
-            if Task.isCancelled {
-                return CheckRecord(result: .cancelled, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
-            }
-            do {
-                let (_, response) = try await session.data(for: probeRequest(url))
-                if let http = response as? HTTPURLResponse, (200..<500).contains(http.statusCode) {
-                    return CheckRecord(result: .ok, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
-                }
-                last = .http
-            } catch {
-                last = ConnectionTimeline.classify(error)
-                continue
-            }
+        do {
+            let (_, response) = try await session.data(for: request)
+            let http = response as? HTTPURLResponse
+            let accepted = http.map { (200..<500).contains($0.statusCode) } == true
+                && (!requireOriginalTarget || response.url == request.url)
+            return CheckRecord(result: accepted ? .ok : .http,
+                               ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
+        } catch {
+            return .failed(error, since: startedAt)
         }
-        return CheckRecord(result: last, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
     }
 
     private static func probeConfiguration() -> URLSessionConfiguration {
@@ -605,7 +595,7 @@ struct ConfiguredDataPathResult: Sendable {
             ? checkedTargets
             : "\(checkedTargets)；不可用：\(unavailable)"
         if currentRouteTag == nil, isUsable {
-            return "线路探测：\(lineSummary)；公网双出口不适用；线路与DNS通过，未执行双出口分流验收"
+            return "线路探测：\(lineSummary)；公网双出口不适用；线路与域名 HTTPS 通过，未执行双出口分流验收"
         }
         let currentRouteLabel = currentRouteTag.map {
             targetLabels[$0] ?? Self.safeTargetLabel(for: $0)
@@ -613,7 +603,7 @@ struct ConfiguredDataPathResult: Sendable {
         return "线路探测：\(lineSummary)；分流规则：1.0.0.1→Direct · 1.1.1.1→"
             + "\(currentRouteLabel)；"
             + "路由命中：\(routingEvidenceOK ? "通过" : "未通过")；"
-            + "DNS：\(hostnameOK ? "通过" : "未通过")"
+            + "域名 HTTPS：\(hostnameOK ? "通过" : "未通过")"
     }
 
     private static func safeTargetLabel(for tag: String) -> String {
@@ -634,7 +624,7 @@ struct ConfiguredDataPathResult: Sendable {
                 : "分流器未按当前配置选择线路，已自动断开"
         }
         if !hostnameOK {
-            return "系统隧道已启动，但域名解析不通，已自动断开"
+            return "系统隧道已启动，但域名 HTTPS 请求失败，已自动断开"
         }
         return "系统隧道已启动，但出口流量不通，已自动断开"
     }
@@ -653,6 +643,8 @@ struct TrafficTotals: Decodable, Sendable, Equatable {
 }
 
 struct RoutingProbeSnapshot: Decodable, Sendable, Equatable {
+    let alternateHTTPSDirect: Int64
+    let alternateHTTPSOther: Int64
     let directTargetDirect: Int64
     let directTargetVPN: Int64
     let directTargetOther: Int64
@@ -663,6 +655,8 @@ struct RoutingProbeSnapshot: Decodable, Sendable, Equatable {
     let anyConnectTargetTags: [String: Int64]
 
     enum CodingKeys: String, CodingKey {
+        case alternateHTTPSDirect = "alternate_https_direct"
+        case alternateHTTPSOther = "alternate_https_other"
         case directTargetDirect = "direct_target_direct"
         case directTargetVPN = "direct_target_vpn"
         case directTargetOther = "direct_target_other"
@@ -680,9 +674,13 @@ struct RoutingProbeSnapshot: Decodable, Sendable, Equatable {
         anyConnectTargetDirect: Int64,
         anyConnectTargetVPN: Int64,
         anyConnectTargetOther: Int64,
+        alternateHTTPSDirect: Int64 = 0,
+        alternateHTTPSOther: Int64 = 0,
         directTargetTags: [String: Int64] = [:],
         anyConnectTargetTags: [String: Int64] = [:]
     ) {
+        self.alternateHTTPSDirect = alternateHTTPSDirect
+        self.alternateHTTPSOther = alternateHTTPSOther
         self.directTargetDirect = directTargetDirect
         self.directTargetVPN = directTargetVPN
         self.directTargetOther = directTargetOther
@@ -695,6 +693,8 @@ struct RoutingProbeSnapshot: Decodable, Sendable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        alternateHTTPSDirect = try container.decodeIfPresent(Int64.self, forKey: .alternateHTTPSDirect) ?? 0
+        alternateHTTPSOther = try container.decodeIfPresent(Int64.self, forKey: .alternateHTTPSOther) ?? 0
         directTargetDirect = try container.decode(Int64.self, forKey: .directTargetDirect)
         directTargetVPN = try container.decode(Int64.self, forKey: .directTargetVPN)
         directTargetOther = try container.decode(Int64.self, forKey: .directTargetOther)
@@ -709,6 +709,16 @@ struct RoutingProbeSnapshot: Decodable, Sendable, Equatable {
             [String: Int64].self,
             forKey: .anyConnectTargetTags
         ) ?? [:]
+    }
+
+    func alternateHTTPSRoute(after next: Self) -> String {
+        if next.alternateHTTPSDirect > alternateHTTPSDirect, next.alternateHTTPSOther == alternateHTTPSOther {
+            return "direct"
+        }
+        if next.alternateHTTPSOther > alternateHTTPSOther, next.alternateHTTPSDirect == alternateHTTPSDirect {
+            return "other"
+        }
+        return "unknown"
     }
 
     /// 兼容旧的 Direct + AnyConnect 计数断言；新路径使用下面按 exact tag 的证据。
@@ -1165,6 +1175,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private func scheduleDegradedRecheck() {
         dataPathRecheckTask?.cancel()
         dataPathRecheckTask = nil
+        guard !recheckPolicy.shouldDeferProbe, recheckPolicy.isDegraded else { return }
         guard let delay = recheckPolicy.nextDelay else {
             recordTimeline("check.recheck_exhausted")
             return
@@ -2139,13 +2150,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             return .cancelled
         }
         recordTimeline("check.direct_request", result: routed.directCheck.result,
-                       ms: routed.directCheck.ms, detail: "cf-trace via Direct", at: routed.directCheck.completedAt)
+                       ms: routed.directCheck.ms, detail: "cf-trace via Direct" + routed.directCheck.errorDetail, at: routed.directCheck.completedAt)
         if plan.currentRouteTag != nil {
             recordTimeline("check.current_request", result: routed.currentCheck.result,
-                           ms: routed.currentCheck.ms, detail: "cf-trace via current line", at: routed.currentCheck.completedAt)
+                           ms: routed.currentCheck.ms, detail: "cf-trace via current line" + routed.currentCheck.errorDetail, at: routed.currentCheck.completedAt)
         }
         recordTimeline("check.hostname_request", result: routed.hostnameCheck.result,
-                       ms: routed.hostnameCheck.ms, detail: "www.apple.com", at: routed.hostnameCheck.completedAt)
+                       ms: routed.hostnameCheck.ms, detail: "www.apple.com" + routed.hostnameCheck.errorDetail, at: routed.hostnameCheck.completedAt)
         let direct = routed.routedDirectEgressIP == nil ? "未取得出口" : "取得出口"
         let current = plan.currentRouteTag == nil ? "跳过"
             : (routed.routedAnyConnectEgressIP == nil ? "未取得出口" : "取得出口")
@@ -2174,6 +2185,21 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 )
             }
         } ?? false
+        var alternateSummary = ""
+        if routed.directCheck.result != .ok {
+            dataPathProbeStage = "复核直连 HTTPS"
+            let alternate = await DataPathProbe.alternateHTTPSCheck()
+            guard !Task.isCancelled else { return .cancelled }
+            let afterAlternate = await requestRoutingProbeSnapshot()
+            guard !Task.isCancelled else { return .cancelled }
+            let route = routingAfter.flatMap { before in
+                afterAlternate.snapshot.map { before.alternateHTTPSRoute(after: $0) }
+            } ?? "unknown"
+            recordTimeline("check.alternate_https", result: alternate.result, ms: alternate.ms,
+                           detail: "alternate IP route=\(route)" + alternate.errorDetail, at: alternate.completedAt)
+            alternateSummary = "；Direct 主探针 \(routed.directCheck.result.rawValue)\(routed.directCheck.errorDetail)"
+                + "，备用 HTTPS \(alternate.result.rawValue)\(alternate.errorDetail)（路由 \(route)）"
+        }
         dataPathProbeStage = "等待线路试拨"
         let results = await lineResults
         guard !Task.isCancelled else { return .cancelled }
@@ -2217,17 +2243,17 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         let timelineDetail = "lines \(addresses.count)/\(plan.targets.count)"
             + " route=\(result.splitRoutingState.rawValue) evidence=\(routingEvidenceOK)"
-            + " dns=\(routed.hostnameCheck.result.rawValue)"
+            + " hostname=\(routed.hostnameCheck.result.rawValue)"
             + " direct=\(routed.directCheck.result.rawValue)"
             + (plan.currentRouteTag == nil ? "" : " current=\(routed.currentCheck.result.rawValue)")
         return ProbeOutcome(
             isUsable: result.isUsable,
-            summary: result.diagnosticSummary + failureDetails,
+            summary: result.diagnosticSummary + alternateSummary + failureDetails,
             failureMessage: result.failureMessage,
             logSummary: "targets=\(addresses.count)/\(plan.targets.count) "
                 + "route=\(plan.currentRouteTag ?? "not-applicable") "
                 + "split=\(result.splitRoutingState.rawValue) routeEvidence=\(routingEvidenceOK) "
-                + "dns=\(routed.hostnameOK) routedDirect="
+                + "hostname=\(routed.hostnameOK) routedDirect="
                 + "\(routed.routedDirectEgressIP ?? "unavailable") routedCurrent="
                 + "\(routed.routedAnyConnectEgressIP ?? "unavailable")"
                 + failureDetails,

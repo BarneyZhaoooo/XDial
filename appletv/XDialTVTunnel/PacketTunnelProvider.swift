@@ -136,7 +136,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Shared app/extension timeline; see ConnectionTimeline. Guarded by diagnosticLock.
     private let timeline = ConnectionTimelineStore.shared(appGroup: PacketTunnelProvider.appGroupID)
     private var timelineSessionID = ""
-    private var timelineStartUptime = ProcessInfo.processInfo.systemUptime
     private var defaultInterfaceName = ""
     private var defaultInterfaceIndex = -1
     private var diagnosticSensitiveValues: [String] = []
@@ -158,6 +157,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// 切换进行中又来了网络变化：切完再判断一次。
     private var scenarioEvaluationPending = false
     private var lastPathSignature: String?
+    private var settledSurvey: ScenarioSurveyContext.Settled?
     private var scenarioEvaluationWorkItem: DispatchWorkItem?
     /// 自动判断串行执行；读 Wi-Fi 名称、查出口都在这里等待，不占用引擎队列。
     private let scenarioQueue = DispatchQueue(label: "com.kafeifei.xdial.tunnel.scenario")
@@ -1458,7 +1458,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         timeline?.beginSession(sessionID, markActive: true)
         diagnosticLock.lock()
         timelineSessionID = sessionID
-        timelineStartUptime = ProcessInfo.processInfo.systemUptime
         activeAttemptID = attemptID
         lastError = nil
         diagnosticStage = "idle"
@@ -1530,16 +1529,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ) {
         diagnosticLock.lock()
         let sessionID = timelineSessionID
-        let started = timelineStartUptime
         diagnosticLock.unlock()
         guard !sessionID.isEmpty else { return }
         timeline?.append(
             session: sessionID, source: .tunnel, stage: "tunnel." + stage, result: result,
-            ms: ms ?? ConnectionTimeline.elapsedMilliseconds(since: started), detail: detail)
+            ms: ms, detail: detail)
     }
 
-    private func recordDiagnostic(_ stage: String) {
-        recordTimeline(stage)
+    private func recordDiagnostic(_ stage: String, detail: String? = nil) {
+        recordTimeline(stage, detail: detail)
         diagnosticWriteQueue.sync {
             let state = captureDiagnosticState(updatingStage: stage)
             persistDiagnostic(makeDiagnosticSnapshot(from: state, includeEngine: false))
@@ -1794,6 +1792,7 @@ extension PacketTunnelProvider {
     private func recordRunningScenario(_ bundle: StartBundle, remoteAddress: String) {
         scenarioLock.lock()
         runningBundle = bundle
+        settledSurvey = nil
         runningRemoteAddress = remoteAddress
         scenarioLock.unlock()
         updateScenarioState { state in
@@ -1809,6 +1808,7 @@ extension PacketTunnelProvider {
     func clearRunningScenario() {
         scenarioLock.lock()
         runningBundle = nil
+        settledSurvey = nil
         scenarioEvaluationWorkItem?.cancel()
         scenarioEvaluationWorkItem = nil
         scenarioLock.unlock()
@@ -1879,7 +1879,10 @@ extension PacketTunnelProvider {
         let sourceRemote = runningRemoteAddress
         scenarioLock.unlock()
         updateScenarioState { $0.switchingTo = scenarioID }
-        recordDiagnostic("scenario_switch_begin")
+        let from = ScenarioNetworkIdentity.opaqueToken(source.scenarioID)
+        let to = ScenarioNetworkIdentity.opaqueToken(scenarioID)
+        recordDiagnostic("scenario_switch_begin", detail:
+            "origin=\(origin.rawValue) action=\(reapply ? "reapply" : "switch") from=\(from) to=\(to)")
 
         let completionBox = UncheckedSendableBox(completion)
         engineOperationQueue.async { [weak self] in
@@ -2316,21 +2319,22 @@ extension PacketTunnelProvider {
         let physical = path.availableInterfaces
             .filter { $0.type == .wifi || $0.type == .cellular || $0.type == .wiredEthernet }
             .map { "\($0.type):\($0.name)" }
-            .joined(separator: ",")
-        let gateways = path.gateways.map { "\($0)" }.joined(separator: ",")
+            .sorted().joined(separator: ",")
+        let gateways = path.gateways.map { "\($0)" }.sorted().joined(separator: ",")
         let signature = "\(path.status):\(physical):\(gateways)"
         scenarioLock.lock()
         let previous = lastPathSignature
+        if signature != previous { settledSurvey = nil }
         lastPathSignature = signature
         let running = runningBundle != nil
         scenarioLock.unlock()
         guard running, previous != nil, path.status == .satisfied else { return }
-        scheduleScenarioEvaluation(after: 1.5)
+        scheduleScenarioEvaluation(after: 1.5, pathNotification: true)
     }
 
-    func scheduleScenarioEvaluation(after delay: TimeInterval) {
+    func scheduleScenarioEvaluation(after delay: TimeInterval, pathNotification: Bool = false) {
         let work = DispatchWorkItem { [weak self] in
-            self?.evaluateScenario(requestedByApp: false, completion: nil)
+            self?.performScenarioEvaluation(pathNotification: pathNotification) { _ in }
         }
         scenarioLock.lock()
         scenarioEvaluationWorkItem?.cancel()
@@ -2347,19 +2351,18 @@ extension PacketTunnelProvider {
         if pending { scheduleScenarioEvaluation(after: 0.5) }
     }
 
-    /// 看一眼当前网络，必要时切换场景。requestedByApp：App 回到前台或打开「自动」时请求。
+    /// App 回到前台或打开「自动」时主动刷新，不复用路径通知的结果。
     func evaluateScenario(
-        requestedByApp: Bool,
         completion: (@Sendable (TunnelScenarioState) -> Void)?
     ) {
         let completionBox = UncheckedSendableBox(completion)
         scenarioQueue.async { [weak self] in
             guard let self else { return }
-            self.performScenarioEvaluation { state in completionBox.value?(state) }
+            self.performScenarioEvaluation(pathNotification: false) { state in completionBox.value?(state) }
         }
     }
 
-    private func performScenarioEvaluation(completion: @escaping @Sendable (TunnelScenarioState) -> Void) {
+    private func performScenarioEvaluation(pathNotification: Bool, completion: @escaping @Sendable (TunnelScenarioState) -> Void) {
         dispatchPrecondition(condition: .onQueue(scenarioQueue))
         guard case .available(let catalog) = ScenarioSwitchCatalogStore.load(),
               catalog.policy.enabled,
@@ -2378,10 +2381,23 @@ extension PacketTunnelProvider {
             return
         }
 
+        let surveyStart = ProcessInfo.processInfo.systemUptime
         let previousSwitch = currentScenarioState().lastSwitch
         let policy = catalog.policy
         let ssid = readCurrentSSID()
         let decisionNetwork = ScenarioNetworkIdentity.key(path: network, ssid: ssid)
+        let context = ScenarioSurveyContext(network: decisionNetwork, revision: catalog.revision,
+                                            policy: policy, runningID: runningID)
+        scenarioLock.lock()
+        let duplicate = pathNotification && settledSurvey?.covers(context, now: surveyStart) == true
+        // A new SSID can share its predecessor’s interface and gateway. Read it
+        // before deduplicating, off the path monitor and engine queues.
+        if !duplicate { settledSurvey = nil }
+        scenarioLock.unlock()
+        if duplicate {
+            completion(currentScenarioState())
+            return
+        }
         let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         var pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
@@ -2415,7 +2431,7 @@ extension PacketTunnelProvider {
             }
         }
         recordTimeline(
-            "scenario_decision",
+            "scenario_decision", ms: ConnectionTimeline.elapsedMilliseconds(since: surveyStart),
             detail: "ssid=\(ssidRead ? "read" : "unread") pick=\(pick?.scenarioID == nil ? "none" : (pick?.scenarioID == runningID ? "current" : "other"))")
         let record = ScenarioSurveyRecord(
             at: Date(),
@@ -2448,6 +2464,9 @@ extension PacketTunnelProvider {
         }
         var shouldSwitch = false
         let state = updateScenarioState { state in
+            if pick?.scenarioID == runningID && self.lastPathSignature == network {
+                self.settledSurvey = .init(context: context, at: surveyStart)
+            }
             state.lastSurvey = survey
             // 这次没判断出来（比如刚好断网）就保留上一次的结论。
             guard let pick else { return }
@@ -2491,7 +2510,7 @@ extension PacketTunnelProvider {
             box.ssid = network?.ssid
             done.signal()
         }
-        _ = done.wait(timeout: .now() + 3)
+        guard done.wait(timeout: .now() + 3) == .success else { return nil }
         return box.ssid
     }
 
@@ -2527,7 +2546,7 @@ extension PacketTunnelProvider {
         case "scenario-state":
             completion(scenarioStateResponse(currentScenarioState()))
         case "scenario-evaluate":
-            evaluateScenario(requestedByApp: true) { [weak self] state in
+            evaluateScenario { [weak self] state in
                 completion(self?.scenarioStateResponse(state))
             }
         case "scenario-switch", "scenario-reapply":

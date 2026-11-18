@@ -119,6 +119,19 @@ func decodeRoutingProbeSnapshot(t *testing.T, encoded string) routingProbeSnapsh
 	return snapshot
 }
 
+func TestRoutingProbeAlternateHTTPSCountsOnlyTunnelTraffic(t *testing.T) {
+	tracker := newRoutingProbeTracker()
+	meta := routingProbeMetadata("223.5.5.5")
+	tracker.record(meta, nil, &routingProbeTestOutbound{tag: "direct"})
+	tracker.record(meta, nil, &routingProbeTestOutbound{tag: "vpn"})
+	meta.Inbound = "other"
+	tracker.record(meta, nil, &routingProbeTestOutbound{tag: "direct"})
+	got := decodeRoutingProbeSnapshot(t, tracker.snapshotJSON())
+	if got.AlternateHTTPSDirect != 1 || got.AlternateHTTPSOther != 1 || len(got.DirectTargetTags) != 0 {
+		t.Fatalf("alternate HTTPS attribution contaminated routing evidence: %#v", got)
+	}
+}
+
 func TestRoutingProbeTrackerClassifiesFixedTCPRoutes(t *testing.T) {
 	tracker := newRoutingProbeTracker()
 	left, right := net.Pipe()

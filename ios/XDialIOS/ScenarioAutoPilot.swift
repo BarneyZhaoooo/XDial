@@ -130,9 +130,9 @@ final class ScenarioAutoPilot {
             let physical = path.availableInterfaces
                 .filter { $0.type == .wifi || $0.type == .cellular || $0.type == .wiredEthernet }
                 .map { "\($0.type):\($0.name)" }
-                .joined(separator: ",")
+                .sorted().joined(separator: ",")
             // 换一个 Wi-Fi 时网卡不变、网关会变，所以把网关也算进去。
-            let gateways = path.gateways.map { "\($0)" }.joined(separator: ",")
+            let gateways = path.gateways.map { "\($0)" }.sorted().joined(separator: ",")
             let signature = "\(path.status):\(physical):\(gateways)"
             Task { @MainActor [weak self] in
                 guard let self else { return }
