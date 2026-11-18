@@ -12,17 +12,14 @@ struct SettingsSearchField: View {
     }
 
     var body: some View {
-        TextField(prompt, text: $text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(XDialPalette.surface, in: RoundedRectangle(cornerRadius: 6))
-            .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(XDialPalette.divider.opacity(0.45), lineWidth: 0.5)
-                    .allowsHitTesting(false)
-            }
-            .focusEffectDisabled()
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+        }
+        .font(.body)
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(XDialPalette.surface, in: RoundedRectangle(cornerRadius: 9))
     }
 }

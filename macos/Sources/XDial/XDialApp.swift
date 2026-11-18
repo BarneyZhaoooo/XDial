@@ -222,7 +222,7 @@ struct XDialApp: App {
                 .tint(XDialPalette.accent)
                 .background(SettingsWindowChrome())
         }
-        .defaultSize(width: 620, height: 580)
+        .defaultSize(width: 810, height: 565)
         .windowResizability(.contentSize)
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)

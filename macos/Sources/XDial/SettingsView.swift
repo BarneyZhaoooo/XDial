@@ -173,33 +173,59 @@ private func reorder<Item>(
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
-    @State private var hoveredTab: Int?
     @State private var profileSheet: ProfileSheet?
     @State private var confirmingRestore = false
     private var tab: Int { state.editorPosition.tab }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let error = state.profilePersistenceError ?? state.profileOperationError {
-                Text(error).font(.caption).foregroundStyle(XDialPalette.danger)
-                    .textSelection(.enabled).padding(12)
+        NavigationSplitView {
+            List(selection: destination) {
+                Section(state.tr("配置", "Configuration")) {
+                    ForEach(ResourcePage.allCases, id: \.self) { page in
+                        Label(page.title(state), systemImage: page.symbol)
+                            .tag(Destination.resource(page))
+                    }
+                }
+                Section(state.tr("通用", "General")) {
+                    ForEach(GeneralSettingsSection.allCases, id: \.self) { section in
+                        Label(section.title(state), systemImage: section.symbol)
+                            .tag(Destination.general(section))
+                    }
+                }
             }
-            if state.editingActiveProfile && state.configDirty { dirtyBanner }
-            Divider()
-            ZStack {
-                if tab == 0 { LinesTab().id(state.editingRecord.id) }
-                else if tab == 3 { LinesTab(groupsOnly: true) }
-                else if tab == 1 { RulesTab().id(state.editingRecord.id) }
-                else if tab == 2 { ScenariosTab() }
-                else { GeneralSettingsView() }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 154, ideal: 180, max: 245)
+        } detail: {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(detailTitle)
+                    .font(.system(.title, design: .rounded, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                if let error = state.profilePersistenceError ?? state.profileOperationError {
+                    Text(error).font(.caption).foregroundStyle(XDialPalette.danger)
+                        .textSelection(.enabled).padding(12)
+                }
+                if state.editingActiveProfile && state.configDirty { dirtyBanner }
+                ZStack {
+                    if tab == 0 { LinesTab().id(state.editingRecord.id) }
+                    else if tab == 3 { LinesTab(groupsOnly: true) }
+                    else if tab == 1 { RulesTab().id(state.editingRecord.id) }
+                    else if tab == 2 { ScenariosTab() }
+                    else { GeneralSettingsView() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(XDialPalette.canvas)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 480)
             .background(XDialPalette.canvas)
         }
-        .frame(width: 620, height: 580)
-        .background(XDialPalette.canvas)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 680, idealWidth: 810, minHeight: 480, idealHeight: 565)
         .toolbar {
-            navigationToolbarItem.withoutSharedBackground()
+            ToolbarItem(placement: .primaryAction) { ProfileNavigation(sheet: $profileSheet) }
             ToolbarItem(placement: .automatic) {
                 Menu {
                     Button(state.tr("从文件导入…", "Import File…")) { profileSheet = .action(.file, state.editingRecord) }
@@ -234,65 +260,47 @@ struct SettingsView: View {
         }
     }
 
-    private var navigationToolbarItem: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            HStack(spacing: 10) {
-                navigationGroup {
-                    ProfileNavigation(sheet: $profileSheet)
-                        .padding(.leading, 6)
-                        .padding(.trailing, 4)
-                    Rectangle()
-                        .fill(.primary.opacity(0.12))
-                        .frame(width: 1, height: 16)
-                        .padding(.trailing, 5)
-                    settingsTab(0, title: state.tr("线路", "Lines"))
-                    settingsTab(3, title: state.tr("线路组", "Line Groups"))
-                }
-                navigationGroup {
-                    settingsTab(1, title: state.tr("规则", "Rules"))
-                    settingsTab(2, title: state.tr("场景", "Scenarios"))
-                }
-                navigationGroup {
-                    settingsTab(4, title: state.tr("通用", "General"))
-                }
+    private enum ResourcePage: Int, CaseIterable {
+        case lines = 0, groups = 3, rules = 1, scenarios = 2
+
+        var symbol: String {
+            switch self {
+            case .lines: "point.3.connected.trianglepath.dotted"
+            case .groups: "square.3.layers.3d"
+            case .rules: "list.bullet.indent"
+            case .scenarios: "square.grid.2x2"
             }
-            .fixedSize()
+        }
+
+        @MainActor func title(_ state: AppState) -> String {
+            switch self {
+            case .lines: state.tr("线路", "Lines")
+            case .groups: state.tr("线路组", "Line Groups")
+            case .rules: state.tr("规则", "Rules")
+            case .scenarios: state.tr("场景", "Scenarios")
+            }
         }
     }
 
-    private func navigationGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 2, content: content)
-            .padding(3)
-            .background(XDialPalette.surface.opacity(0.58), in: RoundedRectangle(cornerRadius: 11))
-            .fixedSize()
-            .accessibilityElement(children: .contain)
+    private enum Destination: Hashable {
+        case resource(ResourcePage)
+        case general(GeneralSettingsSection)
     }
 
-    private func settingsTab(_ index: Int, title: String) -> some View {
-        let selected = tab == index
-        return Button { state.editorPosition.tab = index } label: {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected ? XDialPalette.textPrimary : XDialPalette.textSecondary)
-                .padding(.horizontal, 11)
-                .frame(height: 30)
-                .background {
-                    if selected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(XDialPalette.elevated)
-                            .shadow(color: .black.opacity(0.08), radius: 1.5, y: 1)
-                    } else if hoveredTab == index {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(XDialPalette.surface.opacity(0.85))
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+    private var detailTitle: String {
+        ResourcePage(rawValue: tab)?.title(state) ?? state.editorPosition.generalSection.title(state)
+    }
+
+    private var destination: SwiftUI.Binding<Destination?> {
+        SwiftUI.Binding {
+            ResourcePage(rawValue: tab).map(Destination.resource) ?? .general(state.editorPosition.generalSection)
+        } set: { selection in
+            switch selection {
+            case .resource(let page): state.editorPosition.tab = page.rawValue
+            case .general(let section): state.editorPosition.showGeneral(section)
+            case nil: break
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { hoveredTab = $0 ? index : nil }
-        .animation(.easeOut(duration: 0.12), value: hoveredTab)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// 当前事务依赖的已保存配置发生变化时，三个配置 Tab 共用这一条状态轨。
@@ -409,17 +417,6 @@ struct SettingsView: View {
     }
 }
 
-extension ToolbarContent {
-    @ToolbarContentBuilder fileprivate func withoutSharedBackground() -> some ToolbarContent {
-        #if compiler(>=6.2)
-        if #available(macOS 26.0, *) { self.sharedBackgroundVisibility(.hidden) }
-        else { self }
-        #else
-        self
-        #endif
-    }
-}
-
 // MARK: - 线路 Tab
 
 struct LinesTab: View {
@@ -447,7 +444,17 @@ struct LinesTab: View {
                 Text("\(visibleLines.count)")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 14).padding(.top, 10)
-            if !groupsOnly {
+            if visibleLines.isEmpty {
+                Group {
+                    if searchText.isEmpty {
+                        ContentUnavailableView(state.tr("还没有线路组", "No line groups"), systemImage: "square.3.layers.3d",
+                                               description: Text(state.tr("添加线路组后，可以在场景中一起选择这些线路。", "Group lines to select them together in a scenario.")))
+                    } else {
+                        ContentUnavailableView.search(text: searchText)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !groupsOnly {
                 NativeLinesView(lines: visibleLines, state: state, latencies: state.lineLatencies,
                     allowsReordering: searchText.isEmpty,
                     move: { id, target in moveLine(SettingsReorderItem(kind: "line", id: id), to: target) },
@@ -1647,6 +1654,15 @@ struct RulesTab: View {
                 .padding(.vertical, 12)
                 .settingsReorderDropArea(draggedItem: $draggedItem)
             }
+            .overlay {
+                if rules.isEmpty {
+                    if query.isEmpty {
+                        ContentUnavailableView(state.tr("还没有规则", "No rules"), systemImage: "list.bullet.indent")
+                    } else {
+                        ContentUnavailableView.search(text: query)
+                    }
+                }
+            }
             .transaction { $0.animation = nil; $0.disablesAnimations = true }
             .id(currentPage)
             if pageCount > 1 {
@@ -2166,6 +2182,12 @@ struct ScenariosTab: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .settingsReorderDropArea(draggedItem: $draggedItem)
+                }
+                .overlay {
+                    if state.editingProfile.scenarios.isEmpty {
+                        ContentUnavailableView(state.tr("还没有场景", "No scenarios"), systemImage: "square.grid.2x2",
+                                               description: Text(state.tr("添加场景来配置默认出口和分流规则。", "Add a scenario to configure its default route and rules.")))
+                    }
                 }
                 .onChange(of: createdScenarioID) { _, id in
                     guard let id else { return }
