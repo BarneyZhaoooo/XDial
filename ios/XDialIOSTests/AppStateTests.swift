@@ -418,6 +418,22 @@ final class AppStateTests: XCTestCase {
         return profile
     }
 
+    func testSystemConnectionIsVisibleBeforeLinesAreVerified() {
+        let engine = GoEngine()
+        let app = AppState(engine: engine, persistence: makePersistence())
+        app.profile = configuredProfile()
+        app.profile.lines[1].verified = false
+        let started = Date()
+        engine.applySystemStatus("connected", connectedAt: started)
+
+        XCTAssertTrue(app.isConnected)
+        XCTAssertEqual(engine.connectedAt, started)
+        XCTAssertFalse(app.profile.lines[1].verified)
+        engine.dataPathDidPass.send()
+        XCTAssertTrue(app.profile.lines[1].verified)
+        XCTAssertEqual(engine.connectedAt, started)
+    }
+
     func testConnectivityAcceptanceRulesAreVisibleAndExplicitlyBound() {
         var profile = Profile.bootstrap()
         profile.ruleSets.removeAll { $0.isConnectivityTestRule }

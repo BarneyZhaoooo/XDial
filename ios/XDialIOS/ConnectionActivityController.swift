@@ -73,9 +73,6 @@ final class ConnectionActivityController {
         case "connecting":
             return .init(phase: .working, title: app.tr("正在连接…", "Connecting…"),
                          scenarioName: scenario, connectedAt: nil)
-        case "checking":
-            return .init(phase: .working, title: app.tr("正在检查线路…", "Checking the route…"),
-                         scenarioName: scenario, connectedAt: nil)
         case "reconnecting":
             return .init(phase: .working, title: app.tr("正在重连…", "Reconnecting…"),
                          scenarioName: scenario, connectedAt: nil)
@@ -92,7 +89,7 @@ final class ConnectionActivityController {
                     : app.tr("线路自检未通过", "Route check didn't pass"))
                 : nil
             return .init(
-                phase: degraded ? .attention : .connected,
+                phase: .connected,
                 title: app.tr("已连接", "Connected"),
                 scenarioName: scenario,
                 connectedAt: app.engine.connectedAt ?? Date(),
