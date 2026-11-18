@@ -673,6 +673,8 @@ final class DebugServer {
                     "matchCount": snapshot.matchCount,
                     "candidateAddressCount":
                         snapshot.candidateAddressCount,
+                    "correctedAddressCount":
+                        snapshot.correctedAddressCount,
                     "outboundTagCounts": snapshot.outboundTagCounts,
                     "lineIDCounts": snapshot.lineIDCounts,
                     "ruleSetTag": snapshot.ruleSetTag ?? "",

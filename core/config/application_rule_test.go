@@ -56,9 +56,12 @@ func applicationRouteRulesForTest(t *testing.T, raw []byte) []map[string]interfa
 	return rules
 }
 
+// applicationRuleIndexForTest returns the application route rule. A
+// non-Direct application binding is preceded by its Line-owned resolve action,
+// which carries the same users but no outbound.
 func applicationRuleIndexForTest(rules []map[string]interface{}) int {
 	for index, rule := range rules {
-		if _, ok := rule["auth_user"]; ok {
+		if _, ok := rule["auth_user"]; ok && rule["outbound"] != nil {
 			return index
 		}
 	}
@@ -109,7 +112,20 @@ func TestApplicationRuleSetTransparentProxyPinsRouteAndDNS(t *testing.T) {
 		t.Fatal("transparent proxy did not compile the application rule")
 	}
 	if action, exists := rules[applicationIndex]["action"]; exists {
-		t.Fatalf("application rule must not emit a DNS resolve action, got %v", action)
+		t.Fatalf("application route rule must not carry an action, got %v", action)
+	}
+	// The application's own system DNS answer was not attributed to it, so
+	// the bound Line verifies the endpoint before the route takes effect.
+	if applicationIndex == 0 {
+		t.Fatal("application route has no preceding Line-owned resolve action")
+	}
+	resolve := rules[applicationIndex-1]
+	if resolve["action"] != "resolve" ||
+		resolve["server"] != "proxy-dns-proxy-ss" ||
+		resolve[transparentFlowAddressCorrectionKey] != true ||
+		resolve["strategy"] != nil ||
+		!reflect.DeepEqual(resolve["auth_user"], rules[applicationIndex]["auth_user"]) {
+		t.Fatalf("application resolve must correct addresses from the bound Line: %v", resolve)
 	}
 	manualRouteIndex := -1
 	for index, rule := range rules {

@@ -1,0 +1,471 @@
+diff --git a/adapter/inbound.go b/adapter/inbound.go
+index ee29ed8..efae187 100644
+--- a/adapter/inbound.go
++++ b/adapter/inbound.go
+@@ -55,6 +55,7 @@ type InboundContext struct {
+ 	Outbound                       string
+ 	XDialBoundInterface            string
+ 	XDialOriginalDestinationDomain string
++	XDialCorrectedFlowAddress      bool
+ 
+ 	// sniffer
+ 
+diff --git a/option/rule_action.go b/option/rule_action.go
+index df00777..19af62c 100644
+--- a/option/rule_action.go
++++ b/option/rule_action.go
+@@ -327,13 +327,14 @@ type RouteActionSniff struct {
+ }
+ 
+ type RouteActionResolve struct {
+-	Server                 string                `json:"server,omitempty" reference:"dns_server"`
+-	Timeout                badoption.Duration    `json:"timeout,omitempty"`
+-	Strategy               DomainStrategy        `json:"strategy,omitempty"`
+-	DisableCache           bool                  `json:"disable_cache,omitempty"`
+-	DisableOptimisticCache bool                  `json:"disable_optimistic_cache,omitempty"`
+-	RewriteTTL             *uint32               `json:"rewrite_ttl,omitempty"`
+-	ClientSubnet           *badoption.Prefixable `json:"client_subnet,omitempty"`
++	Server                  string                `json:"server,omitempty" reference:"dns_server"`
++	Timeout                 badoption.Duration    `json:"timeout,omitempty"`
++	Strategy                DomainStrategy        `json:"strategy,omitempty"`
++	DisableCache            bool                  `json:"disable_cache,omitempty"`
++	DisableOptimisticCache  bool                  `json:"disable_optimistic_cache,omitempty"`
++	RewriteTTL              *uint32               `json:"rewrite_ttl,omitempty"`
++	ClientSubnet            *badoption.Prefixable `json:"client_subnet,omitempty"`
++	XDialCorrectFlowAddress bool                  `json:"xdial_correct_flow_address,omitempty"`
+ }
+ 
+ type DNSRouteActionPredefined struct {
+diff --git a/route/route.go b/route/route.go
+index 78637ca..8131913 100644
+--- a/route/route.go
++++ b/route/route.go
+@@ -878,39 +878,143 @@ func (r *Router) actionSniff(
+ 
+ func (r *Router) actionResolve(ctx context.Context, metadata *adapter.InboundContext, action *R.RuleActionResolve) error {
+ 	queryDomain := xdialFlowDomainForResolve(metadata, action.Strategy)
+-	if queryDomain != "" {
+-		var transport adapter.DNSTransport
+-		if action.Server != "" {
+-			var loaded bool
+-			transport, loaded = r.dnsTransport.Transport(action.Server)
+-			if !loaded {
+-				return E.New("DNS server not found: ", action.Server)
+-			}
+-		}
+-		addresses, err := r.dns.Lookup(adapter.WithContext(ctx, metadata), queryDomain, adapter.DNSQueryOptions{
+-			Transport:              transport,
+-			Strategy:               action.Strategy,
+-			DisableCache:           action.DisableCache,
+-			DisableOptimisticCache: action.DisableOptimisticCache,
+-			RewriteTTL:             action.RewriteTTL,
+-			Timeout:                action.Timeout,
+-			ClientSubnet:           action.ClientSubnet,
+-		})
+-		if err != nil {
+-			return err
++	correctionDomain := ""
++	if queryDomain == "" && action.XDialCorrectFlowAddress {
++		correctionDomain = xdialFlowDomainForAddressCorrection(metadata)
++	}
++	if queryDomain == "" && correctionDomain == "" {
++		return nil
++	}
++	var transport adapter.DNSTransport
++	if action.Server != "" {
++		var loaded bool
++		transport, loaded = r.dnsTransport.Transport(action.Server)
++		if !loaded {
++			return E.New("DNS server not found: ", action.Server)
+ 		}
+-		if metadata.Destination.IsIP() {
+-			if len(addresses) == 0 {
+-				return E.New("DNS response does not contain any addresses")
+-			}
+-			xdialApplyResolvedFlowDomain(metadata, queryDomain)
++	}
++	lookupDomain := queryDomain
++	if lookupDomain == "" {
++		lookupDomain = correctionDomain
++	}
++	addresses, err := r.dns.Lookup(adapter.WithContext(ctx, metadata), lookupDomain, adapter.DNSQueryOptions{
++		Transport:              transport,
++		Strategy:               action.Strategy,
++		DisableCache:           action.DisableCache,
++		DisableOptimisticCache: action.DisableOptimisticCache,
++		RewriteTTL:             action.RewriteTTL,
++		Timeout:                action.Timeout,
++		ClientSubnet:           action.ClientSubnet,
++	})
++	if correctionDomain != "" {
++		// Correction is an additional consistency check on a flow that
++		// already has a usable endpoint. Without a positive answer from the
++		// owning Line there is nothing better to connect to, so the flow keeps
++		// the behavior it had before the check.
++		if err != nil || !xdialFlowAddressNeedsCorrection(metadata.Destination.Addr, addresses) {
++			return nil
+ 		}
++		xdialApplyResolvedFlowDomain(metadata, correctionDomain)
++		metadata.XDialCorrectedFlowAddress = true
+ 		metadata.DestinationAddresses = addresses
+-		r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
++		r.logger.DebugContext(ctx, "corrected flow address from the matched line resolver")
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	if metadata.Destination.IsIP() {
++		if len(addresses) == 0 {
++			return E.New("DNS response does not contain any addresses")
++		}
++		xdialApplyResolvedFlowDomain(metadata, queryDomain)
+ 	}
++	metadata.DestinationAddresses = addresses
++	r.logger.DebugContext(ctx, "resolved [", strings.Join(F.MapToString(metadata.DestinationAddresses), " "), "]")
+ 	return nil
+ }
+ 
++// xdialFlowDomainForAddressCorrection returns the name whose owning Line may
++// verify an application-supplied endpoint. The name must be the one this flow
++// was matched with: a hostname reported by the system for the flow, or, when
++// the application connected by address, the name it presented in TLS, QUIC or
++// HTTP. A system hostname that disagrees with the sniffed name is ambiguous
++// and is left alone. Non-public endpoints are deliberate local, private or
++// overlay choices and are never replaced.
++func xdialFlowDomainForAddressCorrection(metadata *adapter.InboundContext) string {
++	if !metadata.Destination.IsIP() ||
++		!xdialCorrectableFlowAddress(metadata.Destination.Addr) {
++		return ""
++	}
++	domain := xdialCanonicalFlowDomain(metadata.Domain)
++	if domain == "" {
++		return ""
++	}
++	if trusted := metadata.XDialOriginalDestinationDomain; trusted != "" {
++		if xdialCanonicalFlowDomain(trusted) != domain {
++			return ""
++		}
++		return trusted
++	}
++	if metadata.SniffError != nil {
++		return ""
++	}
++	switch metadata.Protocol {
++	case C.ProtocolTLS, C.ProtocolQUIC, C.ProtocolHTTP:
++		return metadata.Domain
++	default:
++		return ""
++	}
++}
++
++func xdialCanonicalFlowDomain(raw string) string {
++	domain := strings.ToLower(strings.TrimSuffix(raw, "."))
++	if domain == "" || !M.IsDomainName(domain) {
++		return ""
++	}
++	if _, err := netip.ParseAddr(domain); err == nil {
++		return ""
++	}
++	return domain
++}
++
++// Shared address space carries carrier NAT and Tailscale overlay addresses;
++// 198.18.0.0/15 is reserved for tunnel and synthetic-address use.
++var xdialNonPublicFlowPrefixes = []netip.Prefix{
++	netip.MustParsePrefix("100.64.0.0/10"),
++	netip.MustParsePrefix("198.18.0.0/15"),
++}
++
++func xdialCorrectableFlowAddress(address netip.Addr) bool {
++	address = address.Unmap()
++	if !address.IsValid() || address.Zone() != "" ||
++		!address.IsGlobalUnicast() || address.IsPrivate() {
++		return false
++	}
++	for _, prefix := range xdialNonPublicFlowPrefixes {
++		if prefix.Contains(address) {
++			return false
++		}
++	}
++	return true
++}
++
++func xdialFlowAddressNeedsCorrection(
++	destination netip.Addr,
++	addresses []netip.Addr,
++) bool {
++	if len(addresses) == 0 {
++		return false
++	}
++	destination = destination.Unmap()
++	for _, address := range addresses {
++		if address.Unmap() == destination {
++			return false
++		}
++	}
++	return true
++}
++
+ func xdialApplyResolvedFlowDomain(
+ 	metadata *adapter.InboundContext,
+ 	queryDomain string,
+diff --git a/route/rule/rule_action.go b/route/rule/rule_action.go
+index 4994734..7452050 100644
+--- a/route/rule/rule_action.go
++++ b/route/rule/rule_action.go
+@@ -111,13 +111,14 @@ func NewRuleAction(ctx context.Context, logger logger.ContextLogger, action opti
+ 		return sniffAction, sniffAction.build()
+ 	case C.RuleActionTypeResolve:
+ 		return &RuleActionResolve{
+-			Server:                 action.ResolveOptions.Server,
+-			Timeout:                time.Duration(action.ResolveOptions.Timeout),
+-			Strategy:               C.DomainStrategy(action.ResolveOptions.Strategy),
+-			DisableCache:           action.ResolveOptions.DisableCache,
+-			DisableOptimisticCache: action.ResolveOptions.DisableOptimisticCache,
+-			RewriteTTL:             action.ResolveOptions.RewriteTTL,
+-			ClientSubnet:           action.ResolveOptions.ClientSubnet.Build(netip.Prefix{}),
++			Server:                  action.ResolveOptions.Server,
++			Timeout:                 time.Duration(action.ResolveOptions.Timeout),
++			Strategy:                C.DomainStrategy(action.ResolveOptions.Strategy),
++			DisableCache:            action.ResolveOptions.DisableCache,
++			DisableOptimisticCache:  action.ResolveOptions.DisableOptimisticCache,
++			RewriteTTL:              action.ResolveOptions.RewriteTTL,
++			ClientSubnet:            action.ResolveOptions.ClientSubnet.Build(netip.Prefix{}),
++			XDialCorrectFlowAddress: action.ResolveOptions.XDialCorrectFlowAddress,
+ 		}, nil
+ 	default:
+ 		panic(F.ToString("unknown rule action: ", action.Action))
+@@ -563,6 +564,10 @@ type RuleActionResolve struct {
+ 	DisableOptimisticCache bool
+ 	RewriteTTL             *uint32
+ 	ClientSubnet           netip.Prefix
++	// XDialCorrectFlowAddress lets the Line that owns this rule replace an
++	// application-supplied public IP when the flow's attributed name resolves
++	// elsewhere from that Line's resolver view.
++	XDialCorrectFlowAddress bool
+ }
+ 
+ func (r *RuleActionResolve) Type() string {
+@@ -592,6 +597,9 @@ func (r *RuleActionResolve) String() string {
+ 	if r.ClientSubnet.IsValid() {
+ 		options = append(options, F.ToString("client_subnet=", r.ClientSubnet))
+ 	}
++	if r.XDialCorrectFlowAddress {
++		options = append(options, "xdial_correct_flow_address")
++	}
+ 	if len(options) == 0 {
+ 		return "resolve"
+ 	} else {
+diff --git a/route/xdial_flow_address_correction_test.go b/route/xdial_flow_address_correction_test.go
+new file mode 100644
+index 0000000..501d7a7
+--- /dev/null
++++ b/route/xdial_flow_address_correction_test.go
+@@ -0,0 +1,206 @@
++package route
++
++import (
++	"context"
++	"errors"
++	"net/netip"
++	"testing"
++
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	R "github.com/sagernet/sing-box/route/rule"
++	M "github.com/sagernet/sing/common/metadata"
++
++	"github.com/stretchr/testify/require"
++)
++
++type xdialCorrectionDNSRouter struct {
++	adapter.DNSRouter
++	addresses []netip.Addr
++	err       error
++	calls     int
++	domain    string
++}
++
++func (r *xdialCorrectionDNSRouter) Lookup(
++	_ context.Context,
++	domain string,
++	_ adapter.DNSQueryOptions,
++) ([]netip.Addr, error) {
++	r.calls++
++	r.domain = domain
++	return r.addresses, r.err
++}
++
++func xdialCorrectionRouter(resolver adapter.DNSRouter) *Router {
++	return &Router{
++		dns:    resolver,
++		logger: log.NewNOPFactory().NewLogger("router"),
++	}
++}
++
++func xdialSniffedTLSFlow(address string, domain string) *adapter.InboundContext {
++	return &adapter.InboundContext{
++		Destination: M.SocksaddrFrom(netip.MustParseAddr(address), 443),
++		Protocol:    C.ProtocolTLS,
++		Domain:      domain,
++		IPVersion:   4,
++	}
++}
++
++var xdialCorrectAction = &R.RuleActionResolve{XDialCorrectFlowAddress: true}
++
++// The incident shape: the application obtained a forged answer outside
++// XDial, connected by address, and presented the real name in TLS. The Line
++// selected for that name must connect to its own answer instead.
++func TestXDialCorrectionReplacesAddressOutsideLineAnswer(t *testing.T) {
++	lineAnswer := []netip.Addr{
++		netip.MustParseAddr("104.18.32.47"),
++		netip.MustParseAddr("172.64.155.209"),
++	}
++	resolver := &xdialCorrectionDNSRouter{addresses: lineAnswer}
++	metadata := xdialSniffedTLSFlow("108.160.162.104", "chatgpt.com")
++	original := metadata.Destination
++
++	err := xdialCorrectionRouter(resolver).actionResolve(
++		context.Background(), metadata, xdialCorrectAction,
++	)
++
++	require.NoError(t, err)
++	require.Equal(t, "chatgpt.com", resolver.domain)
++	require.True(t, metadata.XDialCorrectedFlowAddress)
++	require.Equal(t, "chatgpt.com", metadata.Destination.Fqdn)
++	require.Equal(t, uint16(443), metadata.Destination.Port)
++	require.Equal(t, original, metadata.RouteOriginalDestination)
++	require.Equal(t, lineAnswer, metadata.DestinationAddresses)
++	require.Zero(t, metadata.IPVersion)
++}
++
++func TestXDialCorrectionKeepsAddressInsideLineAnswer(t *testing.T) {
++	resolver := &xdialCorrectionDNSRouter{addresses: []netip.Addr{
++		netip.MustParseAddr("104.18.32.47"),
++	}}
++	metadata := xdialSniffedTLSFlow("104.18.32.47", "chatgpt.com")
++	before := *metadata
++
++	err := xdialCorrectionRouter(resolver).actionResolve(
++		context.Background(), metadata, xdialCorrectAction,
++	)
++
++	require.NoError(t, err)
++	require.Equal(t, 1, resolver.calls)
++	require.Equal(t, before, *metadata)
++}
++
++func TestXDialCorrectionKeepsAddressWhenLineCannotAnswer(t *testing.T) {
++	for name, resolver := range map[string]*xdialCorrectionDNSRouter{
++		"error": {err: errors.New("line resolver unavailable")},
++		"empty": {},
++	} {
++		t.Run(name, func(t *testing.T) {
++			metadata := xdialSniffedTLSFlow("108.160.162.104", "chatgpt.com")
++			before := *metadata
++
++			err := xdialCorrectionRouter(resolver).actionResolve(
++				context.Background(), metadata, xdialCorrectAction,
++			)
++
++			require.NoError(t, err)
++			require.Equal(t, before, *metadata)
++		})
++	}
++}
++
++func TestXDialCorrectionRequiresExplicitRuleOption(t *testing.T) {
++	resolver := &xdialCorrectionDNSRouter{addresses: []netip.Addr{
++		netip.MustParseAddr("104.18.32.47"),
++	}}
++	metadata := xdialSniffedTLSFlow("108.160.162.104", "chatgpt.com")
++	before := *metadata
++
++	err := xdialCorrectionRouter(resolver).actionResolve(
++		context.Background(), metadata, &R.RuleActionResolve{},
++	)
++
++	require.NoError(t, err)
++	require.Zero(t, resolver.calls)
++	require.Equal(t, before, *metadata)
++}
++
++func TestXDialCorrectionUsesSystemHostnameWhenItAgreesWithSniff(t *testing.T) {
++	resolver := &xdialCorrectionDNSRouter{addresses: []netip.Addr{
++		netip.MustParseAddr("104.18.32.47"),
++	}}
++	metadata := xdialSniffedTLSFlow("108.160.162.104", "ChatGPT.com.")
++	metadata.XDialOriginalDestinationDomain = "chatgpt.com"
++
++	err := xdialCorrectionRouter(resolver).actionResolve(
++		context.Background(), metadata, xdialCorrectAction,
++	)
++
++	require.NoError(t, err)
++	require.Equal(t, "chatgpt.com", resolver.domain)
++	require.True(t, metadata.XDialCorrectedFlowAddress)
++}
++
++func TestXDialFlowDomainForAddressCorrection(t *testing.T) {
++	tests := []struct {
++		name     string
++		address  string
++		protocol string
++		domain   string
++		trusted  string
++		sniffErr error
++		want     string
++	}{
++		{"tls", "108.160.162.104", C.ProtocolTLS, "chatgpt.com", "", nil, "chatgpt.com"},
++		{"quic", "108.160.162.104", C.ProtocolQUIC, "chatgpt.com", "", nil, "chatgpt.com"},
++		{"http", "108.160.162.104", C.ProtocolHTTP, "chatgpt.com", "", nil, "chatgpt.com"},
++		{"system-hostname-without-sniff", "108.160.162.104", "", "chatgpt.com", "chatgpt.com", nil, "chatgpt.com"},
++		{"system-hostname-disagrees", "108.160.162.104", C.ProtocolTLS, "front.example", "chatgpt.com", nil, ""},
++		{"unsniffed-name", "108.160.162.104", "", "chatgpt.com", "", nil, ""},
++		{"other-protocol", "108.160.162.104", C.ProtocolSSH, "chatgpt.com", "", nil, ""},
++		{"sniff-error", "108.160.162.104", C.ProtocolTLS, "chatgpt.com", "", errors.New("partial"), ""},
++		{"no-name", "108.160.162.104", C.ProtocolTLS, "", "", nil, ""},
++		{"literal-host", "108.160.162.104", C.ProtocolHTTP, "104.18.32.47", "", nil, ""},
++		{"private", "192.168.1.20", C.ProtocolTLS, "chatgpt.com", "", nil, ""},
++		{"loopback", "127.0.0.1", C.ProtocolTLS, "chatgpt.com", "", nil, ""},
++		{"link-local", "169.254.10.1", C.ProtocolTLS, "chatgpt.com", "", nil, ""},
++		{"shared-address-space", "100.101.102.103", C.ProtocolTLS, "node.example.ts.net", "", nil, ""},
++		{"reserved-tunnel-range", "198.18.0.10", C.ProtocolTLS, "chatgpt.com", "", nil, ""},
++		{"unique-local-ipv6", "fd7a:115c:a1e0::1", C.ProtocolTLS, "chatgpt.com", "", nil, ""},
++		{"public-ipv6", "2606:4700::6812:2001", C.ProtocolTLS, "chatgpt.com", "", nil, "chatgpt.com"},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			metadata := &adapter.InboundContext{
++				Destination:                    M.SocksaddrFrom(netip.MustParseAddr(test.address), 443),
++				Protocol:                       test.protocol,
++				Domain:                         test.domain,
++				XDialOriginalDestinationDomain: test.trusted,
++				SniffError:                     test.sniffErr,
++			}
++			require.Equal(t, test.want, xdialFlowDomainForAddressCorrection(metadata))
++		})
++	}
++
++	domainDestination := &adapter.InboundContext{
++		Destination: M.Socksaddr{Fqdn: "chatgpt.com", Port: 443},
++		Protocol:    C.ProtocolTLS,
++		Domain:      "chatgpt.com",
++	}
++	require.Empty(t, xdialFlowDomainForAddressCorrection(domainDestination))
++}
++
++func TestXDialFlowAddressNeedsCorrectionComparesUnmappedAddresses(t *testing.T) {
++	mapped := netip.MustParseAddr("::ffff:104.18.32.47")
++	answer := []netip.Addr{netip.MustParseAddr("104.18.32.47")}
++
++	require.False(t, xdialFlowAddressNeedsCorrection(mapped, answer))
++	require.True(t, xdialFlowAddressNeedsCorrection(
++		netip.MustParseAddr("108.160.162.104"),
++		answer,
++	))
++	require.False(t, xdialFlowAddressNeedsCorrection(mapped, nil))
++}

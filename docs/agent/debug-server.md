@@ -60,6 +60,10 @@ curl -sS -X POST 127.0.0.1:19877/action \
   断开、Scenario 或 transaction 变化时清空。
 - 路由探针的 `lineIDCounts` 表达本次实际 Line 归因；`outboundTagCounts` 是内部出口
   计数，不能独自证明 Line 映射。公网 IP 和旧 Clash API selector 也不表达本次归因。
+  `correctedAddressCount` 是窗口内应用自带地址不在所属 Line 解析应答中、改按该 Line
+  应答连接的 flow 数（见架构 §4.4）。非零只说明应用地址与该 Line 当前应答不一致；
+  可能与 DNS 查询绕过接管有关，也可能来自正常的 CDN 地址变化或应用缓存，不能单独作为
+  DNS 绕行的证据。
 - `appUpdate` 的 `tag`、`channel` 描述当前候选，`preference` 是“接收 beta 版本”开关，
   `installedTag` 是运行中 App 的发布标签；`secondaryNotice` 是 stable 已给出结论时 beta
   清单的失败，`lastBuildNotNewer` 记录任一清单最近一次“标签更新但构建号不更高”的条目，

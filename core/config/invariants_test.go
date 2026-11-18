@@ -961,6 +961,11 @@ func TestINV4_ApplicationRuleIsTraceableToActiveScenarioBinding(t *testing.T) {
 	var applicationRules []map[string]interface{}
 	for _, rule := range invRouteRules(t, generated) {
 		if _, exists := rule["auth_user"]; exists {
+			if rule["action"] == "resolve" {
+				// Line-owned address verification precedes the route; it
+				// never selects an outbound by itself.
+				continue
+			}
 			applicationRules = append(applicationRules, rule)
 			if !invMatchesScenarioBinding(profile, rule) {
 				t.Fatalf("application route cannot be traced to its Scenario binding: %s", invPretty(rule))

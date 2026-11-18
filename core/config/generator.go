@@ -765,6 +765,7 @@ func generateSingBox(
 		if dnsErr != nil {
 			return nil, dnsErr
 		}
+		markLineOwnedFlowAddressCorrection(routeRules, dnsConfig)
 	} else if !platform.isNetworkExtension() {
 		dnsConfig = buildDNS(
 			enterpriseDNS,
@@ -1835,14 +1836,18 @@ func compileTransparentProxyRuleSet(
 			"outbound":  outTag,
 		}
 		applyRuleSetInvert(route, ruleSet)
-		if addressFamilyStrategy == "" {
+		if addressFamilyStrategy == "" && outTag == "direct" {
 			return []map[string]interface{}{route}
 		}
+		// 非 Direct 的应用流量即使没有地址族限制，也保留一个同 Line 的
+		// resolve 动作：它只在应用自带的地址需要纠正时才生效。
 		resolve := map[string]interface{}{
 			"auth_user": users,
 			"action":    "resolve",
 			"server":    transparentProxyResolverTag(ruleSet, outTag),
-			"strategy":  addressFamilyStrategy,
+		}
+		if addressFamilyStrategy != "" {
+			resolve["strategy"] = addressFamilyStrategy
 		}
 		applyRuleSetInvert(resolve, ruleSet)
 		return []map[string]interface{}{resolve, route}
@@ -1961,6 +1966,49 @@ func compileInvertedTransparentProxyManualRuleSet(
 		return []map[string]interface{}{transparentProxySystemResolveRule(), route}
 	default:
 		return nil
+	}
+}
+
+// transparentFlowAddressCorrectionKey 是补丁 0017 的 resolve 选项：
+// 已按名字归属某条 Line 的流量，若应用给出的公网地址不在该 Line 的解析
+// 结果中，就改按该 Line 的结果连接。
+const transparentFlowAddressCorrectionKey = "xdial_correct_flow_address"
+
+// markLineOwnedFlowAddressCorrection 只给使用 Line 自有 resolver 的 resolve
+// 动作打开地址纠正。应用自己的 DNS 可能不经过 XDial（mDNSResponder 的旧
+// querier、应用内置解析器、接管前的缓存），拿到 Underlay 视角甚至被篡改的
+// 地址；名字已决定 Line 时，连接地址也必须来自同一 Line 的解析视角。
+//
+// Direct、启动前系统 DNS 和 MagicDNS hosts 都不属于这里：Direct 本来就采用
+// Underlay 解析语义，应用自己的答案就是该视角。判断依据是编译后 resolver
+// 的实际类型，而不是出口 tag——选中 Direct 的选择器组仍是系统 resolver。
+func markLineOwnedFlowAddressCorrection(
+	routeRules []map[string]interface{},
+	dnsConfig map[string]interface{},
+) {
+	servers, _ := dnsConfig["servers"].([]map[string]interface{})
+	lineOwned := make(map[string]bool, len(servers))
+	for _, server := range servers {
+		tag, _ := server["tag"].(string)
+		if tag == "" {
+			continue
+		}
+		switch server["type"] {
+		case "xdial-anyconnect":
+			lineOwned[tag] = true
+		case "https":
+			if detour, _ := server["detour"].(string); detour != "" && detour != "direct" {
+				lineOwned[tag] = true
+			}
+		}
+	}
+	for _, rule := range routeRules {
+		if rule["action"] != "resolve" {
+			continue
+		}
+		if server, _ := rule["server"].(string); lineOwned[server] {
+			rule[transparentFlowAddressCorrectionKey] = true
+		}
 	}
 }
 

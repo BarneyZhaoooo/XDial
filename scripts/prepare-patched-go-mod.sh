@@ -251,6 +251,14 @@ grep -Fq 'func TestXDialFlowDomainForResolveUsesMatchedSingleStackStrategy(' \
 	"${patched_sing_box_dir}/route/xdial_flow_resolve_test.go"
 grep -Fq 'func TestXDialApplyResolvedFlowDomainPreservesFirstOriginalDestination(' \
 	"${patched_sing_box_dir}/route/xdial_flow_resolve_test.go"
+grep -Fq 'json:"xdial_correct_flow_address,omitempty"' \
+	"${patched_sing_box_dir}/option/rule_action.go"
+grep -Eq 'XDialCorrectedFlowAddress[[:space:]]+bool' \
+	"${patched_sing_box_dir}/adapter/inbound.go"
+grep -Fq 'func xdialFlowDomainForAddressCorrection(' \
+	"${patched_sing_box_dir}/route/route.go"
+grep -Fq 'func TestXDialCorrectionReplacesAddressOutsideLineAnswer(' \
+	"${patched_sing_box_dir}/route/xdial_flow_address_correction_test.go"
 grep -Fq 'func TestXDialBoundFlowMetadataPreservesInterfaceForDirect(' \
 	"${patched_sing_box_dir}/protocol/socks/xdial_flow_metadata_test.go"
 grep -Fq 'func TestXDialBoundDialerOptionsOnlyOverridesInterface(' \

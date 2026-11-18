@@ -69,6 +69,9 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
     let probeID: String
     let matchCount: Int
     let candidateAddressCount: Int
+    /// Matched flows whose application-supplied address was replaced by the
+    /// selected Line's own resolver answer. A count only; never the address.
+    let correctedAddressCount: Int
     let outboundTagCounts: [String: Int]
     let lineIDCounts: [String: Int]
     let ruleSetTag: String?
@@ -77,6 +80,7 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
         case probeID = "probe_id"
         case matchCount = "match_count"
         case candidateAddressCount = "candidate_address_count"
+        case correctedAddressCount = "corrected_address_count"
         case outboundTagCounts = "outbound_tag_counts"
         case lineIDCounts = "line_id_counts"
         case ruleSetTag = "rule_set_tag"
@@ -86,6 +90,7 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
         probeID: String,
         matchCount: Int,
         candidateAddressCount: Int = 0,
+        correctedAddressCount: Int = 0,
         outboundTagCounts: [String: Int],
         lineIDCounts: [String: Int] = [:],
         ruleSetTag: String? = nil
@@ -93,6 +98,7 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
         self.probeID = probeID
         self.matchCount = matchCount
         self.candidateAddressCount = candidateAddressCount
+        self.correctedAddressCount = correctedAddressCount
         self.outboundTagCounts = outboundTagCounts
         self.lineIDCounts = lineIDCounts
         self.ruleSetTag = ruleSetTag
@@ -105,6 +111,10 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
         candidateAddressCount = try values.decodeIfPresent(
             Int.self,
             forKey: .candidateAddressCount
+        ) ?? 0
+        correctedAddressCount = try values.decodeIfPresent(
+            Int.self,
+            forKey: .correctedAddressCount
         ) ?? 0
         outboundTagCounts = try values.decode(
             [String: Int].self,
@@ -148,6 +158,7 @@ struct ProviderRoutingProbeSnapshot: Codable, Equatable {
             probeID: probeID,
             matchCount: max(0, matchCount),
             candidateAddressCount: max(0, candidateAddressCount),
+            correctedAddressCount: max(0, correctedAddressCount),
             outboundTagCounts: filteredTags,
             lineIDCounts: attributedLines,
             ruleSetTag: ruleSetTag.flatMap {
