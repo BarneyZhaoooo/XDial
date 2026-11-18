@@ -4,7 +4,7 @@ import UIKit
 /// 手机端的颜色、圆角和通用样式。色值与 macOS 的 XDialBrandPalette 保持一致，
 /// 让图标、桌面版和手机版是同一套石青色系。
 enum XDialTheme {
-    static let canvas = dynamic(light: 0xE9EDEF, dark: 0x15181A)
+    static let canvas = dynamic(light: 0xEFF2F3, dark: 0x15181A)
     static let surface = dynamic(light: 0xFFFFFF, dark: 0x23272A)
     static let surfaceMuted = dynamic(light: 0xF3F5F6, dark: 0x1D2123)
     static let hairline = dynamic(light: 0xD3DADD, dark: 0x363C40)
@@ -44,22 +44,6 @@ private extension UIColor {
 }
 
 extension View {
-    /// 控件层用系统的液态玻璃（iOS 26 起）；更早的系统退回实色底。
-    /// 只用在按钮、胶囊这类浮在内容上面的控件，内容卡片保持实色。
-    @ViewBuilder
-    func xdialGlass<S: Shape>(
-        tint: Color? = nil,
-        interactive: Bool = false,
-        in shape: S,
-        fallback: Color
-    ) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(XDialGlass.make(tint: tint, interactive: interactive), in: shape)
-        } else {
-            self.background(fallback, in: shape)
-        }
-    }
-
     /// 表单和列表统一用主屏的底色，而不是系统默认的灰蓝色。
     func xdialGroupedBackground() -> some View {
         self
@@ -77,16 +61,6 @@ extension View {
                 in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
             )
             .shadow(color: .black.opacity(0.04), radius: 12, y: 4)
-    }
-}
-
-@available(iOS 26.0, *)
-enum XDialGlass {
-    static func make(tint: Color?, interactive: Bool) -> Glass {
-        var glass = Glass.regular
-        if let tint { glass = glass.tint(tint) }
-        if interactive { glass = glass.interactive() }
-        return glass
     }
 }
 

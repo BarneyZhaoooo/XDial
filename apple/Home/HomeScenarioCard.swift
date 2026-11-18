@@ -20,14 +20,7 @@ struct HomeScenarioCard: View {
             if requiresConfirmation { confirming = true } else { select() }
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: symbol)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(isActive ? XDialTheme.surface : XDialTheme.accent)
-                    .frame(width: compact ? 32 : 44, height: compact ? 32 : 44)
-                    .background(
-                        isActive ? XDialTheme.accent : XDialTheme.accent.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    )
+                HomeSymbol(symbol: symbol, selected: isActive)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(name)
@@ -48,15 +41,8 @@ struct HomeScenarioCard: View {
             }
             .padding(compact ? 9 : 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                XDialTheme.surface,
-                in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous)
-                    .strokeBorder(XDialTheme.accent.opacity(isActive ? 1 : 0), lineWidth: 1.5)
-            }
-            .shadow(color: .black.opacity(0.04), radius: 12, y: 4)
+            .background(isActive ? XDialTheme.accent.opacity(0.12) : XDialTheme.surface,
+                        in: RoundedRectangle(cornerRadius: 15))
             .contentShape(RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous))
         }
         .buttonStyle(.plain)

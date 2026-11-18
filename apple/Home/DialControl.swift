@@ -30,7 +30,7 @@ struct DialControl: View {
     @GestureState private var isDialing = false
     @State private var lastTouchAngle: Double?
 
-    private var ringInset: CGFloat { max(9, diameter * 0.055) }
+    private var ringInset: CGFloat { max(11, diameter * 0.075) }
     private var outerDiameter: CGFloat { diameter + ringInset * 2 }
     private var scale: CGFloat { diameter / (DialLayout.discRadius * 2) }
 
@@ -42,6 +42,7 @@ struct DialControl: View {
                     let time = context.date.timeIntervalSinceReferenceDate
                     ZStack {
                         statusRing(time: time)
+                        scaleMarks
                         disc
                     }
                 }
@@ -168,7 +169,7 @@ struct DialControl: View {
         let lineWidth = max(2.5, diameter * 0.014)
         return ZStack {
             Circle()
-                .stroke(isLit ? stateColor : XDialTheme.hairline.opacity(0.9), lineWidth: lineWidth)
+                .stroke(isLit ? stateColor : Color.white.opacity(0.28), lineWidth: lineWidth)
                 .shadow(color: isLit ? stateColor.opacity(0.5) : .clear, radius: 6)
             if phase == .working {
                 Circle()
@@ -188,32 +189,31 @@ struct DialControl: View {
         .frame(width: outerDiameter - lineWidth, height: outerDiameter - lineWidth)
     }
 
-    @ViewBuilder
     private var disc: some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, macOS 26.0, *) {
-            // 液态玻璃盘面：未连接时是透明玻璃，连上后染成状态色。
-            Circle()
-                .fill(.clear)
-                .frame(width: diameter, height: diameter)
-                .glassEffect(
-                    Glass.regular.tint(isLit ? stateColor : nil).interactive(),
-                    in: Circle()
-                )
-        } else {
-            opaqueDisc
-        }
-        #else
-        opaqueDisc
-        #endif
+        Circle()
+            .fill(.clear)
+            .frame(width: diameter, height: diameter)
+            .xdialGlass(tint: isLit ? stateColor : .white.opacity(0.10), interactive: true,
+                        in: Circle(), fallback: isLit ? stateColor : XDialTheme.dialFace)
     }
 
-    private var opaqueDisc: some View {
-        Circle()
-            .fill(isLit ? stateColor : XDialTheme.dialFace)
-            .frame(width: diameter, height: diameter)
-            .shadow(color: .black.opacity(0.10), radius: 22, y: 12)
-            .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
+    private var scaleMarks: some View {
+        Canvas { context, size in
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let radius = diameter / 2 + ringInset * 0.54
+            var marks = Path()
+            for index in 0..<48 {
+                let angle = CGFloat(index) * .pi / 24
+                let length = ringInset * (index.isMultiple(of: 4) ? 0.48 : 0.22)
+                marks.move(to: CGPoint(x: center.x + cos(angle) * (radius - length),
+                                       y: center.y + sin(angle) * (radius - length)))
+                marks.addLine(to: CGPoint(x: center.x + cos(angle) * radius,
+                                          y: center.y + sin(angle) * radius))
+            }
+            context.stroke(marks, with: .color(.white.opacity(0.58)), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private var fingerStop: some View {
@@ -245,17 +245,17 @@ struct DialControl: View {
         let size = layout.hubRadius * 2 * scale
         return ZStack {
             Circle()
-                .fill(isLit ? Color.white.opacity(0.20) : XDialTheme.dialFace)
+                .fill(.white.opacity(isLit ? 0.20 : 0.09))
                 .overlay {
                     Circle().strokeBorder(
-                        isLit ? Color.white.opacity(0.38) : XDialTheme.hairline.opacity(0.8),
+                        Color.white.opacity(isLit ? 0.5 : 0.32),
                         lineWidth: 1
                     )
                 }
                 .shadow(color: .black.opacity(isLit ? 0.10 : 0.14), radius: size * 0.10, y: size * 0.05)
             Image(systemName: "power")
                 .font(.system(size: min(size * 0.44, diameter * 0.15), weight: .semibold))
-                .foregroundStyle(isLit ? Color.white : (phase == .working ? stateColor : XDialTheme.dialInk))
+                .foregroundStyle(.white)
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false)
@@ -290,7 +290,7 @@ private struct DialHoles: View {
                 ZStack {
                     Circle()
                         .fill(
-                            XDialTheme.dialInk.opacity(0.16)
+                            Color.black.opacity(0.28)
                                 .shadow(.inner(color: .black.opacity(0.28), radius: size * 0.09, y: size * 0.06))
                         )
                         .opacity(isLit ? 0 : 1)

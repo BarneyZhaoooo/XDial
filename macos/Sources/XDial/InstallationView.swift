@@ -64,34 +64,34 @@ struct InstallationView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: headerSymbol)
-                .font(.system(size: 28))
-                .foregroundStyle(headerColor)
-                .frame(width: 34)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(headerTitle)
-                    .font(.title2.weight(.semibold))
-                Text(headerDetail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: headerSymbol)
+                    .font(.title2.weight(.medium))
+                    .foregroundStyle(headerColor)
+                    .frame(width: 44, height: 44)
+                    .background(headerColor.opacity(0.12), in: Circle())
+                Spacer()
+                Picker(
+                    state.tr("操作", "Operation"),
+                    selection: operationBinding
+                ) {
+                    Text(state.tr("安装", "Install"))
+                        .tag(InstallationOperation.install)
+                    Text(state.tr("卸载", "Uninstall"))
+                        .tag(InstallationOperation.uninstall)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .frame(width: 144)
+                .disabled(isUninstalling)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(headerTitle).font(.system(.title, design: .rounded, weight: .bold))
+                Text(headerDetail).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 12)
-            Picker(
-                state.tr("操作", "Operation"),
-                selection: operationBinding
-            ) {
-                Text(state.tr("安装", "Install"))
-                    .tag(InstallationOperation.install)
-                Text(state.tr("卸载", "Uninstall"))
-                    .tag(InstallationOperation.uninstall)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 144)
-            .disabled(isUninstalling)
         }
     }
 
@@ -156,8 +156,7 @@ struct InstallationView: View {
             }
         }
         .padding(.horizontal, 14)
-        .background(.quaternary.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(XDialPalette.surface, in: RoundedRectangle(cornerRadius: 16))
     }
 
     /// Approval is the one step only the user can finish, so the row says
@@ -278,8 +277,7 @@ struct InstallationView: View {
             }
         }
         .padding(.horizontal, 14)
-        .background(.quaternary.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(XDialPalette.surface, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func uninstallActionRow(

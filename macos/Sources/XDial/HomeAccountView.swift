@@ -22,21 +22,30 @@ struct HomeAccountView: View {
     }
 
     var body: some View {
-        Form {
+        VStack(alignment: .leading, spacing: 18) {
             if let line {
-                Text(line.name).font(.headline)
-                Group {
+                HomeAccountHeading(title: state.tr("登录\(line.name)", "Sign in to \(line.name)"))
+                VStack(alignment: .leading, spacing: 12) {
                     if sourceOwned && !line.vpnServer.isEmpty {
-                        LabeledContent(state.tr("服务器", "Server"), value: line.vpnServer)
+                        Label(line.vpnServer, systemImage: "server.rack")
+                            .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     } else {
-                        TextField(state.tr("服务器", "Server"), text: $server)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(state.tr("服务器", "Server")).font(.subheadline)
+                            TextField(state.tr("服务器", "Server"), text: $server)
+                        }
                     }
-                    TextField(state.tr("用户名", "Username"), text: $username)
-                        .textContentType(.username).autocorrectionDisabled()
-                    LabeledContent(state.tr("密码", "Password")) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(state.tr("用户名", "Username")).font(.subheadline)
+                        TextField(state.tr("用户名", "Username"), text: $username)
+                            .textContentType(.username).autocorrectionDisabled()
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(state.tr("密码", "Password")).font(.subheadline)
                         CredentialSecureField(placeholder: state.tr("密码", "Password"), text: $password)
                     }
                 }
+                .controlSize(.large)
                 .disabled(!editable)
             }
             if sourceOwned && owner?.lineCredentialsBelongToUser == false {
@@ -51,13 +60,17 @@ struct HomeAccountView: View {
                 Button(request.connectScenarioID == nil ? state.tr("保存", "Save") : state.tr("保存并连接", "Save and Connect")) {
                     submit()
                 }
+                .xdialPrimaryAction()
                 .keyboardShortcut(.defaultAction)
                 .disabled(!editable || server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                           username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
             }
+            .controlSize(.large)
         }
-        .formStyle(.grouped)
+        .padding(24)
         .frame(width: 380)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(XDialPalette.canvas)
         .onAppear {
             server = line?.vpnServer ?? ""
             username = line?.vpnUsername ?? ""
