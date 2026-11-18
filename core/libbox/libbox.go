@@ -2782,7 +2782,9 @@ func (l *Libbox) monitorSession(generation uint64, cSess *session.ConnSession) {
 		l.anyConnectDiagnostics = diagnostics
 		failureMessage := anyConnectFailureMessage(diagnostics)
 		l.lastError = failureMessage
+		dataPlaneLogSink := l.dataPlaneLogSink
 		l.mu.Unlock()
+		reportAnyConnectSessionClose(dataPlaneLogSink, diagnostics)
 		_ = capability.ensureTransport(ownerCtx, false)
 		capability.waitRecoverySettlement()
 		return
@@ -2809,7 +2811,9 @@ func (l *Libbox) monitorSession(generation uint64, cSess *session.ConnSession) {
 	failureMessage := anyConnectFailureMessage(anyConnectDiagnostics)
 	l.lastError = failureMessage
 	l.runtimeUsers.Add(1)
+	dataPlaneLogSink := l.dataPlaneLogSink
 	l.mu.Unlock()
+	reportAnyConnectSessionClose(dataPlaneLogSink, anyConnectDiagnostics)
 
 	// Close only the failed Line's bridge. The sing-box instance, Tailscale
 	// endpoint, Transparent Proxy ingress and state locks remain owned by the
