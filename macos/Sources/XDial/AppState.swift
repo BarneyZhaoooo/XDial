@@ -159,6 +159,14 @@ final class AppState: ObservableObject {
             XDialWindowAppearanceController.applyToApplication(appearance)
         }
     }
+    @Published var showsMenuBarTraffic = true {
+        didSet {
+            xdialDefaults.set(
+                showsMenuBarTraffic,
+                forKey: "xdial.showsMenuBarTraffic"
+            )
+        }
+    }
     @Published var launchAtLogin: Bool {
         didSet {
             xdialDefaults.set(launchAtLogin, forKey: "xdial.launchAtLogin")
@@ -639,6 +647,9 @@ final class AppState: ObservableObject {
             self.language = .system
         }
         self.appearance = AppAppearance.persisted(in: xdialDefaults)
+        self.showsMenuBarTraffic = xdialDefaults.object(
+            forKey: "xdial.showsMenuBarTraffic"
+        ) as? Bool ?? true
         self.launchAtLogin = xdialDefaults.bool(forKey: "xdial.launchAtLogin")
         if let savedAutoConnect = xdialDefaults.object(
             forKey: "xdial.autoConnect"

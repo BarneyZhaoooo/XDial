@@ -102,6 +102,40 @@ enum MenuBarStatusIcon {
         return image
     }
 
+    static func imageWithTrafficRates(
+        icon: NSImage,
+        menuBarTone: MenuBarTone,
+        download: String,
+        upload: String
+    ) -> NSImage {
+        let height: CGFloat = 22
+        let arrowX = icon.size.width + 3
+        let ink: NSColor = icon.isTemplate || menuBarTone == .light ? .black : .white
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: ink,
+        ]
+        let valueX = arrowX + ("↓" as NSString).size(withAttributes: attributes).width + 2
+        let valueWidth = max(
+            (download as NSString).size(withAttributes: attributes).width,
+            (upload as NSString).size(withAttributes: attributes).width
+        )
+        let size = NSSize(width: ceil(valueX + valueWidth), height: height)
+        let image = NSImage(size: size, flipped: false) { _ in
+            icon.draw(in: NSRect(
+                x: 0, y: (height - icon.size.height) / 2,
+                width: icon.size.width, height: icon.size.height
+            ))
+            for (arrow, value, y) in [("↓", download, 11.0), ("↑", upload, 0.0)] {
+                (arrow as NSString).draw(at: NSPoint(x: arrowX, y: y), withAttributes: attributes)
+                (value as NSString).draw(at: NSPoint(x: valueX, y: y), withAttributes: attributes)
+            }
+            return true
+        }
+        image.isTemplate = icon.isTemplate
+        return image
+    }
+
     // MARK: - Drawing (16 网格，y 向下)
 
     /// 有更新：右上圆点。

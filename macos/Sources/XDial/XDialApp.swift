@@ -69,11 +69,15 @@ private struct MenuBarLabel: View {
     // 菜单栏明暗（含壁纸压暗），不受设置页外观覆盖影响；只用于非模板的「有更新」图。
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject var trafficInfo: TrafficInfo
     let connected: Bool
     let proxyOnly: Bool
     let connecting: Bool
     let hasError: Bool
     let updateAvailable: Bool
+    let trafficTransactionID: String?
+    let downloadLabel: String
+    let uploadLabel: String
     /// 连接中拨号动画的帧号；只在真正连接中且未开启 Reduce Motion 时推进。
     @State private var animationFrame = 0
 
@@ -88,23 +92,40 @@ private struct MenuBarLabel: View {
     }
 
     var body: some View {
-        Image(nsImage: MenuBarStatusIcon.image(
+        let tone: MenuBarStatusIcon.MenuBarTone = colorScheme == .dark ? .dark : .light
+        let icon = MenuBarStatusIcon.image(
             connection: connection,
             badge: .resolve(
                 hasError: hasError,
                 updateAvailable: updateAvailable
             ),
-            menuBarTone: colorScheme == .dark ? .dark : .light,
+            menuBarTone: tone,
             animationFrame: animationFrame
-        ))
-            .frame(
-                width: MenuBarStatusIcon.canvasSize,
-                height: MenuBarStatusIcon.canvasSize
+        )
+        let image: NSImage
+        let label: String
+        if let trafficTransactionID {
+            let isCurrent = trafficInfo.transactionID == trafficTransactionID
+            let download = isCurrent ? trafficInfo.downloadBytesPerSecond : nil
+            let upload = isCurrent ? trafficInfo.uploadBytesPerSecond : nil
+            image = MenuBarStatusIcon.imageWithTrafficRates(
+                icon: icon, menuBarTone: tone,
+                download: TrafficInfo.formatRate(download, compact: true),
+                upload: TrafficInfo.formatRate(upload, compact: true)
             )
+            label = "\(XDialBuildIdentity.productTitle), \(downloadLabel) \(TrafficInfo.formatRate(download)), \(uploadLabel) \(TrafficInfo.formatRate(upload))"
+        } else {
+            image = icon
+            label = XDialBuildIdentity.productTitle
+        }
+        // MenuBarExtra projects its label into a status item image and title.
+        // Put both rows inside the image so macOS preserves their layout.
+        image.accessibilityDescription = label
+        return Image(nsImage: image)
             // 系统 status item 还会增加自身左右 inset；缩窄 label 布局宽度，
             // 但不裁剪 20 pt 的拨盘。
-            .frame(width: 16, height: 22)
-            .accessibilityLabel(XDialBuildIdentity.productTitle)
+            .frame(width: trafficTransactionID == nil ? 16 : nil, height: 22)
+            .accessibilityLabel(label)
             .task(id: animates) {
                 // 状态离开连接中时任务被取消并复位帧号，静态图始终是第 0 帧。
                 guard animates else {
@@ -180,22 +201,53 @@ struct XDialApp: App {
     @StateObject private var state = AppState()
     @StateObject private var updateChecker = AppUpdateChecker()
     @StateObject private var menuBar = MenuBarRecoveryController.shared
+    // The rate views observe samples directly so they don't invalidate the scenes.
+    @State private var trafficInfo = TrafficInfo()
+    @State private var isPopoverVisible = false
+
+    private var trafficTransactionID: String? {
+        guard state.isConnected,
+              let report = state.presentedConnectionReport,
+              report.state == .committed else {
+            return nil
+        }
+        return report.transactionID
+    }
+
+    private var sampledTrafficTransactionID: String? {
+        guard state.showsMenuBarTraffic || isPopoverVisible else { return nil }
+        return trafficTransactionID
+    }
 
     var body: some Scene {
         MenuBarExtra(isInserted: menuBar.insertion) {
-            MainPopover()
+            MainPopover(trafficInfo: trafficInfo)
                 .environmentObject(state)
                 .environmentObject(updateChecker)
                 .tint(XDialPalette.accent)
+                .onAppear { isPopoverVisible = true }
+                .onDisappear { isPopoverVisible = false }
         } label: {
             MenuBarLabel(
+                trafficInfo: trafficInfo,
                 connected: state.isConnected,
                 proxyOnly: state.isConnected
                     && state.committedIngress?.mode == .localSOCKS,
                 connecting: state.isBusy,
                 hasError: state.hasMenuBarError,
-                updateAvailable: updateChecker.isUpdateAvailable
+                updateAvailable: updateChecker.isUpdateAvailable,
+                trafficTransactionID: state.showsMenuBarTraffic ? trafficTransactionID : nil,
+                downloadLabel: state.tr("下载速度", "Download speed"),
+                uploadLabel: state.tr("上传速度", "Upload speed")
             )
+            .onChange(of: sampledTrafficTransactionID, initial: true) { _, transactionID in
+                if let transactionID {
+                    trafficInfo.start(transactionID: transactionID, engine: state.engine)
+                } else {
+                    trafficInfo.stop()
+                }
+            }
+            .onDisappear { trafficInfo.stop() }
             .task {
                 await updateChecker.pollForUpdates()
             }
