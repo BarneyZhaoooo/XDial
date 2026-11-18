@@ -30,13 +30,7 @@ struct DialControl: View {
     @GestureState private var isDialing = false
     @State private var lastTouchAngle: Double?
 
-    private var ringInset: CGFloat {
-        #if os(macOS)
-        max(11, diameter * 0.075)
-        #else
-        max(9, diameter * 0.055)
-        #endif
-    }
+    private var ringInset: CGFloat { max(9, diameter * 0.055) }
     private var outerDiameter: CGFloat { diameter + ringInset * 2 }
     private var scale: CGFloat { diameter / (DialLayout.discRadius * 2) }
 
@@ -48,9 +42,6 @@ struct DialControl: View {
                     let time = context.date.timeIntervalSinceReferenceDate
                     ZStack {
                         statusRing(time: time)
-                        #if os(macOS)
-                        scaleMarks
-                        #endif
                         disc
                     }
                 }
@@ -204,25 +195,6 @@ struct DialControl: View {
             .frame(width: diameter, height: diameter)
             .xdialGlass(tint: isLit ? stateColor : .white.opacity(0.10), interactive: true,
                         in: Circle(), fallback: isLit ? stateColor : XDialTheme.dialFace)
-    }
-
-    private var scaleMarks: some View {
-        Canvas { context, size in
-            let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let radius = diameter / 2 + ringInset * 0.54
-            var marks = Path()
-            for index in 0..<48 {
-                let angle = CGFloat(index) * .pi / 24
-                let length = ringInset * (index.isMultiple(of: 4) ? 0.48 : 0.22)
-                marks.move(to: CGPoint(x: center.x + cos(angle) * (radius - length),
-                                       y: center.y + sin(angle) * (radius - length)))
-                marks.addLine(to: CGPoint(x: center.x + cos(angle) * radius,
-                                          y: center.y + sin(angle) * radius))
-            }
-            context.stroke(marks, with: .color(.white.opacity(0.58)), lineWidth: 1)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 
     #else
