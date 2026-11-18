@@ -75,7 +75,7 @@ enum XDialBrandPalette {
     static let selection = color(selectionLightHex)
     static let success = color(successLightHex)
     static let danger = color(dangerLightHex)
-    static let canvas = color(canvasLightHex)
+    static let iconHub = color(0xE2E7EA)
     static let surface = color(surfaceLightHex)
     static let divider = color(dividerLightHex)
     static let textPrimary = color(textPrimaryLightHex)

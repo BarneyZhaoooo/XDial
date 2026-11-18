@@ -134,7 +134,7 @@ enum AppIcon {
             hub.fill()
             let lip = layout.hubRadius * scale * 0.024
             let cap = NSBezierPath(ovalIn: hub.bounds.insetBy(dx: lip, dy: lip))
-            NSGradient(starting: XDialBrandPalette.canvas, ending: XDialBrandPalette.surface)?
+            NSGradient(starting: XDialBrandPalette.iconHub, ending: XDialBrandPalette.surface)?
                 .draw(in: cap, angle: 90)
         }
     }
