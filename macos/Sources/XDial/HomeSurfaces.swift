@@ -41,8 +41,7 @@ private struct HomeGlass<S: Shape>: ViewModifier {
     }
 }
 
-/// A dark instrument face gives the clear rotary control and its tick marks a
-/// stable contrast in both appearances. Only the control itself refracts light.
+/// The dark surface keeps the glass dial legible in both appearances.
 struct DialInstrumentSurface: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
