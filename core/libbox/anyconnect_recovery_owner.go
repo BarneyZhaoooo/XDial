@@ -24,6 +24,9 @@ type anyConnectRecovery struct {
 	done    chan struct{}
 	settled chan struct{}
 	err     error
+	// onDemand: started by a use of a dormant Line. Uses that arrive while it
+	// runs wait for it instead of failing closed.
+	onDemand bool
 }
 
 func (c *anyConnectRuntimeCapability) attachOwner(l *Libbox, networkManaged bool) context.Context {
@@ -121,7 +124,8 @@ func (c *anyConnectRuntimeCapability) ensureTransport(ctx context.Context, force
 			c.mu.Unlock()
 			return nil
 		}
-		work = &anyConnectRecovery{done: make(chan struct{}), settled: make(chan struct{})}
+		work = &anyConnectRecovery{done: make(chan struct{}), settled: make(chan struct{}), onDemand: c.dormant}
+		c.dormant = false
 		c.lastRecoverySettled = work.settled
 		c.recovery = work
 		go c.runRecovery(work)

@@ -96,6 +96,10 @@ curl -sS -X POST 127.0.0.1:19877/action \
      归类（如 `idle-timeout`）；`negotiated(...)` 是服务器下发的 DPD、keepalive、空闲超时、
      会话超时和重协商时间，`absent` 表示没有下发；`tls(...)` / `dtls(...)` 是两条通道各自
      的 DPD 往来次数、数据帧数和最后一次收发数据距结束的时间。
+   - `anyconnect line dormant` / `anyconnect line waking`：服务器按空闲策略结束了会话，
+     线路没有重连而是休眠；后一行是第一个要走这条线路的连接把它叫醒。事件表里对应
+     `anyconnect-line-idle`，随后是 `anyconnect-line-reconnecting` 和
+     `anyconnect-line-reconnected`。
    - `suppressed N lines over the rate limit`：这一段时间行数超过了限速，N 行没有记。
 
 2. 内核对每条 TCP 连接的收尾记录。需要 `net.inet.tcp.log.enable` 已打开，记录只保留一两

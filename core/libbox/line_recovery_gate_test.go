@@ -30,6 +30,9 @@ type gatedRecoveryVPNClient struct {
 	// once that connect has started.
 	hold    map[int]chan struct{}
 	entered map[int]chan struct{}
+	// newSession builds the session of a successful connect; nil uses a bare
+	// session without liveness diagnostics.
+	newSession func() *session.ConnSession
 }
 
 func (c *gatedRecoveryVPNClient) Connect(engine.VPNConfig) (*engine.VPNInfo, error) {
@@ -52,7 +55,11 @@ func (c *gatedRecoveryVPNClient) Connect(engine.VPNConfig) (*engine.VPNInfo, err
 		return nil, result
 	}
 	c.mu.Lock()
-	c.current = newStartTestSession()
+	if c.newSession != nil {
+		c.current = c.newSession()
+	} else {
+		c.current = newStartTestSession()
+	}
 	c.mu.Unlock()
 	return &engine.VPNInfo{VPNAddress: "10.0.0.2", DNS: []string{"10.0.0.53"}, MTU: 1400}, nil
 }

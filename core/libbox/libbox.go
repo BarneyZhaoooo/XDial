@@ -1544,6 +1544,7 @@ func (l *Libbox) createAnyConnectRuntimeCapability(
 		dnsJSON:  string(dnsData),
 		revision: 1,
 	}
+	capability.line.setWake(capability.wakeForUse)
 	capability.attachOwner(l, false)
 	return capability, nil
 }
@@ -2780,11 +2781,19 @@ func (l *Libbox) monitorSession(generation uint64, cSess *session.ConnSession) {
 		ownerCtx := capability.attachOwner(l, l.activeNetworkReadiness != nil)
 		diagnostics := validAnyConnectDiagnostics(engine.AnyConnectSessionDiagnostics(cSess))
 		l.anyConnectDiagnostics = diagnostics
-		failureMessage := anyConnectFailureMessage(diagnostics)
-		l.lastError = failureMessage
+		endedIdle := anyConnectSessionEndedIdle(diagnostics)
+		if endedIdle {
+			// The server applied its idle policy; that is not a failure.
+			l.lastError = ""
+		} else {
+			l.lastError = anyConnectFailureMessage(diagnostics)
+		}
 		dataPlaneLogSink := l.dataPlaneLogSink
 		l.mu.Unlock()
 		reportAnyConnectSessionClose(dataPlaneLogSink, diagnostics)
+		if endedIdle && capability.parkDormant(cSess) {
+			return
+		}
 		_ = capability.ensureTransport(ownerCtx, false)
 		capability.waitRecoverySettlement()
 		return

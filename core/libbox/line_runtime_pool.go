@@ -429,6 +429,7 @@ type anyConnectRuntimeSnapshot struct {
 	dnsJSON  string
 	stopped  bool
 	revision uint64
+	dormant  bool
 }
 
 // anyConnectRuntimeCapability is the concrete process-global sslcon capability
@@ -457,6 +458,10 @@ type anyConnectRuntimeCapability struct {
 	lastRecoveryRevision uint64
 	lastRecoveryError    error
 	lastRecoverySettled  chan struct{}
+	// dormant: the server ended the session for being idle and nothing has
+	// needed the Line since. No transport exists and none is being built; the
+	// next use re-establishes it, see anyconnect_dormant.go.
+	dormant bool
 }
 
 func (c *anyConnectRuntimeCapability) kind() lineRuntimeCapabilityKind {
@@ -474,13 +479,23 @@ func (c *anyConnectRuntimeCapability) snapshot() anyConnectRuntimeSnapshot {
 		dnsJSON:  c.dnsJSON,
 		stopped:  c.stopped,
 		revision: c.revision,
+		dormant:  c.dormant,
 	}
 }
 
+// available reports whether the capability can serve its Line: over a live
+// session, or dormant, where the first use re-establishes the session.
+// Ownership checks before a commit care that the Line is intact, not that its
+// transport is up at this instant.
 func (c *anyConnectRuntimeCapability) available() bool {
 	snapshot := c.snapshot()
-	return !snapshot.stopped && snapshot.line != nil &&
-		snapshot.line.available() && snapshot.bridge != nil &&
+	if snapshot.stopped || snapshot.line == nil {
+		return false
+	}
+	if snapshot.dormant {
+		return true
+	}
+	return snapshot.line.available() && snapshot.bridge != nil &&
 		preparedAnyConnectSessionAlive(snapshot.session)
 }
 

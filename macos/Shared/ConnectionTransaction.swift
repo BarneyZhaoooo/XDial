@@ -268,13 +268,17 @@ struct AnyConnectLineRuntimeStatus: Decodable, Equatable {
         case connected = "line_connected"
         /// 宿主报告系统休眠或没有可用 Underlay，局部恢复暂停且不计次。
         case waiting = "line_waiting"
+        /// 服务器按空闲策略结束了会话。线路没有失败也不在恢复，下一次有连接或
+        /// DNS 查询要走它时才重新建立。
+        case idle = "line_idle"
     }
 
     let state: State
     let lineType: String
     let attempt: Int
     let maxAttempts: Int
-    /// 仅 `waiting` 携带：`system-asleep` 或 `underlay-unavailable`。
+    /// `waiting` 携带 `system-asleep` 或 `underlay-unavailable`；
+    /// `idle` 携带 `server-idle-timeout`。
     let reason: String?
 
     enum CodingKeys: String, CodingKey {

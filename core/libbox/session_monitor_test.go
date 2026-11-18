@@ -389,6 +389,7 @@ func TestSessionMonitorReconnectsOnlyAnyConnectLine(t *testing.T) {
 		t.Fatalf("unavailable line dial error = %v", err)
 	}
 	udpConn, err := line.DialUDP(
+		context.Background(),
 		nil,
 		&net.UDPAddr{IP: net.IPv4(192, 0, 2, 53), Port: 53},
 	)
