@@ -1211,7 +1211,23 @@ enum ConnectionReportCodec {
 enum ConnectionReportJournal {
     private static let groupIdentifier =
         XDialBuildIdentity.appGroupIdentifier
+    #if XDIAL_STORE
+    // A host plan must never count as proof that the provider accepted a start.
+    // Both processes use the same user container in the app-extension deployment.
+    private static let providerFileName = "provider-connection-report.json"
+    private static let fileName = Bundle.main.bundleURL.pathExtension == "appex"
+        ? providerFileName : "connection-report.json"
+
+    static func readProviderReport() -> ConnectionReport? {
+        try? withJournalLock(exclusive: false) {
+            guard let url = transactionURL(fileName: providerFileName, createDirectory: false),
+                  let data = try? Data(contentsOf: url) else { return nil }
+            return try ConnectionReportCodec.decode(data)
+        }
+    }
+    #else
     private static let fileName = "connection-report.json"
+    #endif
     private static let switchCandidateFileName =
         "connection-report-switch-candidate.json"
     private static let lockFileName = "connection-report.lock"

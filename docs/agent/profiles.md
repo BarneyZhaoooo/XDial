@@ -1,7 +1,7 @@
 # Profile 配置库
 
 正式版与 Debug 使用同一份源码和共享配置库 `~/.xdial/configuration/profiles.enc`，密钥 service 为
-`com.kafeifei.xdial.configuration`；两个身份各自的系统组件、偏好域和运行目录见 [构建与安装](development-builds.md)。
+`com.xd.xdial.configuration`；两个身份各自的系统组件、偏好域和运行目录见 [构建与安装](development-builds.md)。
 产品设计依据 [Profile v0.3](../plans/profile-subscriptions.md)。
 
 ## 启动与迁移
@@ -17,6 +17,8 @@
 已知来源包含原桌面偏好与 vault，以及旧沙盒配置。所有来源只读，原文件和旧密码不删除、
 不写回；转换成功后才原子写入新库，失败不会创建空库。文件损坏、格式不支持或密钥不可读
 不等于文件不存在，不能触发重新导入。Tailscale 的旧在线身份不复制。
+
+首次打开使用旧标识 `com.kafeifei.xdial.configuration` 加密的共享库时，先验证密钥可以解密并读取配置，再将密钥复制到新标识。旧条目保留供旧版本使用。拒绝授权可在下次启动时重试。
 
 已有共享库时直接使用，不再次扫描历史文件。界面只保留新建、文件导入、链接订阅等普通
 Profile 管理，不再提供“导入旧版配置”。尚不能完整转换的旧嵌套订阅明确报错，不丢弃部分内容。

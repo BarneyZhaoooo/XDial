@@ -1,7 +1,5 @@
 #if DEBUG
 import AppKit
-import CryptoKit
-import Security
 import SwiftUI
 
 /// An offline layout check using production views and synthetic resources.
@@ -60,24 +58,7 @@ enum SettingsLayoutPreview {
         }
         if CommandLine.arguments.contains("--user-configuration") {
             do {
-                let store = ProfileLibraryStore(keyProvider: { create in
-                    guard !create else { throw CocoaError(.fileReadNoPermission) }
-                    let query: [String: Any] = [
-                        kSecClass as String: kSecClassGenericPassword,
-                        kSecAttrService as String: ConfigurationStorage.keychainService,
-                        kSecAttrAccount as String: "profile-library-key-v1",
-                        kSecReturnData as String: true,
-                        kSecMatchLimit as String: kSecMatchLimitOne,
-                        kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
-                    ]
-                    var output: CFTypeRef?
-                    guard SecItemCopyMatching(query as CFDictionary, &output) == errSecSuccess,
-                          let bytes = output as? Data, bytes.count == 32 else {
-                        throw CocoaError(.fileReadNoPermission)
-                    }
-                    return SymmetricKey(data: bytes)
-                })
-                library = try store.load().unwrap()
+                library = try ProfileLibraryStore().load(readOnly: true).unwrap()
                 let arguments = CommandLine.arguments
                 let name = arguments.firstIndex(of: "--scenario-name").flatMap { index in
                     arguments.indices.contains(index + 1) ? arguments[index + 1] : nil

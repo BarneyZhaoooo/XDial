@@ -78,6 +78,7 @@ struct InstallationView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
+            #if !XDIAL_STORE
             Picker(
                 state.tr("操作", "Operation"),
                 selection: operationBinding
@@ -92,6 +93,7 @@ struct InstallationView: View {
             .controlSize(.small)
             .frame(width: 144)
             .disabled(isUninstalling)
+            #endif
         }
     }
 

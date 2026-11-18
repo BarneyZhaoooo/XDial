@@ -163,9 +163,7 @@ PINS = [
         "shared": "profiles.enc 的密钥；改了另一方就找不到密钥",
         "sites": [
             site("Swift", "macos/Sources/XDial/ProfileLibraryStore.swift",
-                 r'kSecAttrAccount as String:\s*"([^"]+)"'),
-            site("Swift", "macos/Sources/XDial/SettingsLayoutPreview.swift",
-                 r'kSecAttrAccount as String:\s*"([^"]+)"'),
+                 r'private static let account = "([^"]+)"'),
         ],
     },
     {

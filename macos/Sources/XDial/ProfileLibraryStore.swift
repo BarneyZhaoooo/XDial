@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import LocalAuthentication
 import Security
 
 /// The complete local working copy (including subscription URLs and baselines)
@@ -10,6 +11,7 @@ final class ProfileLibraryStore {
     let directory: URL
     private let keyProvider: ((Bool) throws -> SymmetricKey)?
     private var cachedKey: SymmetricKey?
+    private let legacyKeychainService: String?
     private let keychainService: String
     private var loadedDigest: Data?
     private var needsSchemaBackup = false
@@ -17,23 +19,28 @@ final class ProfileLibraryStore {
 
     init(directory: URL = ConfigurationStorage.directory(),
          keychainService: String = ConfigurationStorage.keychainService,
+         legacyKeychainService: String? = nil,
          keyProvider: ((Bool) throws -> SymmetricKey)? = nil) {
         self.directory = directory
         self.keychainService = keychainService
+        self.legacyKeychainService = legacyKeychainService ?? (keychainService == ConfigurationStorage.keychainService
+            ? ConfigurationStorage.legacyConfigurationKeychainService : nil)
         self.keyProvider = keyProvider
     }
 
-    func load() throws -> ProfileLibrary? {
+    func load(readOnly: Bool = false) throws -> ProfileLibrary? {
         guard let data = try readEncryptedFile() else {
-            loadedDigest = nil
+            if !readOnly { loadedDigest = nil }
             return nil
         }
         let box = try AES.GCM.SealedBox(combined: data)
-        let plaintext = try AES.GCM.open(box, using: key(create: false),
-                                        authenticating: Data("XDial Profile Library v1".utf8))
+        let (plaintext, verifiedKey, legacy) = try decryptLibrary(box, readOnly: readOnly)
         let decoded = try JSONDecoder().decode(ProfileLibrary.self, from: plaintext)
-        needsSchemaBackup = decoded.schemaVersion < 3
         let library = try decoded.validated()
+        guard !readOnly else { return library }
+        if legacy { try rememberLegacyKey(verifiedKey) }
+        needsSchemaBackup = decoded.schemaVersion < 3
+        cachedKey = verifiedKey
         loadedDigest = Data(SHA256.hash(data: data))
         return library
     }
@@ -75,7 +82,7 @@ final class ProfileLibraryStore {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
             needsSchemaBackup = false
         }
-        let sealed = try AES.GCM.seal(data, using: key(create: current == nil),
+        let sealed = try AES.GCM.seal(data, using: writingKey(create: current == nil),
                                       authenticating: Data("XDial Profile Library v1".utf8))
         guard let combined = sealed.combined else {
             throw ProfileLibraryError.invalid("无法加密配置库")
@@ -97,36 +104,87 @@ final class ProfileLibraryStore {
         return data
     }
 
-    private func key(create: Bool) throws -> SymmetricKey {
-        if let cachedKey { return cachedKey }
-        let result: SymmetricKey
-        if let keyProvider {
-            result = try keyProvider(create)
-        } else {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: keychainService,
-                kSecAttrAccount as String: "profile-library-key-v1",
-            ]
-            var read = query
-            read[kSecReturnData as String] = true
-            read[kSecMatchLimit as String] = kSecMatchLimitOne
-            var output: CFTypeRef?
-            let status = SecItemCopyMatching(read as CFDictionary, &output)
-            if status == errSecSuccess, let bytes = output as? Data, bytes.count == 32 {
-                result = SymmetricKey(data: bytes)
-            } else if status == errSecItemNotFound && create {
-                result = SymmetricKey(size: .bits256)
-                var add = query
-                add[kSecValueData as String] = result.withUnsafeBytes { Data($0) }
-                add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-                let added = SecItemAdd(add as CFDictionary, nil)
-                guard added == errSecSuccess else { throw ProfileLibraryError.keychain(added) }
-            } else {
-                throw ProfileLibraryError.keychain(status == errSecSuccess ? errSecDecode : status)
-            }
+    private static let account = "profile-library-key-v1"
+    // The standalone and sandboxed apps can have separate encrypted files
+    // while seeing the same login keychain. Preserve both valid keys when
+    // one edition created a fresh library before the other edition migrated.
+    private static let migratedAccount = "profile-library-migrated-key-v1"
+
+    private func decryptLibrary(_ box: AES.GCM.SealedBox, readOnly: Bool) throws -> (Data, SymmetricKey, Bool) {
+        func decrypt(_ key: SymmetricKey) throws -> Data {
+            try AES.GCM.open(box, using: key, authenticating: Data("XDial Profile Library v1".utf8))
         }
-        cachedKey = result
-        return result
+        if let keyProvider {
+            let key = try keyProvider(false)
+            return (try decrypt(key), key, false)
+        }
+        if let cachedKey, let data = try? decrypt(cachedKey) { return (data, cachedKey, false) }
+        var candidates = [(keychainService, Self.account, false)]
+        if let legacyKeychainService {
+            candidates.append((keychainService, Self.migratedAccount, false))
+            candidates.append((legacyKeychainService, Self.account, true))
+        }
+        var found = false
+        for (service, account, legacy) in candidates {
+            guard let key = try readKey(service: service, account: account, readOnly: readOnly) else { continue }
+            found = true
+            if let data = try? decrypt(key) { return (data, key, legacy) }
+        }
+        if found { throw CryptoKitError.authenticationFailure }
+        throw ProfileLibraryError.keychain(errSecItemNotFound)
+    }
+
+    private func rememberLegacyKey(_ key: SymmetricKey) throws {
+        for account in [Self.account, Self.migratedAccount] {
+            if try installIfAbsent(key, account: account) == key { return }
+        }
+        throw ProfileLibraryError.invalid("已有配置密钥与旧配置不匹配，原配置已保留")
+    }
+
+    private func writingKey(create: Bool) throws -> SymmetricKey {
+        if let cachedKey { return cachedKey }
+        let key: SymmetricKey
+        if let keyProvider {
+            key = try keyProvider(create)
+        } else if let existing = try readKey(service: keychainService, account: Self.account) {
+            key = existing
+        } else {
+            guard create else { throw ProfileLibraryError.keychain(errSecItemNotFound) }
+            key = try installIfAbsent(SymmetricKey(size: .bits256), account: Self.account)
+        }
+        cachedKey = key
+        return key
+    }
+
+    private func readKey(service: String, account: String, readOnly: Bool = false) throws -> SymmetricKey? {
+        var output: CFTypeRef?
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account,
+            kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        if readOnly {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
+        let status = SecItemCopyMatching(query as CFDictionary, &output)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw ProfileLibraryError.keychain(status) }
+        guard let data = output as? Data, data.count == 32 else { throw ProfileLibraryError.keychain(errSecDecode) }
+        return SymmetricKey(data: data)
+    }
+
+    // Never overwrite another edition's key. On a concurrent add, read the winner.
+    private func installIfAbsent(_ key: SymmetricKey, account: String) throws -> SymmetricKey {
+        let status = SecItemAdd([
+            kSecClass: kSecClassGenericPassword, kSecAttrService: keychainService, kSecAttrAccount: account,
+            kSecValueData: key.withUnsafeBytes { Data($0) },
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ] as CFDictionary, nil)
+        if status == errSecSuccess { return key }
+        if status == errSecDuplicateItem, let existing = try readKey(service: keychainService, account: account) {
+            return existing
+        }
+        throw ProfileLibraryError.keychain(status)
     }
 }

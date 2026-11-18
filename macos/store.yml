@@ -1,0 +1,93 @@
+name: XDialStore
+options:
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: SX9RG894L5
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) XDIAL_STORE"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: Apple Distribution
+    ENABLE_APP_SANDBOX: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    XDIAL_PRODUCT_DISPLAY_NAME: XDial
+    XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER: com.xd.xdial.ios.tunnel
+    XDIAL_BUILD_FLAVOR: store
+    XDIAL_SETTINGS_ENTRY_IDENTIFIER: com.xd.xdial.ios.settings-entry
+    XDIAL_SOURCE_REVISION: unversioned
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+targets:
+  XDialStore:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/XDial
+      - Shared
+      - ../apple/Home
+      - ../ios/XDialShared/DialGlyph.swift
+      - ../ios/XDialIOS/LocalTailscaleSetupRuntime.swift
+      - Store/StoreTailscale.swift
+      - AppIcon.icns
+      - path: PrivateConfig/SeedProfile
+        type: folder
+        buildPhase: resources
+        optional: true
+    info:
+      path: Store/Host-Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        CFBundleDisplayName: XDial
+        CFBundleIconFile: AppIcon
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.utilities
+        LSUIElement: true
+        NSLocationUsageDescription: XDial uses Wi-Fi names for automatic scenario selection.
+        NSLocationWhenInUseUsageDescription: XDial uses Wi-Fi names for automatic scenario selection.
+        XDialTransparentProxyBundleIdentifier: "$(XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER)"
+        XDialSourceRevision: "$(XDIAL_SOURCE_REVISION)"
+        XDialBuildFlavor: store
+    settings:
+      PRODUCT_NAME: XDial
+      PRODUCT_BUNDLE_IDENTIFIER: com.xd.xdial.ios
+      PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Host
+      CODE_SIGN_ENTITLEMENTS: Store/Host.entitlements
+    dependencies:
+      - target: XDialStoreProxy
+      - framework: ../build/frameworks/macos/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+  XDialStoreProxy:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: TransparentProxyExtension
+        excludes:
+          - main.swift
+          - Info.plist
+          - "*.entitlements"
+      - Shared
+    info:
+      path: Store/Provider-Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        CFBundleDisplayName: XDial Network Extension
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.app-proxy
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).TransparentProxyProvider"
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: "$(XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER)"
+      PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Provider
+      CODE_SIGN_ENTITLEMENTS: Store/Provider.entitlements
+      SKIP_INSTALL: YES
+    dependencies:
+      - framework: ../build/frameworks/macos/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
