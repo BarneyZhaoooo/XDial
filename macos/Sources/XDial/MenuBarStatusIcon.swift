@@ -102,11 +102,30 @@ enum MenuBarStatusIcon {
         return image
     }
 
+    /// Four monospaced characters per rate, including its decimal unit.
+    static func compactRate(_ bytesPerSecond: Double?) -> String {
+        guard let bytesPerSecond, bytesPerSecond.isFinite, bytesPerSecond >= 0 else { return "—" }
+        if bytesPerSecond == 0 { return "0" }
+        if bytesPerSecond < 1 { return "<1B" }
+        var value = bytesPerSecond
+        for unit in ["B", "K", "M", "G", "T"] {
+            if value.rounded() < 1_000 {
+                let tenths = (value * 10).rounded()
+                if tenths < 100 {
+                    return String(format: "%.1f", tenths / 10) + unit
+                }
+                return String(Int(value.rounded())) + unit
+            }
+            value /= 1_000
+        }
+        return value >= 1 ? "≥1P" : "1P"
+    }
+
     static func imageWithTrafficRates(
         icon: NSImage,
         menuBarTone: MenuBarTone,
-        download: String,
-        upload: String
+        download: Double?,
+        upload: Double?
     ) -> NSImage {
         let height: CGFloat = 22
         let arrowX = icon.size.width + 3
@@ -116,19 +135,18 @@ enum MenuBarStatusIcon {
             .foregroundColor: ink,
         ]
         let valueX = arrowX + ("↓" as NSString).size(withAttributes: attributes).width + 2
-        let valueWidth = max(
-            (download as NSString).size(withAttributes: attributes).width,
-            (upload as NSString).size(withAttributes: attributes).width
-        )
+        let valueWidth = ("999M" as NSString).size(withAttributes: attributes).width
         let size = NSSize(width: ceil(valueX + valueWidth), height: height)
         let image = NSImage(size: size, flipped: false) { _ in
             icon.draw(in: NSRect(
                 x: 0, y: (height - icon.size.height) / 2,
                 width: icon.size.width, height: icon.size.height
             ))
-            for (arrow, value, y) in [("↓", download, 11.0), ("↑", upload, 0.0)] {
+            for (arrow, value, y) in [("↓", compactRate(download), 11.0), ("↑", compactRate(upload), 0.0)] {
                 (arrow as NSString).draw(at: NSPoint(x: arrowX, y: y), withAttributes: attributes)
-                (value as NSString).draw(at: NSPoint(x: valueX, y: y), withAttributes: attributes)
+                let text = value as NSString
+                let x = size.width - text.size(withAttributes: attributes).width
+                text.draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
             }
             return true
         }

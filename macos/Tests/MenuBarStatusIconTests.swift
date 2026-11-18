@@ -56,18 +56,29 @@ final class MenuBarStatusIconTests: XCTestCase {
         )
     }
 
+    func testCompactRatesFitFourCharactersAcrossUnitBoundaries() {
+        let cases: [(Double?, String)] = [
+            (nil, "—"), (.infinity, "—"), (0, "0"), (0.5, "<1B"), (1.25, "1.3B"),
+            (999.4, "999B"), (999.5, "1.0K"), (9_940, "9.9K"), (9_960, "10K"),
+            (99_900, "100K"), (999_500, "1.0M"), (Double.greatestFiniteMagnitude, "≥1P"),
+        ]
+        for (rate, expected) in cases {
+            XCTAssertEqual(MenuBarStatusIcon.compactRate(rate), expected)
+        }
+    }
+
     func testTrafficImageContainsBothRowsAndPreservesTemplateTinting() throws {
         for badge in [MenuBarStatusIcon.Badge.none, .update] {
             let icon = MenuBarStatusIcon.image(
                 connection: .connected, badge: badge, menuBarTone: .dark
             )
             let image = MenuBarStatusIcon.imageWithTrafficRates(
-                icon: icon, menuBarTone: .dark, download: "1.2M", upload: "20K"
+                icon: icon, menuBarTone: .dark, download: 1_200_000, upload: 20_000
             )
             let idle = MenuBarStatusIcon.imageWithTrafficRates(
-                icon: icon, menuBarTone: .dark, download: "0", upload: "0"
+                icon: icon, menuBarTone: .dark, download: 0, upload: nil
             )
-            XCTAssertLessThan(idle.size.width, image.size.width)
+            XCTAssertEqual(idle.size, image.size)
             XCTAssertLessThan(image.size.width, 54)
             XCTAssertEqual(image.isTemplate, icon.isTemplate)
             let data = try XCTUnwrap(image.tiffRepresentation)
