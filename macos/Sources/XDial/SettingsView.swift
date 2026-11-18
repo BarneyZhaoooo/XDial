@@ -445,12 +445,15 @@ struct LinesTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(.horizontal, 14).padding(.top, 10)
             if visibleLines.isEmpty {
-                if searchText.isEmpty {
-                    ContentUnavailableView(state.tr("还没有线路组", "No line groups"), systemImage: "square.3.layers.3d",
-                                           description: Text(state.tr("添加线路组后，可以在场景中一起选择这些线路。", "Group lines to select them together in a scenario.")))
-                } else {
-                    ContentUnavailableView.search(text: searchText)
+                Group {
+                    if searchText.isEmpty {
+                        ContentUnavailableView(state.tr("还没有线路组", "No line groups"), systemImage: "square.3.layers.3d",
+                                               description: Text(state.tr("添加线路组后，可以在场景中一起选择这些线路。", "Group lines to select them together in a scenario.")))
+                    } else {
+                        ContentUnavailableView.search(text: searchText)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !groupsOnly {
                 NativeLinesView(lines: visibleLines, state: state, latencies: state.lineLatencies,
                     allowsReordering: searchText.isEmpty,
