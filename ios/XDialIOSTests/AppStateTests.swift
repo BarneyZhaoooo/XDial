@@ -1029,6 +1029,7 @@ final class AppStateTests: XCTestCase {
 
     func testEveryConfigurableLineTypeReportsItsRequiredSetupBeforeConnection() {
         let app = AppState(persistence: makePersistence())
+        app.language = .en
         let incompleteLines: [(Line, [String])] = [
             (
                 Line(id: "vpn", name: "AnyConnect", type: "vpn"),

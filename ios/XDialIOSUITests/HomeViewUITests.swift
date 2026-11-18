@@ -427,9 +427,6 @@ final class HomeViewUITests: XCTestCase {
         XCTAssertGreaterThan(savedPasswordLength, 0)
 
         XCTAssertTrue(app.buttons["已保存"].waitForExistence(timeout: 2))
-        app.navigationBars["编辑线路"].buttons["配置"].tap()
-        XCTAssertTrue(app.navigationBars["配置"].waitForExistence(timeout: 2))
-
         app.terminate()
 
         let relaunched = launchApp(reset: false)
@@ -844,8 +841,11 @@ final class HomeViewUITests: XCTestCase {
     }
 
     private func openAnyConnectEditor(in app: XCUIApplication) {
-        app.tabBars.buttons["配置"].tap()
-        let line = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "AnyConnect")).firstMatch
+        app.buttons["home-settings"].tap()
+        let advanced = app.buttons["settings-advanced"]
+        scrollTo(advanced, in: app)
+        advanced.tap()
+        let line = app.buttons["line-row-vpn"]
         XCTAssertTrue(line.waitForExistence(timeout: 2))
         line.tap()
         XCTAssertTrue(app.navigationBars["编辑线路"].waitForExistence(timeout: 2))
