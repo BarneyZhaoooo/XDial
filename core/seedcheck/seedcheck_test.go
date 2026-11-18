@@ -1,0 +1,76 @@
+package seedcheck
+
+import (
+	"strings"
+	"testing"
+)
+
+const authority = `{"format":"xdial-mobile-seed","schema_version":1,"revision":2,
+ "region_scenarios":{"cn":"domestic","*":"overseas"},
+ "profile":{"lines":[{"id":"direct","name":"直连","type":"direct","enabled":true},
+  {"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}],
+  "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"domains":["example.com"]},
+   {"id":"cn","name":"国内网站","type":"url","enabled":true,"format":"binary","url":"https://rules.example/cn.srs"}],
+  "scenarios":[{"id":"domestic","name":"在国内","default_line_id":"vpn","bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"direct"}]},
+   {"id":"overseas","name":"在国外","default_line_id":"direct","bindings":[{"rule_set_id":"cn","line_id":"vpn"},{"rule_set_id":"intranet","line_id":"vpn"}]}],
+  "active_scenario_id":"domestic"}}`
+
+func mustLoad(t *testing.T, text string) *Seed {
+	t.Helper()
+	seed, err := Load([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seed
+}
+
+func TestLegacyDocumentRoutesLikeTheAuthorityExceptDeclaredParts(t *testing.T) {
+	want := Fingerprint(mustLoad(t, authority), map[string]string{"https://rules.example/cn.srs": "abc"})
+	legacy, err := LegacyProfileDocument([]byte(authority))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Fingerprint(mustLoad(t, string(legacy)), nil)
+	if d := Diff(want, got, []string{"regions", "offline_rules"}); len(d) != 0 {
+		t.Fatalf("legacy document changes routing: %v", d)
+	}
+	if d := Diff(want, got, nil); len(d) == 0 {
+		t.Fatal("undeclared differences in regions and offline rules must be reported")
+	}
+}
+
+func TestDiffReportsEveryRoutingChange(t *testing.T) {
+	want := Fingerprint(mustLoad(t, authority), nil)
+	cases := map[string]string{
+		"default exit": strings.Replace(authority, `"name":"在国内","default_line_id":"vpn"`, `"name":"在国内","default_line_id":"direct"`, 1),
+		"rule priority": strings.Replace(authority,
+			`"bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"direct"}]`,
+			`"bindings":[{"rule_set_id":"cn","line_id":"direct"},{"rule_set_id":"intranet","line_id":"vpn"}]`, 1),
+		"bound line":     strings.Replace(authority, `{"rule_set_id":"cn","line_id":"direct"}`, `{"rule_set_id":"cn","line_id":"vpn"}`, 1),
+		"region mapping": strings.Replace(authority, `"cn":"domestic"`, `"cn":"overseas"`, 1),
+		"rule content":   strings.Replace(authority, `"domains":["example.com"]`, `"domains":["example.org"]`, 1),
+		"scenario name":  strings.Replace(authority, `"name":"在国外"`, `"name":"国外"`, 1),
+	}
+	for name, changed := range cases {
+		got := Fingerprint(mustLoad(t, changed), nil)
+		if d := Diff(want, got, nil); len(d) == 0 {
+			t.Errorf("%s change not detected", name)
+		}
+	}
+	offline := Fingerprint(mustLoad(t, authority), map[string]string{"https://rules.example/cn.srs": "other"})
+	if d := Diff(Fingerprint(mustLoad(t, authority), map[string]string{"https://rules.example/cn.srs": "abc"}), offline, nil); len(d) != 1 {
+		t.Errorf("offline rule digest change not reported exactly once: %v", d)
+	}
+}
+
+func TestSecretsAndFormattingDoNotCount(t *testing.T) {
+	want := Fingerprint(mustLoad(t, authority), nil)
+	withPassword := strings.Replace(authority, `"vpn_server":"vpn.example.com:8443"`, `"vpn_server":"vpn.example.com:8443","vpn_password":"x"`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, withPassword), nil), nil); len(d) != 0 {
+		t.Fatalf("a filled-in credential is not a preset difference: %v", d)
+	}
+	srs := strings.Replace(authority, `"format":"binary"`, `"format":"srs"`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, srs), nil), nil); len(d) != 0 {
+		t.Fatalf("format synonyms reported as differences: %v", d)
+	}
+}

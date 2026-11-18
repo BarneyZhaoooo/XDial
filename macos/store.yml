@@ -32,10 +32,6 @@ targets:
       - ../ios/XDialIOS/LocalTailscaleSetupRuntime.swift
       - Store/StoreTailscale.swift
       - AppIcon.icns
-      - path: PrivateConfig/SeedProfile
-        type: folder
-        buildPhase: resources
-        optional: true
     info:
       path: Store/Host-Info.plist
       properties:
@@ -57,6 +53,14 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: com.xd.xdial.ios
       PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Host
       CODE_SIGN_ENTITLEMENTS: Store/Host.entitlements
+      # The preset embed reads the private configuration directory named at build time.
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Embed company preset
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          "${SRCROOT}/scripts/embed-private-seed.sh" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}" "${SRCROOT}"
     dependencies:
       - target: XDialStoreProxy
       - framework: ../build/frameworks/macos/Libbox.xcframework
@@ -96,7 +100,7 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           set -eu
-          source_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-${SRCROOT}/../ios/PrivateConfig}/RuleSets"
+          source_dir="${XDIAL_PRIVATE_CONFIG_DIR:-${XDIAL_IOS_PRIVATE_CONFIG_DIR:-${SRCROOT}/../ios/PrivateConfig}}/RuleSets"
           destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/SeedProfile/RuleSets"
           rm -rf "${destination}"
           if [ -f "${source_dir}/manifest.json" ]; then

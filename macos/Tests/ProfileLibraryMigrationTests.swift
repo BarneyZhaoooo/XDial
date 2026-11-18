@@ -438,7 +438,7 @@ final class ProfileLibraryMigrationTests: XCTestCase {
     func testPhoneSeedUpgradesUntouchedDesktopSeedScenarios() throws {
         let library = try desktopSeedLibrary()
         XCTAssertEqual(library.scenarios.map(\.name), ["公司", "国内"])
-        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library)
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library, aligningLegacySeed: true)
         XCTAssertEqual(upgraded.scenarios.map(\.id), ["office", "domestic", "overseas", "hongkong"])
         XCTAssertEqual(upgraded.scenarios.map(\.name), ["在公司", "在国内", "在国外", "在香港"])
         let domestic = try XCTUnwrap(upgraded.scenarios.first { $0.id == "domestic" })
@@ -451,7 +451,7 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         XCTAssertEqual(vpn.vpnPassword, "secret")
         XCTAssertEqual(Set(upgraded.snapshot().ruleSets.map(\.id)), ["intranet", "lan", "cn"])
         // Idempotent: the same seed again changes nothing.
-        XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: upgraded), upgraded)
+        XCTAssertEqual(try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: upgraded, aligningLegacySeed: true), upgraded)
     }
 
     func testPhoneSeedKeepsWhatTheUserChangedInDesktopSeedScenarios() throws {
@@ -461,7 +461,7 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         library.scenarios[index].bindings = []
         library.scenarios.append(Scenario(id: "mine", name: "自己的", defaultLineID: "direct"))
         library = try library.validated()
-        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library)
+        let upgraded = try ProfileLibraryMigration.addingMobileSeed(phoneSeed(), named: "心动", id: "seed", to: library, aligningLegacySeed: true)
         let domestic = try XCTUnwrap(upgraded.scenarios.first { $0.id == "domestic" })
         XCTAssertEqual(domestic.name, "我的国内")
         XCTAssertEqual(domestic.bindings, [])
@@ -469,6 +469,20 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         XCTAssertEqual(domestic.defaultLineID, "vpn")
         XCTAssertTrue(upgraded.scenarios.contains { $0.id == "mine" && $0.name == "自己的" })
         XCTAssertEqual(Set(upgraded.scenarios.map(\.id)), ["office", "domestic", "overseas", "hongkong", "mine"])
+        // Only the user's own changes are reported as the reason the Mac differs from the phone.
+        XCTAssertEqual(ProfileLibraryMigration.keptCustomizations(upgraded.scenarios, seed: try phoneSeed(), prefix: "心动 · "),
+                       ["Scenario domestic (name, rules)"])
+    }
+
+    func testLaterRevisionsOnlyAddWhatIsMissingLikeIPhone() throws {
+        let seed = try phoneSeed()
+        let created = try XCTUnwrap(ProfileLibraryMigration.seedLibrary(SeedProfile(name: "心动", text: "v2"), id: "seed") { _, _ in seed })
+        var changed = seed
+        changed.scenarios[1].defaultLineID = "direct"
+        changed.scenarios.append(Scenario(id: "extra", name: "新场景", defaultLineID: "direct"))
+        let next = try ProfileLibraryMigration.addingMobileSeed(changed, named: "心动", id: "seed", to: created)
+        XCTAssertEqual(next.scenarios.first { $0.id == "domestic" }?.defaultLineID, "vpn")
+        XCTAssertTrue(next.scenarios.contains { $0.id == "extra" })
     }
 
     func testPhoneSeedOnFreshInstallCreatesAllFourScenarios() throws {

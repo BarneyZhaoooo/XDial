@@ -29,12 +29,33 @@ Profile 文档（与「导出配置」格式相同）；未设置时只尝试读
 
 文档不得包含密码等凭据，用户首次连接前在首页账号表单中填写。
 
-Mac 和 iPhone 企业构建可将 `XDIAL_IOS_PRIVATE_CONFIG_DIR` 指向同一份私有目录，
-使用其中的 `Seed.json` 提供场景、顺序、默认出口和地区对应表。可选的 `RuleSets/` 随系统扩展安装，首次连接时为缺失的二进制规则提供离线副本。Mac 优先使用显式指定的
-`XDIAL_SEED_PROFILE_FILE`，也接受以原预置文件名提供的手机预置格式，以复用部署记录。
-手机预置格式（带 `revision`）加入已有的同名「心动」配置时，补齐缺少的线路、规则和场景，并对该预置
-创建过的场景逐字段三方合并：名称、默认出口、规则与顺序、图标、Wi-Fi 触发仍等于上一版预置时采用新版，
-用户改过的字段保留；重复应用同一版不再改变配置。Mac 45 及以前的内测包注入的是两场景的桌面预置
-（「公司」「国内」），升级到手机预置后得到与手机一致的「在公司」「在国内」「在国外」「在香港」和地区自动选择。
-App Store 版的网络扩展同样从 `XDIAL_IOS_PRIVATE_CONFIG_DIR/RuleSets` 带入离线规则。
+## 与手机共用一份预置
+
+企业包应只维护一份手机预置格式的 `Seed.json`（加可选的 `RuleSets/`），由 `XDIAL_PRIVATE_CONFIG_DIR`
+指向（旧名 `XDIAL_IOS_PRIVATE_CONFIG_DIR` 仍可用）；iPhone、Mac 官网版和 App Store 版都从这个目录构建。
+[`scripts/embed-private-seed.sh`](../scripts/embed-private-seed.sh) 把它嵌入为 `<profile_name>.json`：
+`Seed.json` 顶层可选的 `profile_name` 就是 Mac 上的 Profile 名称（未写时为「Seed」），名称决定部署记录，
+发版之间不要改。显式指定的 `XDIAL_SEED_PROFILE_FILE` 仍然优先。`RuleSets/` 随网络扩展安装
+（官网版在系统扩展、App Store 版在 App 扩展），首次连接时为缺失的二进制规则提供离线副本。
+
+手机预置格式与 iPhone 的更新方式相同：每个新 `revision` 只补齐缺少的线路、规则和场景，用户改过和删掉的
+不动，当前场景不变；重复应用同一版不再改变配置。唯一的例外是从旧桌面预置（没有 `revision` 的 Profile
+文档）第一次换成手机预置时：Mac 45 及以前的内测包注入的是两场景的「公司」「国内」，这时对该预置创建过的
+场景逐字段三方合并，名称、默认出口、规则与顺序、图标、Wi-Fi 触发仍等于旧预置时采用手机预置，用户改过的
+字段保留，并在日志中逐个记下 `seed: <名称> kept the user's change: Scenario <ID> (<字段>)`，解释这台 Mac
+为什么与手机不同。升级后得到与手机一致的「在公司」「在国内」「在国外」「在香港」和地区自动选择。
+
+### 打包后检查
+
+`cmd/xdial-seed` 按路由含义比较包内预置与来源，有差异就以非零状态退出：
+
+```sh
+go run ./cmd/xdial-seed check --authority <私有目录> --platform macos-store --bundle XDial.app --profile-name 心动
+```
+
+平台为 `ios`、`tvos`、`macos`（官网版）、`macos-store` 或 `desktop-legacy`（只认 Profile 文档的上游正式版）。
+比较线路（不含凭据）、规则内容与顺序、场景的默认出口与绑定线路、地区对应和随包规则文件的 sha256。
+只有平台声明的能力限制可以跳过，并在每次检查时打印；目前只有 `desktop-legacy` 声明了地区自动选择和随包规则。
+`legacy-document` 从 `Seed.json` 生成这类旧版本使用的 Profile 文档，`--check` 发现手改漂移时失败。
+
 未注入预置时，新安装使用起步线路，用户在设置中添加或导入场景。

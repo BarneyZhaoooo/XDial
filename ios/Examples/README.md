@@ -7,7 +7,8 @@
 
 构建时依次查找：
 
-1. 构建设置 `XDIAL_IOS_PRIVATE_CONFIG_DIR` 指向的目录（必须存在）。
+1. 构建设置 `XDIAL_PRIVATE_CONFIG_DIR`（旧名 `XDIAL_IOS_PRIVATE_CONFIG_DIR`）指向的目录（必须存在）。
+   Mac 构建读取同一个目录，见 [Mac 预置说明](../../macos/Examples/README.md#与手机共用一份预置)。
 2. 被忽略的 `ios/PrivateConfig/`。
 
 目录里可以有：
@@ -35,6 +36,7 @@
 - `revision` 是预置的版本。预置内容有增删时加一，已经装了旧包的用户升级后会补上新内容。
 - `region_scenarios` 可选：网络出口所在的地区（两位代码）对应哪个场景，`*` 是没列出的地区。
   留空时 App 只按场景登记的 Wi-Fi 自动选场景，也不会去查网络出口。
+- `profile_name` 可选：Mac 版嵌入时用作 Profile 名称（手机忽略）。同一份文件供所有平台打包，不要另维护副本。
 
 App 怎么用它：
 

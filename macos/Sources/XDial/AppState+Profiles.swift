@@ -148,7 +148,10 @@ extension AppState {
                 if entry != nil && !original.profiles.contains(where: { $0.id == profileID }) { return }
                 let incoming = try ProfileDocumentService.importDocument(seed.text, profileID: profileID)
                 if seed.revision != nil {
-                    profileLibrary = try ProfileLibraryMigration.addingMobileSeed(incoming, named: seed.name, id: profileID, to: original)
+                    // A ledger digest without the mobile prefix means the old desktop preset created this Profile.
+                    let fromLegacySeed = entry.map { !$0.digest.hasPrefix("mobile-v1-") } ?? false
+                    profileLibrary = try ProfileLibraryMigration.addingMobileSeed(incoming, named: seed.name, id: profileID,
+                                                                                  to: original, aligningLegacySeed: fromLegacySeed)
                 } else if entry != nil {
                     profileLibrary = try ProfileLibraryMigration.refreshingSeed(incoming, profileID: profileID,
                                                                                 named: seed.name, in: original)

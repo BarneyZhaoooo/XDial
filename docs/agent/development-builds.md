@@ -15,7 +15,8 @@ Tailscale 登录会话，设置窗口由菜单栏主程序显示。Developer ID 
 
 构建时先运行 `make libbox-macos-xcframework` 和 `cd macos && xcodegen generate --spec store.yml`，
 再通过 `XDialStore` scheme 归档。传入 `CURRENT_PROJECT_VERSION` 与 `XDIAL_SOURCE_REVISION`。
-企业种子由私有打包仓库注入忽略目录 `macos/PrivateConfig/SeedProfile/`。宿主、扩展分别使用
+企业种子与 iPhone 共用私有打包仓库的同一个目录（`XDIAL_PRIVATE_CONFIG_DIR`），由
+`macos/scripts/embed-private-seed.sh` 嵌入，归档后用 `cmd/xdial-seed check` 核对，见 [Mac 预置说明](../../macos/Examples/README.md#与手机共用一份预置)。宿主、扩展分别使用
 Mac App Store 描述文件及 Apple Distribution 签名，上传包使用 Mac Installer Distribution 签名。
 
 

@@ -79,8 +79,12 @@ enum ProfileLibraryMigration {
 
     /// Apply one mobile seed revision using the existing global resource owners.
     /// Existing routes, credentials and the selected Scenario are user choices.
+    /// `aligningLegacySeed` is set once, when a Profile created by the older
+    /// desktop preset (no revision) first receives the shared mobile preset:
+    /// its untouched Scenarios take the shared routing. Later revisions only add
+    /// what is missing, exactly as on iPhone.
     static func addingMobileSeed(_ incoming: Profile, named name: String, id: String,
-                                 to original: ProfileLibrary) throws -> ProfileLibrary {
+                                 to original: ProfileLibrary, aligningLegacySeed: Bool = false) throws -> ProfileLibrary {
         var library = original
         let existing = library.profiles.first(where: { $0.id == id })
         // A seed inserted beside other Profiles may have had colliding IDs scoped.
@@ -104,9 +108,12 @@ enum ProfileLibraryMigration {
         for rule in seed.ruleSets where !draft.ruleSets.contains(where: { $0.id == rule.id }) {
             draft.ruleSets.append(rule)
         }
-        if let previous = existing?.baseline {
+        if aligningLegacySeed, let previous = existing?.baseline {
             draft.scenarios = refreshedSeedScenarios(draft.scenarios, previous: previous, seed: seed,
                                                      owned: { library.scenarioSources[$0] == id }, prefix: name + " · ")
+            for note in keptCustomizations(draft.scenarios, seed: seed, prefix: name + " · ") {
+                appLog("seed: \(name) kept the user's change: \(note)")
+            }
         }
         var claimed = Set(draft.scenarios.flatMap(\.matchSSIDs))
         for var scene in seed.scenarios where !draft.scenarios.contains(where: { $0.id == scene.id }) {
@@ -155,6 +162,23 @@ enum ProfileLibraryMigration {
             result[index] = scene
         }
         return result
+    }
+
+    /// What still differs from the shared preset after alignment, i.e. what the
+    /// user changed, so the log explains why a Mac and an iPhone route differently.
+    static func keptCustomizations(_ scenarios: [Scenario], seed: Profile, prefix: String) -> [String] {
+        seed.scenarios.compactMap { source in
+            guard let scene = scenarios.first(where: { $0.id == source.id }) else { return nil }
+            var fields: [String] = []
+            if scene.name != source.name && scene.name != prefix + source.name { fields.append("name") }
+            if scene.defaultLineID != source.defaultLineID || scene.defaultSubscriptionID != source.defaultSubscriptionID {
+                fields.append("default exit")
+            }
+            if scene.bindings != source.bindings || scene.matchOrder != source.matchOrder { fields.append("rules") }
+            if scene.iconOverride != source.iconOverride { fields.append("icon") }
+            if Set(scene.matchSSIDs) != Set(source.matchSSIDs) { fields.append("Wi-Fi") }
+            return fields.isEmpty ? nil : "Scenario \(source.id) (\(fields.joined(separator: ", ")))"
+        }
     }
 
     /// A newer seed overwrites the content it owns, like a subscription refresh, but
