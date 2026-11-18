@@ -13,6 +13,7 @@ struct HomeAccountView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var saveError: String?
+    @State private var formHeight: CGFloat = 270
 
     private var line: Line? { state.profile.lines.first { $0.id == request.lineID } }
     private var owner: ProfileRecord? { state.profileLibrary.owner(ofLine: request.lineID) }
@@ -22,6 +23,40 @@ struct HomeAccountView: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ScrollView {
+                fields
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { formHeight = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(formHeight, 380))
+            HStack {
+                Spacer()
+                Button(state.tr("取消", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(request.connectScenarioID == nil ? state.tr("保存", "Save") : state.tr("保存并连接", "Save and Connect")) {
+                    submit()
+                }
+                .xdialPrimaryAction()
+                .keyboardShortcut(.defaultAction)
+                .disabled(!editable || server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                          username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+            }
+            .controlSize(.large)
+        }
+        .padding(24)
+        .frame(width: 380)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(XDialPalette.canvas)
+        .onAppear {
+            server = line?.vpnServer ?? ""
+            username = line?.vpnUsername ?? ""
+            password = line?.vpnPassword ?? ""
+        }
+        .onDisappear { password = "" }
+    }
+
+    private var fields: some View {
         VStack(alignment: .leading, spacing: 18) {
             if let line {
                 HomeAccountHeading(title: state.tr("登录\(line.name)", "Sign in to \(line.name)"))
@@ -54,29 +89,9 @@ struct HomeAccountView: View {
                 Text(state.tr("断开连接后可修改账号。", "Disconnect to edit the account."))
             }
             if let saveError { Text(saveError).foregroundStyle(.red) }
-            HStack {
-                Spacer()
-                Button(state.tr("取消", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(request.connectScenarioID == nil ? state.tr("保存", "Save") : state.tr("保存并连接", "Save and Connect")) {
-                    submit()
-                }
-                .xdialPrimaryAction()
-                .keyboardShortcut(.defaultAction)
-                .disabled(!editable || server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                          username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
-            }
-            .controlSize(.large)
         }
-        .padding(24)
-        .frame(width: 380)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(XDialPalette.canvas)
-        .onAppear {
-            server = line?.vpnServer ?? ""
-            username = line?.vpnUsername ?? ""
-            password = line?.vpnPassword ?? ""
-        }
-        .onDisappear { password = "" }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(3)
     }
 
     private func submit() {
