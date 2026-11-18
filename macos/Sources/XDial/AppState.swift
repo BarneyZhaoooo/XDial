@@ -2992,6 +2992,7 @@ final class AppState: ObservableObject {
     }
 
     func checkHelper() {
+        #if !XDIAL_STORE
         // 旧机制的 LaunchDaemon 与 SMAppService 同 label，旧 job 在位时 status
         // 会误报 enabled。只要旧安装残留还在，就当作未配置，引导走一次性迁移。
         if PrivilegeManager.legacyInstalled {
@@ -3002,6 +3003,7 @@ final class AppState: ObservableObject {
         let st = PrivilegeManager.status
         helperInstalled = (st == .enabled)
         helperNeedsApproval = (st == .requiresApproval)
+        #endif
     }
 
     // MARK: - Subscription Management

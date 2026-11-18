@@ -10,6 +10,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--render-settings-preview")
 }
 #endif
 
+#if !XDIAL_STORE
 if CommandLine.arguments.contains(OutgoingApplicationCleanup.helperReplacementArgument) {
     let application = NSApplication.shared
     Task { @MainActor in
@@ -198,6 +199,8 @@ while !launchPreparationComplete {
         exit(1)
     }
 }
+
+#endif
 
 let me = NSRunningApplication.current
 let relocationPredecessorProcessIdentifier =

@@ -130,9 +130,11 @@ struct GeneralSettingsView: View {
                 }
                 Spacer(minLength: 0)
             }
+            #if !XDIAL_STORE
             Button(state.tr("安装与维护…", "Install & Maintain…")) {
                 state.installation.present(operation: .install)
             }
+            #endif
             Divider()
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -146,6 +148,7 @@ struct GeneralSettingsView: View {
                         .disabled(state.wifiSSIDAccessState == .checking)
                 }
             }
+            #if !XDIAL_STORE
             Divider()
             HStack(alignment: .top, spacing: 12) {
                 note(state.tr(
@@ -157,6 +160,7 @@ struct GeneralSettingsView: View {
                     state.installation.present(operation: .uninstall)
                 }
             }
+            #endif
         }
     }
 
@@ -177,11 +181,15 @@ struct GeneralSettingsView: View {
                     AppUpdateChannelSettings(updater: updater)
                 }
             } else {
+                #if XDIAL_STORE
+                Text(state.tr("通过 TestFlight 更新", "Updates are available in TestFlight"))
+                #else
                 Text(state.tr("独立开发版 · 手动更新", "Independent build · Manual updates"))
                 note(state.tr(
                     "从源码重新构建 Debug 并覆盖安装来升级，不接收正式版更新。",
                     "Upgrade by rebuilding Debug from source and reinstalling; release updates are not received."
                 ))
+                #endif
             }
         }
     }
@@ -195,7 +203,11 @@ struct GeneralSettingsView: View {
 
     private var installationStatus: String {
         if state.installation.isReady {
+            #if XDIAL_STORE
+            return state.tr("网络扩展已就绪", "The network extension is ready")
+            #else
             return state.tr("后台服务与网络扩展已就绪", "Background service and network extension are ready")
+            #endif
         }
         return state.installation.report.error?.message
             ?? state.tr("尚未完成安装，可以先编辑配置。", "Installation is incomplete. You can still edit configurations.")

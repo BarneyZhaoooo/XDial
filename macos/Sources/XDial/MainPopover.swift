@@ -111,9 +111,11 @@ struct MainPopover: View {
                     Task { await updater.checkNow() }
                 }
             }
+            #if !XDIAL_STORE
             Button(state.tr("安装状态…", "Installation Status…")) {
                 state.installation.present()
             }
+            #endif
             Divider()
             Button(state.tr("退出 XDial", "Quit XDial")) {
                 MenuBarRecoveryController.shared.requestQuit()

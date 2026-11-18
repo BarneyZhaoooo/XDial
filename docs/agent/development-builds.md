@@ -1,5 +1,24 @@
 # macOS 构建与安装
 
+## Apple 平台的 TestFlight 身份
+
+iOS、原生 macOS 和未来的 tvOS 等平台使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
+各平台商店构建的宿主 bundle ID 均为 `com.xd.xdial.ios`。扩展保留各自的子标识。
+macOS Developer ID 独立分发版沿用 `com.xd.xdial.app`，Debug 使用 `com.xd.xdial.debug`。
+
+macOS 平台已在该记录中建立，首个版本为 0.1.0。验证交付时须按平台查看 TestFlight 构建，
+确认列出 macOS 以及目标测试组。iOS 构建可在 Apple 芯片 Mac 上运行，两者在后台分别列出。
+
+商店构建使用 `macos/store.yml`，将桌面透明代理打为随宿主交付的 app extension。
+宿主与扩展通过 App Group 交换事务记录，分别写入计划与 Provider 的实际进度。宿主进程内运行
+Tailscale 登录会话，设置窗口由菜单栏主程序显示。Developer ID 与 Debug 的系统级安装流程独立维护。
+
+构建时先运行 `make libbox-macos-xcframework` 和 `cd macos && xcodegen generate --spec store.yml`，
+再通过 `XDialStore` scheme 归档。传入 `CURRENT_PROJECT_VERSION` 与 `XDIAL_SOURCE_REVISION`。
+企业种子由私有打包仓库注入忽略目录 `macos/PrivateConfig/SeedProfile/`。宿主、扩展分别使用
+Mac App Store 描述文件及 Apple Distribution 签名，上传包使用 Mac Installer Distribution 签名。
+
+
 Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI 见
 [Android 构建与测试分发](android-release.md)。两端构建入口不互相安装或重启。
 
@@ -19,7 +38,7 @@ Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI
 | Settings UI / Extension / Helper / Daemon | Host 加 `.settings-ui` / `.transparent-proxy` / `.helper` / `.daemon` | 同左 |
 | 通道偏好域 | `com.kafeifei.xdial.debug` | `com.kafeifei.xdial` |
 | 通道运行目录 | `~/.xdial-debug` | `~/.xdial` |
-| 新版共享配置 / 密钥 service | `~/.xdial/configuration/profiles.enc` / `com.kafeifei.xdial.configuration` | 同左 |
+| 新版共享配置 / 密钥 service | `~/.xdial/configuration/profiles.enc` / `com.xd.xdial.configuration` | 同左 |
 | helper 状态目录 | `/Library/Application Support/XDial Debug` | `/Library/Application Support/XDial` |
 | App Group | `SX9RG894L5.com.xd.xdial.debug.network` | `SX9RG894L5.com.xd.xdial.network` |
 | helper socket | `/tmp/xdial-debug.sock` | `/tmp/xdial.sock` |

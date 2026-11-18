@@ -72,6 +72,7 @@ struct InstallationView: View {
                     .frame(width: 44, height: 44)
                     .background(headerColor.opacity(0.12), in: Circle())
                 Spacer()
+                #if !XDIAL_STORE
                 Picker(
                     state.tr("操作", "Operation"),
                     selection: operationBinding
@@ -86,6 +87,7 @@ struct InstallationView: View {
                 .controlSize(.small)
                 .frame(width: 144)
                 .disabled(isUninstalling)
+                #endif
             }
             VStack(alignment: .leading, spacing: 5) {
                 Text(headerTitle).font(.system(.title, design: .rounded, weight: .bold))
