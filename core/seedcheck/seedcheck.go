@@ -154,12 +154,7 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	}
 	var rules []map[string]any
 	for _, rule := range p.RuleSets {
-		rules = append(rules, map[string]any{
-			"id": rule.ID, "name": rule.Name, "type": string(rule.Type), "enabled": rule.Enabled,
-			"url": rule.URL, "format": normalizedFormat(rule.Format), "fetch_line_id": rule.EffectiveFetchLineID(),
-			"domains": sorted(rule.Domains), "cidrs": sorted(rule.CIDRs), "invert": rule.Invert,
-			"no_resolve": rule.NoResolve,
-		})
+		rules = append(rules, ruleFingerprint(rule))
 	}
 	var scenarios []map[string]any
 	for _, scenario := range p.Scenarios {
@@ -184,6 +179,29 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	}
 	return canonical(map[string]any{"lines": lines, "rule_sets": rules, "scenarios": scenarios,
 		"active_scenario": p.ActiveScenarioID, "regions": regions, "offline_rules": offlineRules})
+}
+
+// ruleFingerprint is everything a RuleSet matches on. Conditions keep their
+// order (they are evaluated in turn); a native rule counts by its JSON value,
+// not its formatting.
+func ruleFingerprint(rule config.RuleSet) map[string]any {
+	var native any
+	if len(rule.NativeRule) > 0 {
+		if err := json.Unmarshal(rule.NativeRule, &native); err != nil {
+			native = string(rule.NativeRule)
+		}
+	}
+	conditions := []map[string]any{}
+	for _, condition := range rule.Conditions {
+		conditions = append(conditions, ruleFingerprint(condition))
+	}
+	return map[string]any{
+		"id": rule.ID, "name": rule.Name, "type": string(rule.Type), "enabled": rule.Enabled,
+		"url": rule.URL, "format": normalizedFormat(rule.Format), "fetch_line_id": rule.EffectiveFetchLineID(),
+		"domains": sorted(rule.Domains), "cidrs": sorted(rule.CIDRs), "invert": rule.Invert,
+		"no_resolve": rule.NoResolve, "native_rule": native, "applications": rule.Applications,
+		"processes": sorted(rule.Processes), "conditions": conditions,
+	}
 }
 
 func canonical(value map[string]any) map[string]any {

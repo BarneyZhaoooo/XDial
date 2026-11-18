@@ -98,3 +98,35 @@ func TestEffectiveValuesDoNotCount(t *testing.T) {
 		t.Fatalf("fetching rules through another line must count: %v", d)
 	}
 }
+
+func TestDiffReportsMatchingContentOfEveryRuleKind(t *testing.T) {
+	base := func() config.RuleSet {
+		return config.RuleSet{ID: "r", Name: "r", Type: "group", Enabled: true,
+			NativeRule:   json.RawMessage(`{"domain_suffix":["a.example"]}`),
+			Applications: []config.ApplicationMatch{{Path: "/Applications/A.app", BundleIdentifier: "com.example.a"}},
+			Processes:    []string{"a"},
+			Conditions:   []config.RuleSet{{ID: "c", Type: "manual", Enabled: true, Domains: []string{"c.example"}}}}
+	}
+	fingerprint := func(rule config.RuleSet) map[string]any {
+		return Fingerprint(&Seed{Profile: &config.Profile{RuleSets: []config.RuleSet{rule}}}, nil)
+	}
+	want := fingerprint(base())
+	reformatted := base()
+	reformatted.NativeRule = json.RawMessage("{ \"domain_suffix\": [ \"a.example\" ] }")
+	if d := Diff(want, fingerprint(reformatted), nil); len(d) != 0 {
+		t.Fatalf("native rule formatting reported as a difference: %v", d)
+	}
+	changes := map[string]func(*config.RuleSet){
+		"native rule": func(r *config.RuleSet) { r.NativeRule = json.RawMessage(`{"domain_suffix":["b.example"]}`) },
+		"application": func(r *config.RuleSet) { r.Applications[0].BundleIdentifier = "com.example.b" },
+		"process":     func(r *config.RuleSet) { r.Processes = []string{"b"} },
+		"condition":   func(r *config.RuleSet) { r.Conditions[0].Domains = []string{"d.example"} },
+	}
+	for name, change := range changes {
+		rule := base()
+		change(&rule)
+		if d := Diff(want, fingerprint(rule), nil); len(d) == 0 {
+			t.Errorf("%s change not detected", name)
+		}
+	}
+}

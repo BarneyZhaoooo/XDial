@@ -11,7 +11,9 @@ import Foundation
 /// the effective configuration (`<case>.json`) together with the package's own preset as
 /// imported for that Profile; `xdial-seed effective` compares the two by routing meaning,
 /// and `xdial-seed check` separately proves the package preset equals the phone's.
-/// Credentials are fixed test values.
+/// Credentials are fixed test values. Conditions every upgrade must meet (credentials,
+/// manual selection, no change on a second launch, a deleted preset staying deleted)
+/// fail the run; customizations the user is allowed to keep are written as notes.
 enum SeedAcceptance {
     private static let profileID = "seed" // the namespace xdial-seed imports the authority with
 
@@ -44,6 +46,10 @@ enum SeedAcceptance {
                 if let failure = result.failure { throw failure }
                 return result
             }
+            /// A launch that found nothing to do returns no library or entry.
+            func unchanged(_ result: ProfileLibraryMigration.SeedApplication) -> Bool {
+                result.library == nil && result.entry == nil
+            }
             func write(_ name: String, _ library: ProfileLibrary, _ targets: [String: String], _ notes: [String],
                        profileID: String = profileID) throws {
                 let encoder = JSONEncoder()
@@ -60,8 +66,8 @@ enum SeedAcceptance {
             let first = try launch(seed, createdProfileID: profileID, entry: nil, library: fresh, targets: [:])
             let again = try launch(seed, createdProfileID: nil, entry: first.entry, library: fresh,
                                    targets: first.regionTargets ?? [:])
-            try write("fresh", fresh, first.regionTargets ?? [:],
-                      again.library == nil && again.entry == nil ? ["second launch changed nothing"] : ["second launch changed the library"])
+            try require(unchanged(again), "fresh install: the second launch changed the library")
+            try write("fresh", fresh, first.regionTargets ?? [:], ["second launch changed nothing"])
 
             // 2. The older package installed first; the employee signed in and picked a Scenario by hand.
             var old = try ProfileLibraryMigration.seedLibrary(older, id: profileID, importDocument: importDocument).required()
@@ -76,15 +82,19 @@ enum SeedAcceptance {
             old = try old.validated()
             let upgrade = try launch(seed, createdProfileID: nil, entry: oldLaunch.entry, library: old,
                                      targets: oldLaunch.regionTargets ?? [:])
-            let upgraded = try upgrade.library.required()
-            let repeated = try launch(seed, createdProfileID: nil, entry: upgrade.entry, library: upgraded,
-                                      targets: upgrade.regionTargets ?? [:])
+            // An app update that keeps the same preset revision has nothing to apply.
+            let upgraded = upgrade.library ?? old
+            let upgradeEntry = upgrade.entry ?? oldLaunch.entry
+            let upgradeTargets = upgrade.regionTargets ?? oldLaunch.regionTargets ?? [:]
+            let repeated = try launch(seed, createdProfileID: nil, entry: upgradeEntry, library: upgraded,
+                                      targets: upgradeTargets)
             let line = upgraded.snapshot().lines.first { $0.type == "vpn" }
-            try write("upgrade", upgraded, upgrade.regionTargets ?? [:], [
-                "manual Scenario before upgrade: \(manual)",
-                line?.vpnUsername == "acceptance-user" && line?.vpnPassword == "acceptance-password"
-                    ? "credentials kept" : "credentials lost",
-                repeated.library == nil && repeated.entry == nil ? "second launch changed nothing" : "second launch changed the library",
+            try require(line?.vpnUsername == "acceptance-user" && line?.vpnPassword == "acceptance-password",
+                        "upgrade: the signed-in credentials were lost")
+            try require(upgraded.activeScenarioID == manual, "upgrade: the manually selected Scenario changed")
+            try require(unchanged(repeated), "upgrade: the second launch changed the library")
+            try write("upgrade", upgraded, upgradeTargets, [
+                "manual Scenario kept: \(manual)", "credentials kept", "second launch changed nothing",
             ])
 
             // 3. The older package joined beside the employee's own Profile; they changed one of its Scenarios.
@@ -99,21 +109,25 @@ enum SeedAcceptance {
             let ownActive = beside.activeScenarioID
             let besideUpgrade = try launch(seed, createdProfileID: nil, entry: joined.entry, library: beside,
                                            targets: joined.regionTargets ?? [:])
-            let besideUpgraded = try besideUpgrade.library.required()
+            let besideUpgraded = besideUpgrade.library ?? beside
             let besideID = try joined.entry.required().profileID
             var notes = ProfileLibraryMigration.keptCustomizations(besideUpgraded.scenarios,
                                                                    seed: try importDocument(seed.text, besideID),
                                                                    prefix: seed.name + " · ")
-            notes.append(besideUpgraded.activeScenarioID == ownActive ? "own active Scenario kept" : "own active Scenario changed")
+            try require(besideUpgraded.activeScenarioID == ownActive, "beside: the user's own active Scenario changed")
+            try require(besideUpgraded.scenarios.contains { $0.id == beside.scenarios[edited].id && $0.name == "我的国内" },
+                        "beside: the Scenario the user changed was overwritten")
+            notes.append("own active Scenario kept")
             notes.append("profile id: \(besideID)")
-            try write("beside", besideUpgraded, besideUpgrade.regionTargets ?? [:], notes, profileID: besideID)
+            try write("beside", besideUpgraded, besideUpgrade.regionTargets ?? joined.regionTargets ?? [:], notes,
+                      profileID: besideID)
 
             // 4. The employee deleted the older preset's Profile: the upgrade must not add it back.
             let deleted = try beside.removingProfile(besideID)
             let afterDelete = try launch(seed, createdProfileID: nil, entry: joined.entry, library: deleted,
                                          targets: joined.regionTargets ?? [:])
-            try write("deleted", deleted, afterDelete.regionTargets ?? [:],
-                      [afterDelete.library == nil && afterDelete.entry == nil ? "deleted preset stayed deleted" : "deleted preset came back"],
+            try require(unchanged(afterDelete), "deleted: the deleted preset came back")
+            try write("deleted", deleted, afterDelete.regionTargets ?? [:], ["deleted preset stayed deleted"],
                       profileID: besideID)
             fputs("seed acceptance written to \(directory.path)\n", stdout)
             exit(0)
@@ -122,6 +136,11 @@ enum SeedAcceptance {
             exit(1)
         }
     }
+}
+
+/// A condition the acceptance must meet; failing it fails the whole run.
+private func require(_ condition: Bool, _ failure: String) throws {
+    guard condition else { throw ProfileLibraryError.invalid("seed acceptance: \(failure)") }
 }
 
 private extension Optional {
