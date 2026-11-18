@@ -10,6 +10,20 @@ final class TrafficInfo: ObservableObject {
     private var previousSnapshot: ProviderTrafficSnapshot?
     private var previousSampleAt: Date?
 
+    static func formatRate(_ bytesPerSecond: Double?) -> String {
+        guard let bytesPerSecond, bytesPerSecond >= 0 else {
+            return "—"
+        }
+        let units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
+        var value = bytesPerSecond
+        var unitIndex = 0
+        while value >= 1_000 && unitIndex < units.count - 1 {
+            value /= 1_000
+            unitIndex += 1
+        }
+        return String(format: "%.1f %@", value, units[unitIndex])
+    }
+
     func start(transactionID: String, engine: GoEngine) {
         guard self.transactionID != transactionID else { return }
         stop()

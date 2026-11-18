@@ -74,6 +74,7 @@ private struct MenuBarLabel: View {
     let connecting: Bool
     let hasError: Bool
     let updateAvailable: Bool
+    let trafficRates: MenuBarTrafficRates?
     /// 连接中拨号动画的帧号；只在真正连接中且未开启 Reduce Motion 时推进。
     @State private var animationFrame = 0
 
@@ -88,6 +89,14 @@ private struct MenuBarLabel: View {
     }
 
     var body: some View {
+        HStack(spacing: 5) {
+            statusIcon
+            trafficRates
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var statusIcon: some View {
         Image(nsImage: MenuBarStatusIcon.image(
             connection: connection,
             badge: .resolve(
@@ -160,6 +169,49 @@ private struct MenuBarLabel: View {
     }
 }
 
+private struct MenuBarTrafficRates: View {
+    @ObservedObject var trafficInfo: TrafficInfo
+    let transactionID: String
+    let downloadLabel: String
+    let uploadLabel: String
+
+    var body: some View {
+        let isCurrent = trafficInfo.transactionID == transactionID
+        VStack(spacing: 0) {
+            rate(
+                "arrow.down",
+                label: downloadLabel,
+                bytesPerSecond: isCurrent ? trafficInfo.downloadBytesPerSecond : nil
+            )
+            rate(
+                "arrow.up",
+                label: uploadLabel,
+                bytesPerSecond: isCurrent ? trafficInfo.uploadBytesPerSecond : nil
+            )
+        }
+        .foregroundStyle(.primary)
+        .frame(height: 22)
+    }
+
+    private func rate(
+        _ symbol: String,
+        label: String,
+        bytesPerSecond: Double?
+    ) -> some View {
+        let value = TrafficInfo.formatRate(bytesPerSecond)
+        return HStack(spacing: 2) {
+            Image(systemName: symbol)
+                .font(.system(size: 8, weight: .medium))
+                .frame(width: 8)
+            Text(value)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .frame(width: 60, alignment: .trailing)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) \(value)")
+    }
+}
+
 private struct SettingsCommand: View {
     @Environment(\.openWindow) private var openWindow
     let title: String
@@ -180,13 +232,32 @@ struct XDialApp: App {
     @StateObject private var state = AppState()
     @StateObject private var updateChecker = AppUpdateChecker()
     @StateObject private var menuBar = MenuBarRecoveryController.shared
+    // The rate views observe samples directly so they don't invalidate the scenes.
+    @State private var trafficInfo = TrafficInfo()
+    @State private var isPopoverVisible = false
+
+    private var trafficTransactionID: String? {
+        guard state.isConnected,
+              let report = state.presentedConnectionReport,
+              report.state == .committed else {
+            return nil
+        }
+        return report.transactionID
+    }
+
+    private var sampledTrafficTransactionID: String? {
+        guard state.showsMenuBarTraffic || isPopoverVisible else { return nil }
+        return trafficTransactionID
+    }
 
     var body: some Scene {
         MenuBarExtra(isInserted: menuBar.insertion) {
-            MainPopover()
+            MainPopover(trafficInfo: trafficInfo)
                 .environmentObject(state)
                 .environmentObject(updateChecker)
                 .tint(XDialPalette.accent)
+                .onAppear { isPopoverVisible = true }
+                .onDisappear { isPopoverVisible = false }
         } label: {
             MenuBarLabel(
                 connected: state.isConnected,
@@ -194,8 +265,17 @@ struct XDialApp: App {
                     && state.committedIngress?.mode == .localSOCKS,
                 connecting: state.isBusy,
                 hasError: state.hasMenuBarError,
-                updateAvailable: updateChecker.isUpdateAvailable
+                updateAvailable: updateChecker.isUpdateAvailable,
+                trafficRates: menuBarTrafficRates
             )
+            .onChange(of: sampledTrafficTransactionID, initial: true) { _, transactionID in
+                if let transactionID {
+                    trafficInfo.start(transactionID: transactionID, engine: state.engine)
+                } else {
+                    trafficInfo.stop()
+                }
+            }
+            .onDisappear { trafficInfo.stop() }
             .task {
                 await updateChecker.pollForUpdates()
             }
@@ -254,6 +334,18 @@ struct XDialApp: App {
         }
         .defaultSize(width: 460, height: 420)
         .windowResizability(.contentSize)
+    }
+
+    private var menuBarTrafficRates: MenuBarTrafficRates? {
+        guard state.showsMenuBarTraffic, let transactionID = trafficTransactionID else {
+            return nil
+        }
+        return MenuBarTrafficRates(
+            trafficInfo: trafficInfo,
+            transactionID: transactionID,
+            downloadLabel: state.tr("下载速度", "Download speed"),
+            uploadLabel: state.tr("上传速度", "Upload speed")
+        )
     }
 }
 

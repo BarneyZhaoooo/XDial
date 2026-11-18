@@ -115,6 +115,18 @@ struct GeneralSettingsView: View {
                 "配置名称和个人输入保持原样。",
                 "Configuration names and your own text remain unchanged."
             ))
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(
+                    state.tr("在菜单栏显示网速", "Show Network Speed in Menu Bar"),
+                    isOn: $state.showsMenuBarTraffic
+                )
+                .toggleStyle(.switch)
+                note(state.tr(
+                    "连接后显示经过 XDial 的下载和上传速率。",
+                    "Show download and upload speeds for traffic through XDial while connected."
+                ))
+            }
         }
     }
 

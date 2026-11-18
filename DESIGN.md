@@ -105,6 +105,9 @@ App、Dock 和移动端图标共享 [RotaryDial.swift](macos/Sources/XDial/Rotar
 错误优先于更新圆点。普通字形由系统 template 着色；更新圆点需要非 template 图像，底图墨色
 跟随真实菜单栏明暗，包括壁纸造成的变化，不跟随 XDial 自身的外观覆盖。
 
+已连接时，拨号盘旁默认显示 XDial 当前连接的下载和上传速率，与 Popover 共用采样。
+可在“通用 → 外观与语言”关闭菜单栏网速，开关即时生效并随应用偏好保存。
+
 ## 4. Popover
 
 ### 4.1 结构与场景布局

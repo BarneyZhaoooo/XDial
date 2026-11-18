@@ -82,7 +82,7 @@ enum SettingsLayoutPreview {
             precondition(state.activeScenario?.id == scenario.id)
             precondition(state.desiredConnectionStateForDiagnostics == initialIntent)
             precondition(!state.isBusy && !state.isConnected)
-            let popover = NSHostingView(rootView: MainPopover()
+            let popover = NSHostingView(rootView: MainPopover(trafficInfo: TrafficInfo())
                 .environmentObject(state!).environmentObject(AppUpdateChecker()))
             precondition(popover.fittingSize.width == 360 && popover.fittingSize.height > 0)
         }

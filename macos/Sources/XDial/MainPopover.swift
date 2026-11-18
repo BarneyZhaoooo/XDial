@@ -19,7 +19,7 @@ struct MainPopover: View {
     @EnvironmentObject private var updater: AppUpdateChecker
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var networkInfo = NetworkInfo.shared
-    @StateObject private var trafficInfo = TrafficInfo()
+    @ObservedObject var trafficInfo: TrafficInfo
     @State private var showsScenarios = false
     @State private var contentHeight: CGFloat = 260
     @State private var showsConnectionDetails = false
@@ -91,14 +91,6 @@ struct MainPopover: View {
         )
         .background(XDialPalette.canvas)
         .contextMenu { applicationMenuItems }
-        .onAppear { synchronizeTrafficSampling() }
-        .onDisappear { trafficInfo.stop() }
-        .onChange(of: state.engine.status) {
-            synchronizeTrafficSampling()
-        }
-        .onChange(of: state.presentedConnectionReport?.transactionID) {
-            synchronizeTrafficSampling()
-        }
     }
 
     @ViewBuilder
@@ -998,7 +990,7 @@ struct MainPopover: View {
                 HStack(spacing: 0) {
                     metric(
                         symbol: "arrow.down",
-                        value: formatRate(
+                        value: TrafficInfo.formatRate(
                             trafficInfo.downloadBytesPerSecond
                         )
                     )
@@ -1007,7 +999,7 @@ struct MainPopover: View {
                         .padding(.horizontal, 7)
                     metric(
                         symbol: "arrow.up",
-                        value: formatRate(
+                        value: TrafficInfo.formatRate(
                             trafficInfo.uploadBytesPerSecond
                         )
                     )
@@ -1552,35 +1544,6 @@ struct MainPopover: View {
             "回滚状态尚未确认",
             "Rollback state not confirmed"
         )
-    }
-
-    private func synchronizeTrafficSampling() {
-        guard
-            state.isConnected,
-            let report = state.presentedConnectionReport,
-            report.state == .committed
-        else {
-            trafficInfo.stop()
-            return
-        }
-        trafficInfo.start(
-            transactionID: report.transactionID,
-            engine: state.engine
-        )
-    }
-
-    private func formatRate(_ bytesPerSecond: Double?) -> String {
-        guard let bytesPerSecond, bytesPerSecond >= 0 else {
-            return "—"
-        }
-        let units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
-        var value = bytesPerSecond
-        var unitIndex = 0
-        while value >= 1_000 && unitIndex < units.count - 1 {
-            value /= 1_000
-            unitIndex += 1
-        }
-        return String(format: "%.1f %@", value, units[unitIndex])
     }
 
     private func formatDuration(_ seconds: Int) -> String {
