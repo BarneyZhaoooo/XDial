@@ -158,7 +158,7 @@ final class ConnectionTimelineTests: XCTestCase {
         }
         store.endActiveSession("old")
         store.beginSession("new", markActive: true, origin: .autoRetry)
-        store.append(session: "new", source: .app, stage: "app.status.connected")
+        store.append(session: "new", source: .app, stage: "app.connection_established")
         let snapshot = store.snapshot()
         let old = try XCTUnwrap(snapshot.sessions.first { $0.id == "old" })
         XCTAssertEqual(old.events.count, ConnectionTimeline.maxEventsPerSession)
@@ -169,6 +169,32 @@ final class ConnectionTimelineTests: XCTestCase {
         for label in ["App 请求断开", "reason=3 (noNetworkAvailable)", "App 自动重试", "已连接"] {
             XCTAssertTrue(summary.contains(label), summary)
         }
+    }
+
+    func testBackgroundStartUsesSystemDateAndDisconnectedSnapshotClearsStaleMarker() throws {
+        let store = ConnectionTimelineStore(directory: directory)
+        store.beginSession("system", markActive: true, origin: .system)
+        store.append(session: "system", source: .app, stage: "app.status.connected", at: 500_000)
+        store.append(session: "system", source: .app, stage: "app.connection_established", at: 10_000)
+        let running = store.snapshot()
+        XCTAssertEqual(running.sessions.first?.systemConnectedAt, 10_000)
+        let stale = running.reportingDisconnected()
+        XCTAssertNil(stale.activeSessionID)
+        XCTAssertEqual(running.activeSessionID, "system")
+        XCTAssertEqual(store.snapshot().activeSessionID, "system")
+        let summary = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(stale, isChinese: true))
+        XCTAssertTrue(summary.contains("停止原因未知"))
+        XCTAssertTrue(summary.contains("最后记录"))
+        XCTAssertFalse(ConnectionTimelineReport.render(stale, isChinese: true).contains("进行中"))
+    }
+
+    func testLegacyObservationTimeIsNotReportedAsSystemConnectionTime() throws {
+        var file = ConnectionTimeline.File()
+        file.sessions = [.init(id: "legacy", startedAt: 1_000, events: [
+            .init(t: 500_000, src: .app, stage: "app.status.connected")
+        ], droppedEvents: 0, connectedAt: 500_000)]
+        let summary = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(file, isChinese: true))
+        XCTAssertFalse(summary.contains("已连接"))
     }
 
     func testLegacyFullSessionWithoutStopDoesNotInventReasonOrDisconnectTime() throws {

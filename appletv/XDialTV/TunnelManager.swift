@@ -1084,7 +1084,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
     /// The bounded, redacted connection timeline for the diagnostics report.
     func connectionTimelineSnapshot() async -> ConnectionTimeline.File? {
-        await timeline?.loadSnapshot()
+        guard let snapshot = await timeline?.loadSnapshot() else { return nil }
+        switch manager?.connection.status {
+        case .disconnected?, .invalid?:
+            return snapshot.reportingDisconnected()
+        default:
+            return snapshot
+        }
     }
 
     func recordUserAction(_ action: String) {
@@ -1601,6 +1607,9 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         observedSystemStatus = connection.status
         if previousStatus != connection.status {
             recordTimeline("status." + Self.timelineStatusName(connection.status))
+            if connection.status == .connected, let date = connection.connectedDate {
+                recordTimeline("connection_established", at: Int64((date.timeIntervalSince1970 * 1000).rounded()))
+            }
         }
         switch connection.status {
         case .connected:

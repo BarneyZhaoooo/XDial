@@ -58,12 +58,13 @@ enum ConnectionTimeline {
         var droppedEvents: Int
         var startOrigin: String?
         var connectedAt: Int64?
+        var systemConnectedAt: Int64?
         var stopRequestedAt: Int64?
         var stopReason: Event?
         var runtimeDisconnect: Event?
 
         mutating func record(_ event: Event) {
-            if event.stage == "app.status.connected", connectedAt == nil { connectedAt = event.t }
+            if event.stage == "app.connection_established" { systemConnectedAt = event.t }
             if event.stage == "app.stop_requested" { stopRequestedAt = event.t }
             if event.stage == "tunnel.runtime_disconnected" { runtimeDisconnect = event }
             if event.stage == "tunnel.stop_reason" { stopReason = event }
@@ -89,6 +90,14 @@ enum ConnectionTimeline {
         /// attaches to it when the system started the tunnel on its own.
         var activeSessionID: String?
         var sessions: [Session] = []
+
+        /// Reconcile only the exported copy with a fresh system status. The
+        /// extension owns the persisted marker and may be starting concurrently.
+        func reportingDisconnected() -> File {
+            var report = self
+            report.activeSessionID = nil
+            return report
+        }
     }
 
     static func nowMilliseconds() -> Int64 {
@@ -450,7 +459,7 @@ enum ConnectionTimelineReport {
         case nil: origin = isChinese ? "来源未知" : "Unknown origin"
         }
         lines.append((isChinese ? "本次启动" : "Latest start") + " · \(time(latest.startedAt)) · \(origin)")
-        if let connected = latest.connectedAt ?? latest.events.first(where: { $0.stage == "app.status.connected" })?.t {
+        if let connected = latest.systemConnectedAt ?? latest.events.first(where: { $0.stage == "app.connection_established" })?.t {
             lines.append((isChinese ? "已连接" : "Connected") + " · " + time(connected))
         }
         ending(latest, previous: false)
