@@ -130,3 +130,20 @@ func TestDiffReportsMatchingContentOfEveryRuleKind(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRequiresFieldsPlatformsDefaultDifferently(t *testing.T) {
+	cases := map[string]string{
+		"line enabled": strings.Replace(authority, `"type":"vpn","enabled":true,`, `"type":"vpn",`, 1),
+		"rule enabled": strings.Replace(authority, `"type":"manual","enabled":true,`, `"type":"manual",`, 1),
+		"trojan port": strings.Replace(authority, `{"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}`,
+			`{"id":"vpn","name":"公司 VPN","type":"trojan","enabled":true,"trojan_server":"t.example.com"}`, 1),
+	}
+	for name, seed := range cases {
+		if seed == authority {
+			t.Fatalf("%s: fixture did not change", name)
+		}
+		if _, err := Load([]byte(seed)); err == nil || !strings.Contains(err.Error(), "platforms default it differently") {
+			t.Errorf("%s omitted: got %v", name, err)
+		}
+	}
+}

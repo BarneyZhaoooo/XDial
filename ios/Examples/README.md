@@ -3,6 +3,9 @@
 `Seed.example.json` 只演示格式，用的都是保留的示例域名，不应写入凭据、私有域名或真实规则地址。
 实际的预置配置保存在仓库外或企业私有仓库里，打包时带进 App。
 
+每条线路和规则都要写明 `enabled`；trojan、shadowsocks、vmess 线路还要写明端口（以及 shadowsocks 的 `ss_method`）。
+这些字段省略时，手机和 Mac 读出的默认值不同（例如手机当作启用，Mac 当作停用），`xdial-seed check` 会拒绝这样的预置。
+
 ## 放在哪儿
 
 构建时依次查找：

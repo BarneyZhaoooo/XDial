@@ -14,12 +14,14 @@
         "id": "direct",
         "name": "直连",
         "type": "direct",
+        "enabled": true,
         "verified": true
       },
       {
         "id": "office-vpn",
         "name": "公司 VPN",
         "type": "vpn",
+        "enabled": true,
         "vpn_server": "vpn.example.com:8443"
       }
     ],

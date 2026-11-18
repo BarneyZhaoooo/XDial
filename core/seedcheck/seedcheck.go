@@ -65,6 +65,9 @@ func Load(data []byte) (*Seed, error) {
 	if err := json.Unmarshal(envelope.Profile, &source); err != nil {
 		return nil, fmt.Errorf("invalid seed profile")
 	}
+	if err := requireExplicitDefaults(envelope.Profile); err != nil {
+		return nil, err
+	}
 	profile, err := config.ImportProfileDocument(envelope.Profile, Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("import seed profile: %v", err)
@@ -85,6 +88,45 @@ func Load(data []byte) (*Seed, error) {
 		regions[strings.ToUpper(strings.TrimSpace(key))] = target
 	}
 	return &Seed{Profile: profile, Regions: regions, Revision: envelope.Revision, Mobile: true}, nil
+}
+
+// platformDefaults are fields whose omission the platforms read differently:
+// the phone's decoder fills these values, while the Go importer the Mac uses
+// leaves Go zero values (a Line would be disabled, a port 0). Comparing two
+// identical files cannot reveal that, so a shared preset must state them.
+var platformDefaults = map[string][]string{
+	"":            {"enabled"},
+	"trojan":      {"trojan_port"},
+	"shadowsocks": {"ss_port", "ss_method"},
+	"vmess":       {"vmess_port"},
+}
+
+func requireExplicitDefaults(profile json.RawMessage) error {
+	var document struct {
+		Lines    []map[string]json.RawMessage `json:"lines"`
+		RuleSets []map[string]json.RawMessage `json:"rule_sets"`
+	}
+	if err := json.Unmarshal(profile, &document); err != nil {
+		return fmt.Errorf("invalid seed profile")
+	}
+	for _, line := range document.Lines {
+		var id, kind string
+		_ = json.Unmarshal(line["id"], &id)
+		_ = json.Unmarshal(line["type"], &kind)
+		for _, field := range append(append([]string{}, platformDefaults[""]...), platformDefaults[kind]...) {
+			if _, ok := line[field]; !ok {
+				return fmt.Errorf("line %s must set %s: platforms default it differently", id, field)
+			}
+		}
+	}
+	for _, rule := range document.RuleSets {
+		if _, ok := rule["enabled"]; !ok {
+			var id string
+			_ = json.Unmarshal(rule["id"], &id)
+			return fmt.Errorf("rule set %s must set enabled: platforms default it differently", id)
+		}
+	}
+	return nil
 }
 
 // LegacyProfileDocument is what a desktop app without mobile-seed support
