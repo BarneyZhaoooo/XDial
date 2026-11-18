@@ -126,6 +126,8 @@ type Libbox struct {
 	switchCleanupMu          sync.Mutex
 	debugRoutingProbeEnabled bool
 	routingProbe             *routingProbeTracker
+	// dataPlaneLogSink 是之后启动的每一代 Box 的日志出口，见 dataplane_log.go。
+	dataPlaneLogSink DataPlaneLogSink
 	// traffic 是跨 Box 代共享的全线路累计流量，见 traffic_counter.go。
 	traffic               trafficCounter
 	stateLocks            []*os.File
@@ -1215,6 +1217,7 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Add(1)
 	platform := l.platform
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	dataPlaneLogSink := l.dataPlaneLogSink
 	l.lastError = ""
 	l.dnsJSON = ""
 	l.anyConnectDiagnostics = nil
@@ -1341,6 +1344,7 @@ func (l *Libbox) coldStart(
 			if startErr != nil {
 				startErr = fmt.Errorf("construct sing-box: %w", startErr)
 			} else {
+				attachDataPlaneLog(instance, dataPlaneLogSink)
 				instance.Router().AppendTracker(&l.traffic)
 				if debugRoutingProbeEnabled {
 					routingProbe = newRoutingProbeTracker()
@@ -1829,6 +1833,7 @@ func (l *Libbox) prepareSwitch(
 	baseCtx, cancel := context.WithCancel(context.Background())
 	l.switchPreparationCancel = cancel
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	dataPlaneLogSink := l.dataPlaneLogSink
 	// Stop cancels preparation and waits for this borrower before it closes any
 	// Box or invokes the pool-wide StopAll teardown boundary.
 	l.switchPreparationUsers.Add(1)
@@ -1972,6 +1977,7 @@ func (l *Libbox) prepareSwitch(
 			if err != nil {
 				err = fmt.Errorf("construct switch sing-box: %w", err)
 			} else {
+				attachDataPlaneLog(instance, dataPlaneLogSink)
 				instance.Router().AppendTracker(&l.traffic)
 				var routingProbe *routingProbeTracker
 				if debugRoutingProbeEnabled {

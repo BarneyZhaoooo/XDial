@@ -326,6 +326,7 @@ final class EmbeddedSingBoxRuntime {
     }
 
     private let logger: Logger
+    private let dataPlaneLogSink = DataPlaneLogSink()
     private let callback: EngineCallback
     private let engineLock = NSLock()
     private var engine: LibboxLibbox?
@@ -433,6 +434,7 @@ final class EmbeddedSingBoxRuntime {
         guard let instance = LibboxNew(callback) else {
             throw RuntimeError.unavailable
         }
+        instance.setDataPlaneLogSink(dataPlaneLogSink)
         // Before any Line can start its local recovery, so a sleep report that
         // arrived during preparation already gates it.
         lineRecoveryConditions?.attach { [weak instance, logger = self.logger] json in
@@ -1871,6 +1873,7 @@ final class EmbeddedSingBoxRuntime {
         guard let instance = LibboxNew(bootstrapCallback) else {
             throw RuntimeError.unavailable
         }
+        instance.setDataPlaneLogSink(dataPlaneLogSink)
         engineLock.lock()
         acquisitionEngine = instance
         engineLock.unlock()
