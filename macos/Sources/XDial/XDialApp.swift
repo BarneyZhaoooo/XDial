@@ -106,12 +106,14 @@ private struct MenuBarLabel: View {
         let label: String
         if let trafficTransactionID {
             let isCurrent = trafficInfo.transactionID == trafficTransactionID
-            let download = TrafficInfo.formatRate(isCurrent ? trafficInfo.downloadBytesPerSecond : nil)
-            let upload = TrafficInfo.formatRate(isCurrent ? trafficInfo.uploadBytesPerSecond : nil)
+            let download = isCurrent ? trafficInfo.downloadBytesPerSecond : nil
+            let upload = isCurrent ? trafficInfo.uploadBytesPerSecond : nil
             image = MenuBarStatusIcon.imageWithTrafficRates(
-                icon: icon, menuBarTone: tone, download: download, upload: upload
+                icon: icon, menuBarTone: tone,
+                download: TrafficInfo.formatRate(download, compact: true),
+                upload: TrafficInfo.formatRate(upload, compact: true)
             )
-            label = "\(XDialBuildIdentity.productTitle), \(downloadLabel) \(download), \(uploadLabel) \(upload)"
+            label = "\(XDialBuildIdentity.productTitle), \(downloadLabel) \(TrafficInfo.formatRate(download)), \(uploadLabel) \(TrafficInfo.formatRate(upload))"
         } else {
             image = icon
             label = XDialBuildIdentity.productTitle

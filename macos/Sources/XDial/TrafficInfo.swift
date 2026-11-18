@@ -10,16 +10,23 @@ final class TrafficInfo: ObservableObject {
     private var previousSnapshot: ProviderTrafficSnapshot?
     private var previousSampleAt: Date?
 
-    static func formatRate(_ bytesPerSecond: Double?) -> String {
-        guard let bytesPerSecond, bytesPerSecond >= 0 else {
+    static func formatRate(_ bytesPerSecond: Double?, compact: Bool = false) -> String {
+        guard let bytesPerSecond, bytesPerSecond.isFinite, bytesPerSecond >= 0 else {
             return "—"
         }
         let units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
         var value = bytesPerSecond
         var unitIndex = 0
-        while value >= 1_000 && unitIndex < units.count - 1 {
+        while (compact ? value.rounded() : value) >= 1_000 && unitIndex < units.count - 1 {
             value /= 1_000
             unitIndex += 1
+        }
+        if compact {
+            if bytesPerSecond == 0 { return "0" }
+            if unitIndex == 0 && value < 1 { return "<1B" }
+            let rounded = unitIndex > 0 && value < 10 ? (value * 10).rounded() / 10 : value.rounded()
+            let number = String(format: rounded == rounded.rounded() ? "%.0f" : "%.1f", rounded)
+            return number + units[unitIndex].prefix(1)
         }
         return String(format: "%.1f %@", value, units[unitIndex])
     }
@@ -87,8 +94,8 @@ final class TrafficInfo: ObservableObject {
             snapshot.downloadBytes >= previousSnapshot.downloadBytes,
             snapshot.uploadBytes >= previousSnapshot.uploadBytes
         else {
-            downloadBytesPerSecond = 0
-            uploadBytesPerSecond = 0
+            downloadBytesPerSecond = nil
+            uploadBytesPerSecond = nil
             return
         }
         let elapsed = sampledAt.timeIntervalSince(previousSampleAt)

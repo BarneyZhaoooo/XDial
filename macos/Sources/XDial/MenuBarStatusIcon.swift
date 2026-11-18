@@ -108,27 +108,23 @@ enum MenuBarStatusIcon {
         download: String,
         upload: String
     ) -> NSImage {
-        let spacing: CGFloat = 4
-        let rateWidth: CGFloat = 60
-        let arrowWidth: CGFloat = 8
         let height: CGFloat = 22
-        let rateX = icon.size.width + spacing
-        let size = NSSize(width: rateX + rateWidth + arrowWidth, height: height)
+        let rateX = icon.size.width + 1
         let ink: NSColor = icon.isTemplate || menuBarTone == .light ? .black : .white
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
             .foregroundColor: ink,
         ]
+        let rows = [("↓" + download, 11.0), ("↑" + upload, 0.0)]
+        let rateWidth = rows.map { ($0.0 as NSString).size(withAttributes: attributes).width }.max() ?? 0
+        let size = NSSize(width: rateX + ceil(rateWidth), height: height)
         let image = NSImage(size: size, flipped: false) { _ in
             icon.draw(in: NSRect(
                 x: 0, y: (height - icon.size.height) / 2,
                 width: icon.size.width, height: icon.size.height
             ))
-            for (arrow, value, y) in [("↓", download, 11.0), ("↑", upload, 0.0)] {
-                (arrow as NSString).draw(at: NSPoint(x: rateX, y: y), withAttributes: attributes)
-                let text = value as NSString
-                let textWidth = text.size(withAttributes: attributes).width
-                text.draw(at: NSPoint(x: size.width - textWidth, y: y), withAttributes: attributes)
+            for (row, y) in rows {
+                (row as NSString).draw(at: NSPoint(x: rateX, y: y), withAttributes: attributes)
             }
             return true
         }

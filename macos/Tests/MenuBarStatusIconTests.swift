@@ -62,8 +62,13 @@ final class MenuBarStatusIconTests: XCTestCase {
                 connection: .connected, badge: badge, menuBarTone: .dark
             )
             let image = MenuBarStatusIcon.imageWithTrafficRates(
-                icon: icon, menuBarTone: .dark, download: "1.2 MB/s", upload: "20.4 KB/s"
+                icon: icon, menuBarTone: .dark, download: "1.2M", upload: "20K"
             )
+            let idle = MenuBarStatusIcon.imageWithTrafficRates(
+                icon: icon, menuBarTone: .dark, download: "0", upload: "0"
+            )
+            XCTAssertLessThan(idle.size.width, image.size.width)
+            XCTAssertLessThan(image.size.width, 54)
             XCTAssertEqual(image.isTemplate, icon.isTemplate)
             let data = try XCTUnwrap(image.tiffRepresentation)
             let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
