@@ -2,16 +2,40 @@ import Foundation
 import Network
 
 enum UnderlayCountryLookup {
+    /// Where a region code came from, for diagnostics.
+    struct Evidence: Equatable, Sendable {
+        var code: String?
+        var failure: String?
+        /// `apple-gcc` or `cloudflare-trace`; nil when neither answered.
+        var endpoint: String?
+        /// "service:outcome" for each attempt that failed before the answer.
+        var attempts: [String] = []
+        var ms: Int = 0
+    }
+
     static func lookup() async -> (code: String?, failure: String?) {
+        let evidence = await lookupWithEvidence()
+        return (code: evidence.code, failure: evidence.failure)
+    }
+
+    /// Apple's region service first, then Cloudflare's trace, both bound to the
+    /// physical interface. A failure never yields a region.
+    static func lookupWithEvidence() async -> Evidence {
+        let started = Date()
+        func elapsed() -> Int { Int((Date().timeIntervalSince(started) * 1000).rounded()) }
         let appleReply = await DirectHTTPSProbe(host: "gspe1-ssl.ls.apple.com", path: "/pep/gcc").run()
         if let code = appleReply.flatMap(countryCode(inAppleReply:)) {
-            return (code: code, failure: nil)
+            return Evidence(code: code, endpoint: "apple-gcc", ms: elapsed())
         }
+        let appleOutcome = appleReply == nil ? "apple-gcc:no-reply" : "apple-gcc:invalid"
         let cloudflareReply = await DirectHTTPSProbe(host: "www.cloudflare.com", path: "/cdn-cgi/trace").run()
         if let code = cloudflareReply.flatMap(countryCode(inCloudflareTrace:)) {
-            return (code: code, failure: nil)
+            return Evidence(code: code, endpoint: "cloudflare-trace", attempts: [appleOutcome], ms: elapsed())
         }
-        return (code: nil, failure: localFailure(apple: appleReply, cloudflare: cloudflareReply))
+        let cloudflareOutcome = cloudflareReply == nil ? "cloudflare-trace:no-reply" : "cloudflare-trace:invalid"
+        return Evidence(
+            failure: localFailure(apple: appleReply, cloudflare: cloudflareReply),
+            attempts: [appleOutcome, cloudflareOutcome], ms: elapsed())
     }
 
     /// 例如「Apple 无回应；Cloudflare 回复无效」。只说结果类别，不带回复内容。

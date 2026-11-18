@@ -16,13 +16,15 @@ struct XDialConnectionAttributes: ActivityAttributes {
         var phase: Phase
         /// 「已连接」「正在连接…」这一行。
         var title: String
-        /// 当前场景名。
+        /// 当前所选场景名（是选择，不代表已验证的出口地区）。
         var scenarioName: String
         /// 连上的时刻，用来计时；没连上时为空。
         var connectedAt: Date?
         /// 实时网速（字节/秒）；还没有采样时为空。
         var downloadBytesPerSecond: Double?
         var uploadBytesPerSecond: Double?
+        /// 需要留意时的第二行，例如「自检未通过，正在重新检测」。旧版本没有这个字段。
+        var detail: String? = nil
     }
 
     /// 「断开」按钮的文字。

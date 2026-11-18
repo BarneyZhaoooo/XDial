@@ -228,6 +228,11 @@ enum SystemOnDemandState: Equatable {
     case failed(String)
 }
 
+extension TunnelManaging {
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File? { nil }
+    func recordUserAction(_ action: String) {}
+}
+
 @MainActor
 protocol TunnelManaging: AnyObject {
     /// VPN Profile 是否已安装并可用（对应 macOS 的 helperInstalled 语义）。
@@ -271,6 +276,11 @@ protocol TunnelManaging: AnyObject {
     /// 连接保留但自检没通过时，立即从头再测一次；其余状态下什么也不做。
     func recheckDataPath()
 
+    /// Bounded, redacted connection timeline shared with the tunnel extension.
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File?
+    /// Records a user action (for example an explicit disconnect) on the current session.
+    func recordUserAction(_ action: String)
+
     #if os(iOS)
     /// 为可能被选中的场景生成启动包，连同判断规则写进场景目录；返回目录修订号。
     /// keepingOthers：只替换 inputs 里的场景，目录里其他场景保留。
@@ -296,6 +306,10 @@ protocol TunnelManaging: AnyObject {
 struct ExitCountryProbeResult: Equatable, Sendable {
     let code: String?
     let failure: String?
+    /// Which service answered and what failed first; diagnostics only.
+    var endpoint: String? = nil
+    var attempts: String? = nil
+    var ms: Int? = nil
 }
 
 extension TunnelManaging {
@@ -598,6 +612,11 @@ final class AppState: ObservableObject {
     }
 
     /// 已连接时经 Direct 线路查网络出口地区；没连着时不唤醒隧道。
+    /// Connection timeline for the diagnostics report; nil without a tunnel manager.
+    func connectionTimelineSnapshot() async -> ConnectionTimeline.File? {
+        await tunnelManager?.connectionTimelineSnapshot()
+    }
+
     func directExitCountry() async -> ExitCountryProbeResult {
         guard isConnected, let tunnelManager else {
             return ExitCountryProbeResult(code: nil, failure: "未连接")
@@ -1383,6 +1402,7 @@ final class AppState: ObservableObject {
         autoReconnectTask?.cancel()
         autoReconnectTask = nil
         if let tunnelManager {
+            tunnelManager.recordUserAction("disconnect")
             tunnelManager.stopTunnel()
         } else {
             engine.stop()

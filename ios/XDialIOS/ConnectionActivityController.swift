@@ -84,13 +84,19 @@ final class ConnectionActivityController {
                          scenarioName: scenario, connectedAt: app.engine.connectedAt)
         case "connected":
             let degraded = app.engine.dataPathSummary?.hasPrefix(dataPathDegradedPrefix) ?? false
+            // Connection and self-check are separate facts: the title stays the
+            // connection state and the check gets its own line.
+            let detail: String? = degraded
+                ? (app.engine.dataPathRechecking
+                    ? app.tr("自检未通过，正在重新检测", "Route check failed · rechecking")
+                    : app.tr("线路自检未通过", "Route check didn't pass"))
+                : nil
             return .init(
                 phase: degraded ? .attention : .connected,
-                title: degraded
-                    ? app.tr("已连接，自检未通过", "Connected, check failed")
-                    : app.tr("已连接", "Connected"),
+                title: app.tr("已连接", "Connected"),
                 scenarioName: scenario,
-                connectedAt: app.engine.connectedAt ?? Date()
+                connectedAt: app.engine.connectedAt ?? Date(),
+                detail: detail
             )
         default:
             return nil

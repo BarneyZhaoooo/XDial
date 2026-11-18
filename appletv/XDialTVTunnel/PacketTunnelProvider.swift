@@ -133,6 +133,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var pathMonitor: NWPathMonitor?
     private var diagnosticStage = "idle"
     private var activeAttemptID = ""
+    /// Shared app/extension timeline; see ConnectionTimeline. Guarded by diagnosticLock.
+    private let timeline = ConnectionTimelineStore.shared(appGroup: PacketTunnelProvider.appGroupID)
+    private var timelineSessionID = ""
+    private var timelineStartUptime = ProcessInfo.processInfo.systemUptime
     private var defaultInterfaceName = ""
     private var defaultInterfaceIndex = -1
     private var diagnosticSensitiveValues: [String] = []
@@ -476,6 +480,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 #if os(iOS)
                 self?.clearRunningScenario()
                 #endif
+                self?.recordTimeline("stop_reason", detail: "reason=\(reason.rawValue)")
                 self?.recordDiagnostic("stopping")
                 os_log("stopTunnel: reason=%d", log: self?.log ?? .default,
                        type: .info, reason.rawValue)
@@ -483,7 +488,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             cleanupCompletion: { [weak self] in
                 self?.recordDiagnostic("stopped")
                 os_log("stopTunnel: cleanup done", log: self?.log ?? .default, type: .info)
-                completion.finish()
+                if let self {
+                    self.endTimelineSession { _ = completion.finish() }
+                } else {
+                    completion.finish()
+                }
             }
         )
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -946,11 +955,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 return
             }
             let timeoutMS = Int(obj["timeout_ms"] as? String ?? "") ?? 7_000
+            let queuedAt = ProcessInfo.processInfo.systemUptime
             outboundProbeQueue.async { [weak self] in
                 guard let self, let engine = self.currentEngine() else {
                     completion.value(self?.encodeResponse(ok: false, message: "连接引擎未运行"))
                     return
                 }
+                let startedAt = ProcessInfo.processInfo.systemUptime
+                let kind = Self.outboundKind(outboundTag)
                 do {
                     var probeError: NSError?
                     let address = engine.probeOutboundIP(
@@ -959,8 +971,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         error: &probeError
                     )
                     if let probeError { throw probeError }
+                    self.recordTimeline(
+                        "line_probe", result: .ok,
+                        ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt),
+                        detail: "\(kind) queued=\(Int((startedAt - queuedAt) * 1000))ms")
                     completion.value(self.encodeResponse(ok: true, dataString: address))
                 } catch {
+                    let failure = error.localizedDescription
+                    self.recordTimeline(
+                        "line_probe", result: ConnectionTimeline.classify(probeFailure: failure),
+                        ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt),
+                        detail: "\(kind) queued=\(Int((startedAt - queuedAt) * 1000))ms "
+                            + ConnectionTimeline.failureKeywords(failure))
                     completion.value(self.encodeResponse(
                         ok: false,
                         message: "无法确认所选线路的出口地址：\(error.localizedDescription)"
@@ -1430,7 +1452,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     private func beginAttempt(_ attemptID: String) {
+        // A system-initiated start (on-demand) carries no app attempt ID; the
+        // extension then owns the session ID and the app attaches to it.
+        let sessionID = attemptID.isEmpty ? "tunnel-" + UUID().uuidString : attemptID
+        timeline?.beginSession(sessionID, markActive: true)
         diagnosticLock.lock()
+        timelineSessionID = sessionID
+        timelineStartUptime = ProcessInfo.processInfo.systemUptime
         activeAttemptID = attemptID
         lastError = nil
         diagnosticStage = "idle"
@@ -1438,6 +1466,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         defaultInterfaceIndex = -1
         diagnosticSensitiveValues = []
         diagnosticLock.unlock()
+    }
+
+    /// Coarse kind of an outbound tag; tags embed Line IDs that reports omit.
+    static func outboundKind(_ tag: String) -> String {
+        if tag == "direct" || tag == "vpn" { return tag }
+        if tag.hasPrefix("tailscale-") { return "tailscale" }
+        if tag.hasPrefix("proxy-") { return "proxy" }
+        return "subscription"
+    }
+
+    private func endTimelineSession(completion: @escaping @Sendable () -> Void) {
+        diagnosticLock.lock()
+        let sessionID = timelineSessionID
+        diagnosticLock.unlock()
+        guard !sessionID.isEmpty, let timeline else { completion(); return }
+        timeline.endActiveSession(sessionID, completion: completion)
     }
 
     private func setLastError(_ value: String?) {
@@ -1477,7 +1521,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return state
     }
 
+    /// Appends one extension event to the shared connection timeline.
+    private func recordTimeline(
+        _ stage: String,
+        result: ConnectionTimeline.Result? = nil,
+        ms: Int? = nil,
+        detail: String? = nil
+    ) {
+        diagnosticLock.lock()
+        let sessionID = timelineSessionID
+        let started = timelineStartUptime
+        diagnosticLock.unlock()
+        guard !sessionID.isEmpty else { return }
+        timeline?.append(
+            session: sessionID, source: .tunnel, stage: "tunnel." + stage, result: result,
+            ms: ms ?? ConnectionTimeline.elapsedMilliseconds(since: started), detail: detail)
+    }
+
     private func recordDiagnostic(_ stage: String) {
+        recordTimeline(stage)
         diagnosticWriteQueue.sync {
             let state = captureDiagnosticState(updatingStage: stage)
             persistDiagnostic(makeDiagnosticSnapshot(from: state, includeEngine: false))
@@ -2323,9 +2385,24 @@ extension PacketTunnelProvider {
         let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         var pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
+        let networkToken = ScenarioNetworkIdentity.diagnosticToken(path: network, ssid: ssid)
+        var evidence = RegionProbeEvidence()
         if pick == nil, !policy.regionScenarios.isEmpty {
             var probeError: NSError?
-            let code = engine.probeOutboundCountry("direct", timeoutMS: 8_000, error: &probeError)
+            let regionStartedAt = ProcessInfo.processInfo.systemUptime
+            let raw = engine.probeOutboundCountryEvidence("direct", timeoutMS: 8_000, error: &probeError)
+            evidence = RegionProbeEvidence.decode(raw)
+            evidence.ms = evidence.ms ?? ConnectionTimeline.elapsedMilliseconds(since: regionStartedAt)
+            let code = evidence.code ?? ""
+            let basis = "path=direct network=\(networkToken) service=\(evidence.endpoint ?? "none")"
+                + (evidence.attempts.isEmpty ? "" : " failed=\(evidence.attempts)")
+            if let probeError {
+                let failure = probeError.localizedDescription
+                recordTimeline("region_probe", result: ConnectionTimeline.classify(probeFailure: failure),
+                               ms: evidence.ms, detail: basis + " " + ConnectionTimeline.failureKeywords(failure))
+            } else {
+                recordTimeline("region_probe", result: .ok, ms: evidence.ms, detail: "region=\(code) " + basis)
+            }
             if probeError == nil, code.count == 2, code.allSatisfy({ $0.isASCII && $0.isUppercase }) {
                 exit = .found(code: code, viaTunnel: true)
                 pick = ScenarioAutoDecision.regionPick(
@@ -2337,6 +2414,9 @@ extension PacketTunnelProvider {
                 exit = .failed(viaTunnel: true, reason: probeError.map { sanitizedDiagnosticText($0.localizedDescription) ?? "" })
             }
         }
+        recordTimeline(
+            "scenario_decision",
+            detail: "ssid=\(ssidRead ? "read" : "unread") pick=\(pick?.scenarioID == nil ? "none" : (pick?.scenarioID == runningID ? "current" : "other"))")
         let record = ScenarioSurveyRecord(
             at: Date(),
             ssidRead: ssidRead,
@@ -2345,6 +2425,11 @@ extension PacketTunnelProvider {
             picked: pick != nil,
             byTunnel: true
         )
+        var survey = record
+        survey.exitEndpoint = evidence.endpoint
+        survey.exitAttempts = evidence.attempts.isEmpty ? nil : evidence.attempts
+        survey.exitMS = evidence.ms
+        survey.networkToken = networkToken
 
         let validation: @Sendable () -> Bool = { [weak self] in
             guard let self, case .available(let latest) = ScenarioSwitchCatalogStore.load(),
@@ -2355,10 +2440,15 @@ extension PacketTunnelProvider {
             self.scenarioLock.unlock()
             return valid && self.currentScenarioState().lastSwitch == previousSwitch && self.readCurrentSSID() == ssid
         }
-        guard validation() else { completion(currentScenarioState()); return }
+        guard validation() else {
+            recordTimeline("scenario_decision_discarded", result: .cancelled,
+                           detail: "network or catalog changed during the lookup")
+            completion(currentScenarioState())
+            return
+        }
         var shouldSwitch = false
         let state = updateScenarioState { state in
-            state.lastSurvey = record
+            state.lastSurvey = survey
             // 这次没判断出来（比如刚好断网）就保留上一次的结论。
             guard let pick else { return }
             state.lastPick = pick
@@ -2484,4 +2574,26 @@ private func providerErrorStatic(_ code: Int, _ message: String) -> NSError {
     #endif
     return NSError(domain: domain, code: code,
             userInfo: [NSLocalizedDescriptionKey: message])
+}
+
+/// Evidence for one region lookup, decoded from `ProbeOutboundCountryEvidence`.
+struct RegionProbeEvidence {
+    var code: String?
+    var endpoint: String?
+    /// "service:code" for each attempt that failed before the answer.
+    var attempts = ""
+    var ms: Int?
+
+    static func decode(_ raw: String) -> RegionProbeEvidence {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return RegionProbeEvidence()
+        }
+        var evidence = RegionProbeEvidence()
+        evidence.code = (object["code"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        evidence.endpoint = (object["endpoint"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        evidence.attempts = (object["attempts"] as? [String] ?? []).joined(separator: ",")
+        evidence.ms = (object["duration_ms"] as? NSNumber)?.intValue
+        return evidence
+    }
 }

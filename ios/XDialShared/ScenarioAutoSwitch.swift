@@ -48,6 +48,13 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
     let picked: Bool
     /// 由 VPN 扩展在后台完成的判断。
     var byTunnel: Bool = false
+    /// Which service answered the region lookup (`apple-gcc`, `cloudflare-trace`)
+    /// and failed attempts before it; nil for records from older versions.
+    var exitEndpoint: String?
+    var exitAttempts: String?
+    var exitMS: Int?
+    /// `ScenarioNetworkIdentity.diagnosticToken` of the network the lookup ran on.
+    var networkToken: String?
 
     init(at: Date, ssidRead: Bool, ssidMatched: Bool, exit: ExitLookup, picked: Bool, byTunnel: Bool = false) {
         self.at = at
@@ -79,9 +86,17 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
         }
         let outcome = picked ? (isChinese ? "已判断" : "decided") : (isChinese ? "没判断出来" : "undecided")
         let by = byTunnel ? (isChinese ? "（VPN 扩展）" : " (VPN extension)") : ""
+        var evidence: [String] = []
+        if let exitEndpoint { evidence.append((isChinese ? "来源 " : "service ") + exitEndpoint) }
+        if let exitAttempts, !exitAttempts.isEmpty { evidence.append((isChinese ? "先前失败 " : "failed first ") + exitAttempts) }
+        if let exitMS { evidence.append(String(format: "%.1fs", Double(exitMS) / 1000)) }
+        if let networkToken { evidence.append((isChinese ? "网络 " : "network ") + networkToken) }
+        let age = Int(max(0, Date().timeIntervalSince(at)))
+        evidence.append(isChinese ? "\(age) 秒前" : "\(age)s ago")
+        let evidenceText = evidence.joined(separator: isChinese ? "，" : ", ")
         return isChinese
-            ? "\(time) \(outcome)\(by)；Wi-Fi \(wifi)；出口 \(exitText)"
-            : "\(time) \(outcome)\(by); Wi-Fi \(wifi); exit \(exitText)"
+            ? "\(time) \(outcome)\(by)；Wi-Fi \(wifi)；出口 \(exitText)；依据：\(evidenceText)"
+            : "\(time) \(outcome)\(by); Wi-Fi \(wifi); exit \(exitText); evidence: \(evidenceText)"
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -100,6 +115,10 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
         case exitReason = "exit_reason"
         case picked
         case byTunnel = "by_tunnel"
+        case exitEndpoint = "exit_endpoint"
+        case exitAttempts = "exit_attempts"
+        case exitMS = "exit_ms"
+        case networkToken = "network_token"
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +128,10 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
         ssidMatched = try container.decode(Bool.self, forKey: .ssidMatched)
         picked = try container.decode(Bool.self, forKey: .picked)
         byTunnel = try container.decodeIfPresent(Bool.self, forKey: .byTunnel) ?? false
+        exitEndpoint = try container.decodeIfPresent(String.self, forKey: .exitEndpoint)
+        exitAttempts = try container.decodeIfPresent(String.self, forKey: .exitAttempts)
+        exitMS = try container.decodeIfPresent(Int.self, forKey: .exitMS)
+        networkToken = try container.decodeIfPresent(String.self, forKey: .networkToken)
         let viaTunnel = try container.decodeIfPresent(Bool.self, forKey: .exitViaTunnel) ?? false
         switch try container.decode(String.self, forKey: .exitKind) {
         case "found":
@@ -127,6 +150,10 @@ struct ScenarioSurveyRecord: Codable, Equatable, Sendable {
         try container.encode(ssidMatched, forKey: .ssidMatched)
         try container.encode(picked, forKey: .picked)
         try container.encode(byTunnel, forKey: .byTunnel)
+        try container.encodeIfPresent(exitEndpoint, forKey: .exitEndpoint)
+        try container.encodeIfPresent(exitAttempts, forKey: .exitAttempts)
+        try container.encodeIfPresent(exitMS, forKey: .exitMS)
+        try container.encodeIfPresent(networkToken, forKey: .networkToken)
         switch exit {
         case .notNeeded:
             try container.encode("not_needed", forKey: .exitKind)

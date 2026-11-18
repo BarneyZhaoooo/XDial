@@ -182,9 +182,63 @@ final class ScenarioAutoPilotTests: XCTestCase {
         let record = try? XCTUnwrap(ScenarioAutoPilot.lastRecord)
         XCTAssertEqual(record?.exit, .failed(viaTunnel: true, reason: "连接引擎未运行"))
         XCTAssertEqual(record?.ssidRead, false)
-        XCTAssertTrue(record?.summary(isChinese: true).hasSuffix(
-            "没判断出来；Wi-Fi 未读到；出口 查询失败（经直连线路：连接引擎未运行）"
+        XCTAssertTrue(record?.summary(isChinese: true).contains(
+            "没判断出来；Wi-Fi 未读到；出口 查询失败（经直连线路：连接引擎未运行）；依据："
         ) == true)
+    }
+
+    @MainActor
+    func testASurveyInterruptedByANetworkChangeIsDiscarded() async {
+        let pilot = ScenarioAutoPilot()
+        let first = await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+            ExitCountryProbeResult(code: "JP", failure: nil)
+        }
+        XCTAssertEqual(first?.scenarioID, "home-region")
+
+        var release: CheckedContinuation<Void, Never>?
+        let stale = Task { @MainActor in
+            await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+                await withCheckedContinuation { release = $0 }
+                return ExitCountryProbeResult(code: "US", failure: nil)
+            }
+        }
+        for _ in 0..<50 where release == nil { await Task.yield() }
+        pilot.noteNetworkChanged()
+        // A caller on the new network gets a fresh survey, not the old one.
+        let fresh = await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+            ExitCountryProbeResult(code: "SG", failure: nil)
+        }
+        XCTAssertEqual(fresh?.scenarioID, "harbor")
+        release?.resume()
+        let staleResult = await stale.value
+        XCTAssertNil(staleResult, "a result from the previous network was applied")
+        XCTAssertEqual(pilot.pick?.scenarioID, "harbor", "the stale survey overwrote the newer pick")
+        XCTAssertEqual(ScenarioAutoPilot.lastRecord?.exit,
+                       .failed(viaTunnel: true, reason: ScenarioAutoPilot.staleSurveyReason))
+    }
+
+    @MainActor
+    func testRegionEvidenceReachesTheDiagnosticLine() async {
+        let pilot = ScenarioAutoPilot()
+        _ = await pilot.survey(scenarios: scenarios, regionScenarios: regions) {
+            ExitCountryProbeResult(code: "SG", failure: nil, endpoint: "cloudflare-trace",
+                                   attempts: "apple-gcc:no-reply", ms: 2_600)
+        }
+        let record = ScenarioAutoPilot.lastRecord
+        XCTAssertEqual(record?.exitEndpoint, "cloudflare-trace")
+        XCTAssertEqual(record?.exitAttempts, "apple-gcc:no-reply")
+        XCTAssertEqual(record?.networkToken?.count, 6)
+        let line = record?.summary(isChinese: true) ?? ""
+        XCTAssertTrue(line.contains("出口 SG（经直连线路）；依据：来源 cloudflare-trace，先前失败 apple-gcc:no-reply，2.6s，网络 "), line)
+        let decoded = try? JSONDecoder().decode(ScenarioSurveyRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(decoded?.exitEndpoint, "cloudflare-trace")
+        XCTAssertEqual(decoded?.exitMS, 2_600)
+    }
+
+    func testAFailedLookupNeverPicksTheCatchAllRegion() {
+        XCTAssertNil(ScenarioAutoDecision.regionPick(countryCode: nil, regionScenarios: ["*": "abroad"], scenarioIDs: ["abroad"]))
+        XCTAssertNil(ScenarioAutoDecision.regionPick(countryCode: "", regionScenarios: ["*": "abroad"], scenarioIDs: ["abroad"]))
+        XCTAssertNil(ScenarioAutoDecision.regionPick(countryCode: "X1", regionScenarios: ["*": "abroad"], scenarioIDs: ["abroad"]))
     }
 
     func testALocalLookupFailureSaysWhichServiceDidNotAnswer() {
@@ -199,10 +253,10 @@ final class ScenarioAutoPilotTests: XCTestCase {
         let record = ScenarioSurveyRecord(
             at: Date(), ssidRead: true, ssidMatched: true, exit: .notNeeded, picked: true
         )
-        XCTAssertTrue(record.summary(isChinese: true).hasSuffix("已判断；Wi-Fi 已读到并匹配；出口 未查询"))
+        XCTAssertTrue(record.summary(isChinese: true).contains("已判断；Wi-Fi 已读到并匹配；出口 未查询；依据："))
         let english = ScenarioSurveyRecord(
             at: Date(), ssidRead: false, ssidMatched: false, exit: .found(code: "CN", viaTunnel: false), picked: true
         ).summary(isChinese: false)
-        XCTAssertTrue(english.hasSuffix("decided; Wi-Fi not read; exit CN (queried locally)"))
+        XCTAssertTrue(english.contains("decided; Wi-Fi not read; exit CN (queried locally); evidence: "))
     }
 }

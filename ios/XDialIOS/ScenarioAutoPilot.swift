@@ -102,7 +102,19 @@ final class ScenarioAutoPilot {
         switchGuard.note(from: from, to: to, now: now)
     }
     @ObservationIgnored private var running: Task<ScenarioAutoPicker.Pick?, Never>?
+    /// Bumped whenever the physical network changes. A survey started on an
+    /// older network is neither reused nor allowed to overwrite the result.
+    @ObservationIgnored private(set) var networkGeneration = 0
+    @ObservationIgnored private var runningGeneration = -1
     @ObservationIgnored private var lastSurveyAt: Date?
+
+    static let staleSurveyReason = "查询期间网络变了，结果作废"
+
+    /// Marks a physical network change; tests use it to stand in for the path monitor.
+    func noteNetworkChanged() {
+        networkGeneration += 1
+        lastSurveyAt = nil
+    }
 
     /// 最近一次判断是不是还新鲜（点连接时用，避免每次都等）。
     var isFresh: Bool {
@@ -128,6 +140,7 @@ final class ScenarioAutoPilot {
                 let isFirst = self.lastPathSignature == nil
                 self.lastPathSignature = signature
                 guard !isFirst else { return }
+                self.networkGeneration += 1
                 // 换网络时系统会连着报好几次，等它稳定下来再判断一次。
                 self.lastSurveyAt = nil
                 self.changeDebounce?.cancel()
@@ -160,8 +173,12 @@ final class ScenarioAutoPilot {
         regionScenarios: [String: String] = [:],
         exitCountryViaTunnel: (@MainActor () async -> ExitCountryProbeResult)? = nil
     ) async -> ScenarioAutoPicker.Pick? {
-        if let running { return await running.value }
+        // Merge concurrent calls only within one network; a survey from before a
+        // network change must not answer for the new network.
+        if let running, runningGeneration == networkGeneration { return await running.value }
         isSurveying = true
+        let generation = networkGeneration
+        let pathSignature = lastPathSignature
         let task = Task { () -> ScenarioAutoPicker.Pick? in
             let ssid = await NetworkProbe.currentSSID()
             let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
@@ -193,7 +210,7 @@ final class ScenarioAutoPilot {
                 scenarios: scenarios,
                 regionScenarios: regionScenarios
             )
-            Self.lastRecord = ScenarioSurveyRecord(
+            var record = ScenarioSurveyRecord(
                 at: Date(),
                 ssidRead: ssidRead,
                 ssidMatched: false,
@@ -201,11 +218,31 @@ final class ScenarioAutoPilot {
                     ?? .failed(viaTunnel: viaTunnel, reason: lookup.failure),
                 picked: pick != nil
             )
+            record.exitEndpoint = lookup.endpoint
+            record.exitAttempts = lookup.attempts
+            record.exitMS = lookup.ms
+            record.networkToken = ScenarioNetworkIdentity.diagnosticToken(path: pathSignature, ssid: ssid)
+            Self.lastRecord = record
             return pick
         }
         running = task
+        runningGeneration = generation
         let result = await task.value
-        running = nil
+        if running == task {
+            running = nil
+            runningGeneration = -1
+        }
+        if networkGeneration != generation {
+            // The network changed while this survey ran: its answer describes a
+            // network we are no longer on. Keep the previous conclusion.
+            Self.lastRecord = ScenarioSurveyRecord(
+                at: Date(), ssidRead: false, ssidMatched: false,
+                exit: .failed(viaTunnel: exitCountryViaTunnel != nil, reason: Self.staleSurveyReason),
+                picked: false
+            )
+            isSurveying = running != nil
+            return nil
+        }
         // 这次没查出来（比如刚好断网）就保留上一次的结论，不把界面上的说明清掉。
         if let result { pick = result }
         isSurveying = false
@@ -241,8 +278,10 @@ enum NetworkProbe {
             return ExitCountryProbeResult(code: fake.uppercased(), failure: nil)
         }
         #endif
-        let result = await UnderlayCountryLookup.lookup()
-        return ExitCountryProbeResult(code: result.code, failure: result.failure)
+        let result = await UnderlayCountryLookup.lookupWithEvidence()
+        return ExitCountryProbeResult(
+            code: result.code, failure: result.failure, endpoint: result.endpoint,
+            attempts: result.attempts.isEmpty ? nil : result.attempts.joined(separator: ","), ms: result.ms)
     }
 
     static func countryCode(inAppleReply text: String) -> String? { UnderlayCountryLookup.countryCode(inAppleReply: text) }
