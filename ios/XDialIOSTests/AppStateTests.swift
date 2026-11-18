@@ -328,6 +328,7 @@ private final class RuntimeSpyManager: TunnelManaging {
     private(set) var lastAllowSystemOnDemand: Bool?
     private(set) var systemOnDemandRequests: [Bool] = []
     private(set) var systemOnDemandSetupSuspensions: [Bool] = []
+    var repeatConnectedWhileStopping = false
     private weak var engine: RuntimeSpyEngine?
 
     init(engine: RuntimeSpyEngine) {
@@ -386,6 +387,10 @@ private final class RuntimeSpyManager: TunnelManaging {
 
     func stopTunnel() {
         stopCallCount += 1
+        if repeatConnectedWhileStopping {
+            engine?.setStatus("disconnecting")
+            engine?.setStatus("connected")
+        }
         engine?.setStatus("disconnected")
     }
 
@@ -1536,7 +1541,11 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(manager.startCallCount, 2)
         XCTAssertTrue(app.isConnected)
 
+        // A preference reload may publish the old system status before stop finishes.
+        manager.repeatConnectedWhileStopping = true
+        engine.lastError = "Previous session warning"
         app.disconnect()
+        XCTAssertNil(engine.lastError)
         try? await Task.sleep(for: .milliseconds(1_200))
         XCTAssertEqual(manager.stopCallCount, 1)
         XCTAssertEqual(manager.startCallCount, 2)

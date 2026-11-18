@@ -1231,6 +1231,9 @@ final class AppState: ObservableObject {
         let previous = observedEngineStatus
         observedEngineStatus = current
 
+        // A preference reload can still see the old session while stop is pending.
+        if disconnectRequested && (current == "connected" || current == "action-required") { return }
+
         if (current == "connected" || current == "action-required"),
            runningProfileSnapshot == nil {
             // 主 App 重启时系统隧道可能仍在运行。此时没有本进程内快照，只能用
@@ -1245,7 +1248,6 @@ final class AppState: ObservableObject {
             autoReconnectAttempt = 0
             autoReconnectTask?.cancel()
             autoReconnectTask = nil
-            disconnectRequested = false
             #if os(iOS)
             refreshScenarioCatalog()
             #endif
@@ -1400,7 +1402,8 @@ final class AppState: ObservableObject {
     }
 
     func disconnect() {
-        disconnectRequested = true
+        if !persistenceRequiresRecovery { engine.lastError = nil }
+        disconnectRequested = engine.status != "disconnected"
         autoReconnectTask?.cancel()
         autoReconnectTask = nil
         if let tunnelManager {

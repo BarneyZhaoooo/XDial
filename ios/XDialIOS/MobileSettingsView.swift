@@ -65,7 +65,7 @@ struct MobileSettingsView: View {
                         MobileAppRuntime.connectionActivity?.preferenceChanged()
                     }
                     .accessibilityIdentifier("settings-live-activity")
-                    if app.systemOnDemandEnabled {
+                    if showsSystemOnDemandStatus {
                         LabeledContent(app.tr("当前状态", "Status")) {
                             Text(systemOnDemandStatusText)
                                 .accessibilityIdentifier("system-on-demand-status")
@@ -243,6 +243,11 @@ struct MobileSettingsView: View {
         }
     }
 
+    private var showsSystemOnDemandStatus: Bool {
+        if case .failed = app.systemOnDemandState { return true }
+        return app.systemOnDemandEnabled
+    }
+
     private var systemOnDemandStatusText: String {
         switch app.systemOnDemandState {
         case .disabled:
@@ -251,8 +256,8 @@ struct MobileSettingsView: View {
             return app.tr("待连接验收", "Pending connection check")
         case .active:
             return app.tr("系统已启用", "Enabled by system")
-        case .failed:
-            return app.tr("启用失败", "Enable failed")
+        case .failed(let message):
+            return userFacingConnectionText(message)
         }
     }
 
