@@ -53,7 +53,9 @@ func TestSubscriptionProfileProcessRulesKeepPlatformSemanticsAndOrder(t *testing
 		t.Fatal("process expressions lost during grouping")
 	}
 	compiled := compileTransparentProxyRuleSet(rule, "proxy", "session", "")
-	if len(compiled) != 1 || len(compiled[0]["auth_user"].([]string)) != len(processes) {
+	if len(compiled) != 2 || compiled[0]["action"] != "resolve" ||
+		compiled[1]["outbound"] != "proxy" ||
+		len(compiled[1]["auth_user"].([]string)) != len(processes) {
 		t.Fatal("existing application identity adapter not used")
 	}
 

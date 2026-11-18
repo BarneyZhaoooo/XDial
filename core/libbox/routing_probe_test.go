@@ -699,3 +699,42 @@ func TestRoutingProbeDisabledByDefaultOnAnyConnectStart(t *testing.T) {
 		t.Fatalf("disabled AnyConnect route probe returned evidence: %s", got)
 	}
 }
+
+// A flow whose application-supplied address was replaced by the matched
+// Line's own answer reaches the tracker as the corrected hostname. The probe
+// counts it without exposing the original address or the name.
+func TestRoutingProbeExperimentCountsCorrectedFlowAddresses(t *testing.T) {
+	tracker := newRoutingProbeTracker()
+	probeID, err := tracker.begin("chatgpt.com", 1_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbound := &routingProbeTestOutbound{tag: "vpn"}
+	corrected := transparentProxyProbeMetadata("chatgpt.com")
+	corrected.XDialCorrectedFlowAddress = true
+	corrected.RouteOriginalDestination = M.SocksaddrFrom(
+		netip.MustParseAddr("108.160.162.104"),
+		443,
+	)
+	tracker.RoutedConnection(context.Background(), nil, corrected, nil, outbound)
+	tracker.RoutedConnection(
+		context.Background(),
+		nil,
+		transparentProxyProbeMetadata("chatgpt.com"),
+		nil,
+		outbound,
+	)
+
+	got := tracker.snapshot()
+	if got.ProbeID != probeID ||
+		got.MatchCount != 2 ||
+		got.CorrectedAddressCount != 1 {
+		t.Fatalf("corrected flow count = %#v", got)
+	}
+	encoded := tracker.snapshotJSON()
+	if !strings.Contains(encoded, `"corrected_address_count":1`) ||
+		strings.Contains(encoded, "108.160.162.104") ||
+		strings.Contains(encoded, "chatgpt.com") {
+		t.Fatalf("corrected flow evidence leaked or missing: %s", encoded)
+	}
+}

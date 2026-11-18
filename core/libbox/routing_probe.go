@@ -59,6 +59,7 @@ type routingProbeSnapshot struct {
 	ProbeID                string            `json:"probe_id"`
 	MatchCount             uint64            `json:"match_count"`
 	CandidateAddressCount  int               `json:"candidate_address_count,omitempty"`
+	CorrectedAddressCount  uint64            `json:"corrected_address_count,omitempty"`
 	OutboundTagCounts      map[string]uint64 `json:"outbound_tag_counts"`
 	RuleSetTag             string            `json:"rule_set_tag,omitempty"`
 }
@@ -69,6 +70,7 @@ type routingProbeExperiment struct {
 	hostnames            map[string]struct{}
 	addresses            map[netip.Addr]struct{}
 	matchCount           uint64
+	correctedCount       uint64
 	outboundTagCounts    map[string]uint64
 	ruleSetTag           string
 	ruleSetTagConsistent bool
@@ -230,6 +232,11 @@ func (t *routingProbeTracker) recordExperiment(
 		return
 	}
 	experiment.matchCount++
+	// The matched Line replaced an application-supplied address that its
+	// resolver did not return. Only the count leaves the Provider.
+	if metadata.XDialCorrectedFlowAddress {
+		experiment.correctedCount++
+	}
 	if outboundTag != "" {
 		experiment.outboundTagCounts[outboundTag]++
 	}
@@ -290,12 +297,14 @@ func (t *routingProbeTracker) snapshot() routingProbeSnapshot {
 	probeID := ""
 	matchCount := uint64(0)
 	candidateAddressCount := 0
+	correctedAddressCount := uint64(0)
 	outboundTagCounts := make(map[string]uint64)
 	ruleSetTag := ""
 	if experiment := t.experiment; experiment != nil {
 		probeID = experiment.id
 		matchCount = experiment.matchCount
 		candidateAddressCount = len(experiment.addresses)
+		correctedAddressCount = experiment.correctedCount
 		outboundTagCounts = make(
 			map[string]uint64,
 			len(experiment.outboundTagCounts),
@@ -320,6 +329,7 @@ func (t *routingProbeTracker) snapshot() routingProbeSnapshot {
 		ProbeID:                probeID,
 		MatchCount:             matchCount,
 		CandidateAddressCount:  candidateAddressCount,
+		CorrectedAddressCount:  correctedAddressCount,
 		OutboundTagCounts:      outboundTagCounts,
 		RuleSetTag:             ruleSetTag,
 	}

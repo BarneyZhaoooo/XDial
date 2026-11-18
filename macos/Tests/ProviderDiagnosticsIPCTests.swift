@@ -273,6 +273,30 @@ final class ProviderDiagnosticsIPCTests: XCTestCase {
         )
     }
 
+    func testSnapshotCarriesCorrectedAddressCountWithoutAddresses() throws {
+        let decoded = try JSONDecoder().decode(
+            ProviderRoutingProbeSnapshot.self,
+            from: Data(#"""
+            {"probe_id":"probe-1","match_count":3,"corrected_address_count":2,
+             "outbound_tag_counts":{"vpn":3}}
+            """#.utf8)
+        )
+        XCTAssertEqual(decoded.correctedAddressCount, 2)
+
+        let restricted = decoded.restrictedToActiveCapabilities(
+            lineOutbounds: ["company": "vpn"],
+            ruleSetTags: []
+        )
+        XCTAssertEqual(restricted.correctedAddressCount, 2)
+        XCTAssertEqual(restricted.lineIDCounts, ["company": 3])
+
+        let legacy = try JSONDecoder().decode(
+            ProviderRoutingProbeSnapshot.self,
+            from: Data(#"{"probe_id":"p","match_count":0,"outbound_tag_counts":{}}"#.utf8)
+        )
+        XCTAssertEqual(legacy.correctedAddressCount, 0)
+    }
+
     func testSnapshotDropsUnknownRuleSetAndOutboundTags() {
         let restricted = ProviderRoutingProbeSnapshot(
             probeID: "probe-1",

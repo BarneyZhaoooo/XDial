@@ -218,14 +218,37 @@ Direct 的就绪证明是当前 Underlay 上下文与配置归属，**不依赖�
 传播到其他 Line。已有有效地址族限制时，同一 Line 的 DNS、Application binding 与 route
 resolve 使用一致策略；合法单栈不等于整条 Line 失败，双栈也不因单点失败全局降为 IPv4。
 
-应用可能保留旧地址。仅当 flow 有经校验的原始域名、且 endpoint 地址族不符合所属 Line
-的有效能力时，盒内才在选定 Line 后重新解析。字面 IP 不存在安全重解析路径。
-connect-by-name UDP 在 SOCKS 边界保留域名；这不代表支持 unconnected 多目标 UDP 或 QUIC 迁移。
-
 入口：[就绪证明](core/libbox/line_network_readiness.go)、
 [Direct 无强制 TLS 测试](core/libbox/line_network_readiness_test.go)。
 
-### 4.4 fake IP（D-FAKEIP）
+### 4.4 应用自带的地址
+
+应用拿来连接的地址不一定来自 XDial：可能是旧缓存，也可能是绕过接管的解析结果，例如
+mDNSResponder 在接管前建立的 querier、应用内置的解析器或接管前的缓存。这类结果是 Underlay
+视角，甚至可能被篡改。所以 DNS 是否被完整接管，不能决定连接的正确性；名字决定了 Line，
+地址也必须来自该 Line。选定 Line 后，盒内按 flow 已归属的名字核对地址：
+
+| 条件 | 处理 |
+|---|---|
+| endpoint 地址族不符合所属 Line 的有效能力 | 按该 Line 重新解析 |
+| 非 Direct Line 的 resolver（经该 Line 的 DoH、AnyConnect 企业 DNS）应答不含应用给出的公网地址 | 改按该应答连接 |
+| 应答包含该地址、为空或解析失败 | 保持应用的地址 |
+| Direct、启动前系统 DNS、当前选中 Direct 的选择器组 | 不核对，应用的答案就是它们的视角 |
+| 私网、本机、链路本地、`100.64.0.0/10`、`198.18.0.0/15` 地址 | 视为应用的有意选择，不核对 |
+| 没有名字的字面 IP flow | 不存在安全的重解析路径，保持原样 |
+
+名字来源只有两种：系统随 flow 提供的原始域名；应用按地址连接时，从 TLS / QUIC / HTTP
+嗅探到的名字，也就是 route 求值所用的名字。两者都存在但不一致时不核对。嗅探到的名字
+本来就决定 Line；核对只会把流量送到该名字在这条 Line 视角下的地址，不会扩大应用能够
+到达的范围。证书校验仍在应用与服务端之间完成。
+DEBUG 路由探针只返回本窗口内被纠正的 flow 数，不返回原地址或名字。
+
+connect-by-name UDP 在 SOCKS 边界保留域名；这不代表支持 unconnected 多目标 UDP 或 QUIC 迁移。
+
+入口：[地址核对补丁](patches/sing-box/0017-correct-flow-address-from-matched-line.patch)、
+[生成器标记](core/config/generator.go)（`markLineOwnedFlowAddressCorrection`）。
+
+### 4.5 fake IP（D-FAKEIP）
 
 当前不启用 fake IP。预留地址段与 TUN 的 `198.18.0.0/15` 分离，避免与基础设施地址及旧 DNS
 残留识别混淆；未来启用也只保留域名关联，不改变同一 Scenario 的出口裁决。

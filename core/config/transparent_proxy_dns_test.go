@@ -235,7 +235,7 @@ func TestTransparentProxyDomainEndpointUsesIsolatedBootstrapResolver(t *testing.
 		t.Fatalf("Scenario default Line lost user-traffic DNS ownership: %v", cfg.DNS)
 	}
 	assertTransparentProxyRules(t, transparentProxyUserRules(t, cfg), []string{
-		`{"action":"resolve","server":"` + lineResolver + `"}`,
+		`{"action":"resolve","server":"` + lineResolver + `","xdial_correct_flow_address":true}`,
 	})
 }
 
@@ -377,7 +377,7 @@ func TestTransparentProxyDNSCompilesManualDomainThenCIDRInCausalOrder(t *testing
 	cfg, raw := generateTransparentProxyDNSTestConfig(t, profile)
 	rules := transparentProxyUserRules(t, cfg)
 	assertTransparentProxyRules(t, rules, []string{
-		`{"action":"resolve","domain_suffix":["corp.example"],"server":"xdial-anyconnect-dns"}`,
+		`{"action":"resolve","domain_suffix":["corp.example"],"server":"xdial-anyconnect-dns","xdial_correct_flow_address":true}`,
 		`{"domain_suffix":["corp.example"],"outbound":"vpn"}`,
 		`{"action":"resolve","server":"xdial-system-dns"}`,
 		`{"ip_cidr":["10.0.0.0/8"],"outbound":"vpn"}`,
@@ -451,7 +451,7 @@ func TestTransparentProxyDNSClassifiesURLRulesAndPreservesBindingOrder(t *testin
 	assertTransparentProxyRules(t, rules, []string{
 		`{"action":"resolve","server":"xdial-system-dns"}`,
 		`{"outbound":"proxy-japan","rule_set":"ruleset-mixed"}`,
-		`{"action":"resolve","rule_set":"ruleset-domain","server":"proxy-dns-proxy-japan"}`,
+		`{"action":"resolve","rule_set":"ruleset-domain","server":"proxy-dns-proxy-japan","xdial_correct_flow_address":true}`,
 		`{"outbound":"proxy-japan","rule_set":"ruleset-domain"}`,
 		`{"action":"resolve","server":"xdial-system-dns"}`,
 		`{"outbound":"proxy-japan","rule_set":"ruleset-ip"}`,
@@ -582,7 +582,7 @@ func TestTransparentProxyDefaultLineOwnsFinalResolution(t *testing.T) {
 	assertTransparentProxyRules(t, transparentProxyUserRules(t, cfg), []string{
 		`{"action":"resolve","server":"xdial-system-dns"}`,
 		`{"outbound":"direct","rule_set":"ruleset-cnip"}`,
-		`{"action":"resolve","server":"proxy-dns-tailscale-tailnet"}`,
+		`{"action":"resolve","server":"proxy-dns-tailscale-tailnet","xdial_correct_flow_address":true}`,
 	})
 	assertTransparentProxyHasNoMobileDNSFallback(t, raw)
 }
@@ -629,7 +629,7 @@ func TestTransparentProxyMagicDNSToggleCompilesDynamicDNSAndPeerRoutes(t *testin
 		`{"ip_cidr":["203.0.113.0/24"],"outbound":"direct"}`,
 		`{"action":"resolve","disable_cache":true,"preferred_by":"` + resolverTag + `","server":"` + resolverTag + `"}`,
 		`{"outbound":"tailscale-tailnet","preferred_by":"tailscale-tailnet"}`,
-		`{"action":"resolve","server":"proxy-dns-tailscale-tailnet"}`,
+		`{"action":"resolve","server":"proxy-dns-tailscale-tailnet","xdial_correct_flow_address":true}`,
 	})
 
 	servers := cfg.DNS["servers"].([]interface{})
@@ -775,7 +775,7 @@ func TestTransparentProxyInvertedManualDomainRuleInvertsDNSAndRouteTogether(t *t
 
 	cfg, _ := generateTransparentProxyDNSTestConfig(t, profile)
 	assertTransparentProxyRules(t, transparentProxyUserRules(t, cfg), []string{
-		`{"action":"resolve","domain_suffix":["corp.example"],"invert":true,"server":"proxy-dns-proxy-japan"}`,
+		`{"action":"resolve","domain_suffix":["corp.example"],"invert":true,"server":"proxy-dns-proxy-japan","xdial_correct_flow_address":true}`,
 		`{"domain_suffix":["corp.example"],"invert":true,"outbound":"proxy-japan"}`,
 		`{"action":"resolve","server":"xdial-native-dns"}`,
 	})
@@ -937,4 +937,99 @@ func assertTransparentProxyHasNoMobileDNSFallback(t *testing.T, raw []byte) {
 			t.Fatalf("Transparent Proxy config contains mobile DNS fallback %q:\n%s", forbidden, raw)
 		}
 	}
+}
+
+// 应用自己的 DNS 可能没经过 XDial（mDNSResponder 旧 querier、应用内置解析、
+// 接管前缓存），拿着 Underlay 甚至被篡改的地址来连接。名字已决定的非 Direct
+// Line 必须用自己的解析视角核对这个地址；Direct、启动前系统 DNS 与选中
+// Direct 的选择器组不核对——应用的答案本来就是它们的视角。
+func TestTransparentProxyCorrectsFlowAddressOnlyThroughLineOwnedResolvers(t *testing.T) {
+	profile := &Profile{
+		Lines: []Line{
+			{ID: "direct", Type: LineTypeDirect, Enabled: true},
+			{
+				ID: "japan", Type: LineTypeTrojan, Enabled: true,
+				TrojanServer: "192.0.2.10", TrojanPort: 443,
+				TrojanPassword: "secret", TrojanSNI: "node.example",
+			},
+			{
+				ID: "local-policy", Name: "Local", Type: LineTypeSelector, Enabled: true,
+				GroupMembers: []string{"direct", "japan"},
+			},
+		},
+		RuleSets: []RuleSet{
+			{ID: "overseas", Type: RuleSetTypeManual, Enabled: true, Domains: []string{"chatgpt.com"}},
+			{ID: "local-names", Type: RuleSetTypeManual, Enabled: true, Domains: []string{"local.example"}},
+			{ID: "nearby", Type: RuleSetTypeManual, Enabled: true, Domains: []string{"cdn.example"}},
+			{ID: "office", Type: RuleSetTypeManual, Enabled: true, CIDRs: []string{"198.51.100.0/24"}},
+			{
+				ID: "codex", Type: RuleSetTypeApplication, Enabled: true,
+				Applications: []ApplicationMatch{{Path: "/Applications/Codex.app"}},
+			},
+			{
+				ID: "terminal", Type: RuleSetTypeApplication, Enabled: true,
+				Applications: []ApplicationMatch{{Path: "/System/Applications/Utilities/Terminal.app"}},
+			},
+		},
+		Scenarios: []Scenario{{
+			ID: "scenario",
+			Bindings: []RuleBinding{
+				{RuleSetID: "overseas", LineID: "japan"},
+				{RuleSetID: "local-names", LineID: "direct"},
+				{RuleSetID: "nearby", LineID: "local-policy"},
+				{RuleSetID: "office", LineID: "japan"},
+				{RuleSetID: "codex", LineID: "japan"},
+				{RuleSetID: "terminal", LineID: "direct"},
+			},
+			DefaultLineID: "japan",
+		}},
+		ActiveScenarioID: "scenario",
+	}
+
+	cfg, raw := generateTransparentProxyDNSTestConfig(t, profile)
+	lineResolver := desktopProxyDNSTag("proxy-japan")
+	if server := transparentProxyDNSServerByTag(t, cfg, lineResolver); server["detour"] != "proxy-japan" {
+		t.Fatalf("Line resolver must leave through its Line: %v", server)
+	}
+
+	corrected := map[string]int{}
+	uncorrected := map[string]int{}
+	applicationResolves := 0
+	for _, value := range cfg.Route["rules"].([]interface{}) {
+		rule := value.(map[string]interface{})
+		if rule["action"] != "resolve" {
+			if _, exists := rule[transparentFlowAddressCorrectionKey]; exists {
+				t.Fatalf("only resolve actions may correct addresses: %v", rule)
+			}
+			continue
+		}
+		server, _ := rule["server"].(string)
+		if rule[transparentFlowAddressCorrectionKey] == true {
+			corrected[server]++
+		} else {
+			uncorrected[server]++
+		}
+		if _, exists := rule["auth_user"]; exists {
+			applicationResolves++
+		}
+	}
+
+	// chatgpt.com 规则、Codex 应用规则与默认 Line 各一条。
+	if corrected[lineResolver] != 3 || len(corrected) != 1 {
+		t.Fatalf("Line-owned resolves must all correct flow addresses: corrected=%v uncorrected=%v", corrected, uncorrected)
+	}
+	if uncorrected[lineResolver] != 0 {
+		t.Fatalf("a Line-owned resolve was left uncorrected: %v", uncorrected)
+	}
+	// Direct 域名、IP 规则前的系统解析、选中 Direct 的选择器组都保持原样；
+	// Direct 应用规则不生成 resolve。
+	if uncorrected[TransparentNativeDNSTag] != 1 ||
+		uncorrected[transparentSystemDNSTag] != 1 ||
+		uncorrected[desktopProxyDNSTag("proxy-local-policy")] != 1 {
+		t.Fatalf("non-Line resolvers must keep the application's address: %v", uncorrected)
+	}
+	if applicationResolves != 1 {
+		t.Fatalf("only the non-Direct application binding may resolve: %d", applicationResolves)
+	}
+	singboxCheckConfig(t, raw, "transparent-flow-address-correction")
 }
