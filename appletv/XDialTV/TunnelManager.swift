@@ -1473,7 +1473,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                     appLog("TunnelManager.onDemand: suspend failed \(error.localizedDescription)")
                     let message = "无法停用系统级按需重连：\(error.localizedDescription)"
                     self?.systemOnDemandState = .failed(message)
+                    // This is a preference-save error, independent of the tunnel result.
+                    #if !os(iOS)
                     self?.engine?.lastError = message
+                    #endif
                 }
                 completionBox.value()
             }
