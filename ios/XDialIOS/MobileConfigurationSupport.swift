@@ -385,6 +385,64 @@ enum MobileDiagnosticsService {
         lastError: String?,
         dataPathSummary: String?,
         autoScenarioSummary: String? = nil,
+        environment: String? = nil,
+        scenarioName: String? = nil,
+        timeline: ConnectionTimeline.File? = nil,
+        isChinese: Bool
+    ) -> String {
+        let base = summaryReport(
+            version: version, status: status, systemProfileInstalled: systemProfileInstalled,
+            profile: profile, lastError: lastError, dataPathSummary: dataPathSummary,
+            autoScenarioSummary: autoScenarioSummary, isChinese: isChinese)
+        var sections = [base]
+        if let environment {
+            sections.append((isChinese ? "环境：" : "Environment: ") + environment)
+        }
+        if let scenarioName {
+            let safe = redacted(scenarioName, using: profile) ?? scenarioName
+            sections.append((isChinese ? "当前场景：" : "Current scenario: ") + safe)
+        }
+        if let timeline {
+            let rendered = ConnectionTimelineReport.render(timeline, isChinese: isChinese)
+            // Timeline details are produced by XDial itself; still run them through the
+            // profile-aware redactor so a line or server value can never leak.
+            let safe = redactedKeepingAddresses(rendered, using: profile)
+            sections.append((isChinese ? "最近连接时间线：\n" : "Recent connection timeline:\n") + safe)
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// Device and build facts that explain platform-specific behaviour. No
+    /// identifiers: model family, OS version and build only.
+    @MainActor
+    static func environmentSummary(version: String) -> String {
+        #if os(iOS)
+        let device = UIDevice.current
+        let family = device.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        return "\(version) · \(device.systemName) \(device.systemVersion) · \(family)"
+        #else
+        return "\(version) · \(ProcessInfo.processInfo.operatingSystemVersionString)"
+        #endif
+    }
+
+    /// Profile secrets and server addresses are removed; numeric public egress
+    /// addresses that XDial measured stay, as in the probe summary.
+    static func redactedKeepingAddresses(_ text: String, using profile: Profile) -> String {
+        var result = text
+        for value in sensitiveValues(in: profile).sorted(by: { $0.count > $1.count }) where value.count >= 4 {
+            result = result.replacingOccurrences(of: value, with: "<redacted>")
+        }
+        return result
+    }
+
+    private static func summaryReport(
+        version: String,
+        status: String,
+        systemProfileInstalled: Bool,
+        profile: Profile,
+        lastError: String?,
+        dataPathSummary: String?,
+        autoScenarioSummary: String?,
         isChinese: Bool
     ) -> String {
         let safeStatus = redacted(status, using: profile) ?? status

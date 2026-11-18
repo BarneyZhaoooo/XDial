@@ -319,6 +319,13 @@ enum DataPathProbe {
         URL(string: "https://1.1.1.1/cdn-cgi/trace")!,
     ]
 
+    /// Outcome and duration of one probe request, for the connection timeline.
+    struct CheckRecord: Sendable, Equatable {
+        let result: ConnectionTimeline.Result
+        let ms: Int
+        static let notRun = CheckRecord(result: .notRun, ms: 0)
+    }
+
     struct Result: Sendable {
         let directLineEgressIP: String?
         let anyConnectLineEgressIP: String?
@@ -326,6 +333,9 @@ enum DataPathProbe {
         let routedAnyConnectEgressIP: String?
         let hostnameOK: Bool
         let routingEvidenceOK: Bool
+        var directCheck: CheckRecord = .notRun
+        var currentCheck: CheckRecord = .notRun
+        var hostnameCheck: CheckRecord = .notRun
 
         var linesReachable: Bool {
             directLineEgressIP != nil && anyConnectLineEgressIP != nil
@@ -374,7 +384,10 @@ enum DataPathProbe {
                 routedDirectEgressIP: routedDirectEgressIP,
                 routedAnyConnectEgressIP: routedAnyConnectEgressIP,
                 hostnameOK: hostnameOK,
-                routingEvidenceOK: accepted
+                routingEvidenceOK: accepted,
+                directCheck: directCheck,
+                currentCheck: currentCheck,
+                hostnameCheck: hostnameCheck
             )
         }
     }
@@ -388,41 +401,54 @@ enum DataPathProbe {
         async let hostnameOK = firstReachable(hostnameURLs)
         let anyConnect = includeSplitTarget
             ? await firstTrace(configuredAnyConnectURLs)
-            : TraceResult(reachable: false, address: nil)
+            : TraceResult(reachable: false, address: nil, check: .notRun)
         let (direct, hostname) = await (directTrace, hostnameOK)
         return Result(
             directLineEgressIP: directLineEgressIP,
             anyConnectLineEgressIP: anyConnectLineEgressIP,
             routedDirectEgressIP: direct.address,
             routedAnyConnectEgressIP: anyConnect.address,
-            hostnameOK: hostname,
-            routingEvidenceOK: false
+            hostnameOK: hostname.result == .ok,
+            routingEvidenceOK: false,
+            directCheck: direct.check,
+            currentCheck: anyConnect.check,
+            hostnameCheck: hostname
         )
     }
 
     struct TraceResult: Sendable {
         let reachable: Bool
         let address: String?
+        var check: CheckRecord = .notRun
     }
 
     private static func firstTrace(_ urls: [URL]) async -> TraceResult {
         let configuration = probeConfiguration()
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var last: ConnectionTimeline.Result = .notRun
 
         for url in urls {
-            if Task.isCancelled { return TraceResult(reachable: false, address: nil) }
+            if Task.isCancelled {
+                return TraceResult(reachable: false, address: nil, check: CheckRecord(
+                    result: .cancelled, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
+            }
             do {
                 let (data, response) = try await session.data(for: probeRequest(url))
                 if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                    let address = parseTraceIPAddress(data) {
-                    return TraceResult(reachable: true, address: address)
+                    return TraceResult(reachable: true, address: address, check: CheckRecord(
+                        result: .ok, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
                 }
+                last = .http
             } catch {
+                last = ConnectionTimeline.classify(error)
                 continue
             }
         }
-        return TraceResult(reachable: false, address: nil)
+        return TraceResult(reachable: false, address: nil, check: CheckRecord(
+            result: last, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt)))
     }
 
     static func parseTraceIPAddress(_ data: Data) -> String? {
@@ -440,23 +466,29 @@ enum DataPathProbe {
         return nil
     }
 
-    private static func firstReachable(_ urls: [URL]) async -> Bool {
+    private static func firstReachable(_ urls: [URL]) async -> CheckRecord {
         let configuration = probeConfiguration()
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var last: ConnectionTimeline.Result = .notRun
 
         for url in urls {
-            if Task.isCancelled { return false }
+            if Task.isCancelled {
+                return CheckRecord(result: .cancelled, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
+            }
             do {
                 let (_, response) = try await session.data(for: probeRequest(url))
                 if let http = response as? HTTPURLResponse, (200..<500).contains(http.statusCode) {
-                    return true
+                    return CheckRecord(result: .ok, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
                 }
+                last = .http
             } catch {
+                last = ConnectionTimeline.classify(error)
                 continue
             }
         }
-        return false
+        return CheckRecord(result: last, ms: ConnectionTimeline.elapsedMilliseconds(since: startedAt))
     }
 
     private static func probeConfiguration() -> URLSessionConfiguration {
@@ -1011,6 +1043,40 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private var pendingOnDemandEnvelope: OnDemandStartEnvelope?
     private var activeStartAllowsSystemOnDemand = true
     private var startWatchdogTask: Task<Void, Never>?
+    /// Shared app/extension connection timeline (see ConnectionTimeline).
+    private let timeline = ConnectionTimelineStore.shared(appGroup: kAppGroupIdentifier)
+    /// Session the next timeline events belong to; equals the start attempt ID.
+    private var timelineSessionID: String?
+    private var timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
+    private var checkStartedAt = ProcessInfo.processInfo.systemUptime
+
+    /// Appends an app event to the connection timeline. When the system started
+    /// the tunnel itself the app attaches to the extension's active session.
+    private func recordTimeline(
+        _ stage: String,
+        result: ConnectionTimeline.Result? = nil,
+        ms: Int? = nil,
+        detail: String? = nil
+    ) {
+        guard let timeline else { return }
+        if timelineSessionID == nil {
+            guard let active = timeline.snapshot().activeSessionID else { return }
+            timelineSessionID = active
+            timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
+        }
+        guard let sessionID = timelineSessionID else { return }
+        timeline.append(session: sessionID, source: .app, stage: "app." + stage,
+                        result: result, ms: ms, detail: detail)
+    }
+
+    /// The bounded, redacted connection timeline for the diagnostics report.
+    func connectionTimelineSnapshot() -> ConnectionTimeline.File? {
+        timeline?.snapshot()
+    }
+
+    func recordUserAction(_ action: String) {
+        recordTimeline("user." + action)
+    }
 
     init(engine: GoEngine? = nil) {
         self.engine = engine
@@ -1057,6 +1123,9 @@ final class TunnelManager: ObservableObject, TunnelManaging {
               connection.status == .connected else { return }
         dataPathProbeTask?.cancel()
         appLog("DataPathProbe: paused, app entered background at \(dataPathProbeStage ?? "start")")
+        recordTimeline("check.cancelled", result: .cancelled,
+                       ms: ConnectionTimeline.elapsedMilliseconds(since: checkStartedAt),
+                       detail: "background at \(dataPathProbeStage ?? "start")")
         // 补测被打断时保留上一次没通过的原因；首次验收被打断则说明是暂停而不是失败。
         settleDegraded(
             summary: dataPathProbeIsRecheck
@@ -1093,7 +1162,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private func scheduleDegradedRecheck() {
         dataPathRecheckTask?.cancel()
         dataPathRecheckTask = nil
-        guard let delay = recheckPolicy.nextDelay else { return }
+        guard let delay = recheckPolicy.nextDelay else {
+            recordTimeline("check.recheck_exhausted")
+            return
+        }
+        recordTimeline("check.recheck_scheduled", detail: "in \(delay)s")
         dataPathRecheckTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
             guard !Task.isCancelled, let self else { return }
@@ -1509,6 +1582,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         let previousStatus = observedSystemStatus
         observedSystemStatus = connection.status
+        if previousStatus != connection.status {
+            recordTimeline("status." + Self.timelineStatusName(connection.status),
+                           ms: ConnectionTimeline.elapsedMilliseconds(since: timelineSessionStartedAt))
+        }
         switch connection.status {
         case .connected:
             if dataPathVerified {
@@ -1548,6 +1625,9 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             resetDegradedRecheck()
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
+            if previousStatus != connection.status, previousStatus != .invalid {
+                timelineSessionID = nil
+            }
         @unknown default:
             dataPathProbeTask?.cancel()
             dataPathProbeTask = nil
@@ -1556,6 +1636,18 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             resetDegradedRecheck()
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
+        }
+    }
+
+    static func timelineStatusName(_ status: NEVPNStatus) -> String {
+        switch status {
+        case .invalid: return "invalid"
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .reasserting: return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown"
         }
     }
 
@@ -1574,6 +1666,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         // 系统可能在 App 已经进入后台后才连上；这条路径没有新的后台通知。
         // 首次验收、手动补测、重复 connected 通知统一在此延期，不启动探针或看门狗。
         if recheckPolicy.shouldDeferProbe {
+            recordTimeline("check.deferred_background", result: .notRun, detail: isRecheck ? "recheck" : "first")
             settleDegraded(
                 summary: isRecheck ? nil : "App 在后台，自检暂停；回到前台会自动重新检测",
                 connection: connection
@@ -1586,6 +1679,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let probeID = UUID()
         dataPathProbeID = probeID
         probeStartedAt = ProcessInfo.processInfo.systemUptime
+        checkStartedAt = probeStartedAt
+        recordTimeline("check.begin", detail: isRecheck ? "recheck" : "first")
         probeCheckpoints.removeAll()
         dataPathProbeIsRecheck = isRecheck
         dataPathProbeStage = nil
@@ -1657,15 +1752,23 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 self.armSystemOnDemandIfReady()
                 self.engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
                 appLog("DataPathProbe: passed \(outcome.logSummary)")
+                self.recordTimeline("check.passed", result: .ok,
+                                    ms: ConnectionTimeline.elapsedMilliseconds(since: self.checkStartedAt))
             } else if Self.keepsTunnelWhenAcceptanceFails || self.dataPathProbeIsRecheck {
                 // 机上 Wi-Fi、弱信号等高延迟或受限网络里，验收探针常常超时，但隧道本身已经在转发
                 // 流量。主动断开会把能用的连接断掉，所以保留连接，只记下未通过的原因供首页提示。
                 appLog("DataPathProbe: degraded, keeping tunnel \(outcome.logSummary)")
+                self.recordTimeline("check.degraded", result: .failed,
+                                    ms: ConnectionTimeline.elapsedMilliseconds(since: self.checkStartedAt),
+                                    detail: outcome.timelineDetail)
                 self.settleDegraded(summary: outcome.summary, connection: connection)
             } else {
                 self.engine?.dataPathSummary = outcome.summary
                 self.dataPathVerified = false
                 appLog("DataPathProbe: failed \(outcome.logSummary)")
+                self.recordTimeline("check.failed", result: .failed,
+                                    ms: ConnectionTimeline.elapsedMilliseconds(since: self.checkStartedAt),
+                                    detail: outcome.timelineDetail)
                 let baseMessage = outcome.failureMessage
                 self.applyProbeFailure(
                     baseMessage: baseMessage,
@@ -1726,6 +1829,9 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             let stageSummary = self.dataPathProbeStage.map { "连接验收超时（停在：\($0)）" }
                 ?? "连接验收超时"
             let timeoutSummary = stageSummary + "；验收经过：" + timeline
+            self.recordTimeline("check.watchdog_expired", result: .timeout,
+                                ms: ConnectionTimeline.elapsedMilliseconds(since: self.checkStartedAt),
+                                detail: self.dataPathProbeStage)
             if (Self.keepsTunnelWhenAcceptanceFails || self.dataPathProbeIsRecheck),
                connection.status == .connected {
                 appLog("DataPathProbe: watchdog expired, keeping tunnel: \(timeoutSummary)")
@@ -1958,6 +2064,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let summary: String
         let failureMessage: String
         let logSummary: String
+        /// Short, label-free verdict for the connection timeline.
+        var timelineDetail: String? = nil
 
         static let cancelled = ProbeOutcome(
             isUsable: false, summary: "", failureMessage: "", logSummary: "cancelled"
@@ -1967,6 +2075,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private struct OutboundAddressProbeResult: Sendable {
         let address: String?
         let failure: String?
+        var ms: Int = 0
     }
 
     private func probeConfiguredDataPath(plan: TunnelAcceptancePlan) async -> ProbeOutcome {
@@ -1985,11 +2094,20 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                     guard let self else {
                         return (target, OutboundAddressProbeResult(address: nil, failure: "线路探针不可用"))
                     }
-                    return (target, await self.requestOutboundAddress(outboundTag: target.tag))
+                    let startedAt = ProcessInfo.processInfo.systemUptime
+                    var probe = await self.requestOutboundAddress(outboundTag: target.tag)
+                    probe.ms = ConnectionTimeline.elapsedMilliseconds(since: startedAt)
+                    return (target, probe)
                 }
             }
             for await (target, probe) in group {
                 results[target.tag] = probe
+                recordTimeline(
+                    "check.line",
+                    result: probe.address != nil ? .ok
+                        : (Task.isCancelled ? .cancelled : ConnectionTimeline.classify(probeFailure: probe.failure)),
+                    ms: probe.ms,
+                    detail: target.label + (probe.failure.map { " " + ConnectionTimeline.failureKeywords($0) } ?? ""))
                 if let index = pendingLabels.firstIndex(of: target.label) {
                     pendingLabels.remove(at: index)
                 }
@@ -2014,10 +2132,14 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         recordProbeCheckpoint("线路试拨成功 \(addresses.count)/\(plan.targets.count)")
         dataPathProbeStage = "读取测试前分流命中计数"
+        let baselineStartedAt = ProcessInfo.processInfo.systemUptime
         let baseline = await requestRoutingProbeSnapshot()
         guard !Task.isCancelled else {
             return .cancelled
         }
+        recordTimeline("check.route_counter_before", result: baseline.snapshot == nil ? .failed : .ok,
+                       ms: ConnectionTimeline.elapsedMilliseconds(since: baselineStartedAt),
+                       detail: baseline.snapshot == nil ? baseline.detail : nil)
         recordProbeCheckpoint("测试前计数：" + baseline.detail)
         dataPathProbeStage = "测试分流与域名解析"
         let routed = await DataPathProbe.run(
@@ -2028,13 +2150,25 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         guard !Task.isCancelled else {
             return .cancelled
         }
+        recordTimeline("check.direct_request", result: routed.directCheck.result,
+                       ms: routed.directCheck.ms, detail: "cf-trace via Direct")
+        if plan.currentRouteTag != nil {
+            recordTimeline("check.current_request", result: routed.currentCheck.result,
+                           ms: routed.currentCheck.ms, detail: "cf-trace via current line")
+        }
+        recordTimeline("check.hostname_request", result: routed.hostnameCheck.result,
+                       ms: routed.hostnameCheck.ms, detail: "www.apple.com")
         let direct = routed.routedDirectEgressIP == nil ? "未取得出口" : "取得出口"
         let current = plan.currentRouteTag == nil ? "跳过"
             : (routed.routedAnyConnectEgressIP == nil ? "未取得出口" : "取得出口")
         recordProbeCheckpoint("直连测试 \(direct)，当前线路测试 \(current)，域名请求\(routed.hostnameOK ? "成功" : "失败")")
         dataPathProbeStage = "读取测试后分流命中计数"
+        let finalStartedAt = ProcessInfo.processInfo.systemUptime
         let final = await requestRoutingProbeSnapshot()
         guard !Task.isCancelled else { return .cancelled }
+        recordTimeline("check.route_counter_after", result: final.snapshot == nil ? .failed : .ok,
+                       ms: ConnectionTimeline.elapsedMilliseconds(since: finalStartedAt),
+                       detail: final.snapshot == nil ? final.detail : nil)
         let routingBefore = baseline.snapshot
         let routingAfter = final.snapshot
         let routingEvidenceOK = routingBefore.flatMap { before in
@@ -2078,6 +2212,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 currentReply: plan.currentRouteTag == nil ? nil : .some(routed.routedAnyConnectEgressIP)
             )
         }
+        let timelineDetail = "lines \(addresses.count)/\(plan.targets.count)"
+            + " route=\(result.splitRoutingState.rawValue) evidence=\(routingEvidenceOK)"
+            + " dns=\(routed.hostnameCheck.result.rawValue)"
+            + " direct=\(routed.directCheck.result.rawValue)"
+            + (plan.currentRouteTag == nil ? "" : " current=\(routed.currentCheck.result.rawValue)")
         return ProbeOutcome(
             isUsable: result.isUsable,
             summary: result.diagnosticSummary + failureDetails,
@@ -2088,7 +2227,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 + "dns=\(routed.hostnameOK) routedDirect="
                 + "\(routed.routedDirectEgressIP ?? "unavailable") routedCurrent="
                 + "\(routed.routedAnyConnectEgressIP ?? "unavailable")"
-                + failureDetails
+                + failureDetails,
+            timelineDetail: timelineDetail
         )
     }
 
@@ -2363,6 +2503,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                       completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
         let operationID = beginStartOperation(completion: completion)
         activeStartAllowsSystemOnDemand = allowSystemOnDemand
+        let sessionID = UUID().uuidString
+        timelineSessionID = sessionID
+        timelineSessionStartedAt = ProcessInfo.processInfo.systemUptime
+        timeline?.beginSession(sessionID, markActive: false)
+        recordTimeline("start_requested", detail: "anyconnect=\(anyConnect != nil) ondemand=\(allowSystemOnDemand)")
         guard isCurrentStartOperation(operationID) else { return }
         guard UserDefaults(suiteName: kAppGroupIdentifier) != nil else {
             finishStartOperation(operationID, result: .failure(NSError(domain: "XDial", code: -2,
@@ -2415,6 +2560,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let owner = UncheckedBox(value: self)
         let scenarioID = profile.activeScenarioID
         let scenarioName = profile.scenarios.first { $0.id == scenarioID }?.name ?? ""
+        let generationStartedAt = ProcessInfo.processInfo.systemUptime
         Self.configGenerationQueue.submit {
             let outcome = Self.generateStartSession(
                 profileJSON: profileJSON,
@@ -2427,11 +2573,15 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             Task { @MainActor in
                 let manager = owner.value
                 guard manager.isCurrentStartOperation(operationID) else { return }
+                let generationMS = ConnectionTimeline.elapsedMilliseconds(since: generationStartedAt)
                 switch outcomeBox.value {
                 case .failure(let error):
+                    manager.recordTimeline("config_generated", result: .failed, ms: generationMS,
+                                           detail: error.localizedDescription)
                     manager.engine?.applySystemStatus("disconnected")
                     manager.finishStartOperation(operationID, result: .failure(error))
                 case .success(let session):
+                    manager.recordTimeline("config_generated", result: .ok, ms: generationMS)
                     manager.startPreparedTunnel(
                         operationID: operationID,
                         configJSON: session.configJSON,
@@ -2605,7 +2755,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                            let planJSON = String(data: planData, encoding: .utf8) {
                             options["acceptance_plan"] = planJSON as NSString
                         }
-                        let attemptID = UUID().uuidString
+                        let attemptID = self.timelineSessionID ?? UUID().uuidString
+                        self.recordTimeline("tunnel_start_sent")
                         self.dataPathProbeTask?.cancel()
                         self.dataPathProbeTask = nil
                         self.dataPathProbeID = nil
@@ -2627,6 +2778,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             let diagnostics = TunnelDiagnosticFormatter.persistedSummary(
                                 matchingAttemptID: attemptID
                             )
+                            self.recordTimeline("start_watchdog_expired", result: .timeout, ms: 45_000)
                             let message = "连接启动超时"
                             self.engine?.lastError = diagnostics.map {
                                 "\(message)\n诊断：\($0)"
@@ -2881,6 +3033,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
     /// 停止系统级隧道。manager/connection 不可用时静默返回(语义等价「本来就没在跑」)。
     func stopTunnel() {
+        recordTimeline("stop_requested",
+                       ms: ConnectionTimeline.elapsedMilliseconds(since: timelineSessionStartedAt))
         let cancelledCompletion = startOperationState.cancel()
         activeStartAttemptID = nil
         startWatchdogTask?.cancel()

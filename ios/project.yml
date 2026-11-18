@@ -48,6 +48,7 @@ targets:
     sources:
       - path: ../appletv/XDialTVTunnel/PacketTunnelProvider.swift
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
+      - path: ../appletv/XDialTV/ConnectionTimeline.swift
       - path: XDialIOSTunnel/TunnelActivityUpdater.swift
       - path: XDialShared/XDialConnectionActivity.swift
       - path: XDialShared/XDialIdentity.swift
@@ -144,6 +145,7 @@ targets:
       - path: XDialShared
       - path: ../appletv/XDialTV/AppState.swift
       - path: ../appletv/XDialTV/BundledRuleSets.swift
+      - path: ../appletv/XDialTV/ConnectionTimeline.swift
       - path: ../appletv/XDialTV/FakeTunnel.swift
       - path: ../appletv/XDialTV/GoEngine.swift
       - path: ../appletv/XDialTV/KeychainStore.swift

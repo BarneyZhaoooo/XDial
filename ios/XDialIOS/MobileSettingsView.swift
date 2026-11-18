@@ -264,6 +264,9 @@ struct MobileSettingsView: View {
             lastError: app.engine.lastError,
             dataPathSummary: app.engine.dataPathSummary,
             autoScenarioSummary: autoScenarioSummary,
+            environment: MobileDiagnosticsService.environmentSummary(version: version),
+            scenarioName: app.activeScenario?.name,
+            timeline: app.connectionTimelineSnapshot(),
             isChinese: app.language == .zh
         )
     }
