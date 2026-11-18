@@ -70,14 +70,14 @@ struct HomeRouteLabel: View {
             HomeSymbol(symbol: symbol)
             VStack(alignment: .leading, spacing: 4) {
                 Text(name).font(.headline)
-                Text(reason).font(.subheadline).foregroundStyle(.secondary)
+                Text(reason).font(.subheadline).foregroundStyle(XDialTheme.inkSecondary)
                     .accessibilityIdentifier("home-auto-note")
             }
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .font(.caption.weight(.semibold)).foregroundStyle(XDialTheme.inkSecondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -109,11 +109,11 @@ struct HomeAccountLabel: View {
             HomeSymbol(symbol: "person.crop.circle")
             VStack(alignment: .leading, spacing: 3) {
                 Text(name).font(.headline)
-                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+                Text(detail).font(.subheadline).foregroundStyle(XDialTheme.inkSecondary)
             }
             .multilineTextAlignment(.leading)
             Spacer(minLength: 6)
-            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(XDialTheme.inkSecondary)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
