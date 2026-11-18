@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -85,7 +86,14 @@ func Load(data []byte) (*Seed, error) {
 		if !ok {
 			return nil, fmt.Errorf("region %s names unknown Scenario %s", key, scenario)
 		}
-		regions[strings.ToUpper(strings.TrimSpace(key))] = target
+		code := strings.ToUpper(strings.TrimSpace(key))
+		if code != "*" && !(len(code) == 2 && code[0] >= 'A' && code[0] <= 'Z' && code[1] >= 'A' && code[1] <= 'Z') {
+			return nil, fmt.Errorf("region %q must be * or a two-letter country code", key)
+		}
+		if _, repeated := regions[code]; repeated {
+			return nil, fmt.Errorf("region %s appears twice", code)
+		}
+		regions[code] = target
 	}
 	return &Seed{Profile: profile, Regions: regions, Revision: envelope.Revision, Mobile: true}, nil
 }
@@ -103,12 +111,22 @@ var (
 		"vpn_server", "vpn_username", "vpn_password", "trojan_server", "trojan_port", "trojan_password", "trojan_sni",
 		"ss_server", "ss_port", "ss_method", "ss_password", "vmess_server", "vmess_port", "vmess_uuid", "vmess_alt_id",
 		"tailscale_exit_node", "tailscale_magic_dns", "tailscale_authenticated")
-	mobileLineTypes    = keySet("direct", "vpn", "trojan", "shadowsocks", "ss", "vmess", "tailscale")
-	mobileRuleKeys     = keySet("id", "name", "type", "enabled", "url", "format", "domains", "cidrs")
-	mobileRuleTypes    = keySet("url", "manual")
-	mobileRuleFormats  = keySet("", "auto", "srs", "json", "text")
-	mobileScenarioKeys = keySet("id", "name", "icon", "match_ssids", "bindings", "default_line_id", "default_subscription_id")
-	mobileBindingKeys  = keySet("rule_set_id", "line_id", "subscription_id")
+	// The phone also reads "ss" (rewritten to "shadowsocks"); the Go importer does not.
+	mobileLineTypes     = keySet("direct", "vpn", "trojan", "shadowsocks", "vmess", "tailscale")
+	mobileRuleKeys      = keySet("id", "name", "type", "enabled", "url", "format", "domains", "cidrs")
+	mobileRuleTypes     = keySet("url", "manual")
+	mobileRuleFormats   = keySet("", "auto", "srs", "json", "text")
+	mobileScenarioKeys  = keySet("id", "name", "icon", "match_ssids", "bindings", "default_line_id", "default_subscription_id")
+	mobileBindingKeys   = keySet("rule_set_id", "line_id", "subscription_id")
+	mobileTailscaleKeys = keySet("hostname")
+
+	// Keys the phone's decoders cannot do without: Line, Scenario and RuleBinding
+	// decode these with decode(); RuleSet uses synthesized Decodable, which needs
+	// every stored property despite their initial values.
+	mobileLineRequired     = []string{"id", "name", "type"}
+	mobileRuleRequired     = []string{"id", "name", "type", "enabled", "url", "format", "domains", "cidrs"}
+	mobileScenarioRequired = []string{"id", "name"}
+	mobileBindingRequired  = []string{"rule_set_id"}
 )
 
 // platformDefaults are fields whose omission the platforms read differently:
@@ -118,7 +136,6 @@ var platformDefaults = map[string][]string{
 	"":            {"enabled"},
 	"trojan":      {"trojan_port"},
 	"shadowsocks": {"ss_port", "ss_method"},
-	"ss":          {"ss_port", "ss_method"},
 	"vmess":       {"vmess_port"},
 }
 
@@ -147,6 +164,44 @@ func onlyKeys(object rawObject, allowed map[string]bool, what string) error {
 	return nil
 }
 
+func requireKeys(object rawObject, keys []string, what string) error {
+	for _, key := range keys {
+		if _, ok := object[key]; !ok {
+			return fmt.Errorf("%s must set %s: the phone requires it", what, key)
+		}
+	}
+	return nil
+}
+
+// uniqueIDs mirrors the phone's identifier check: present, not blank, not repeated.
+func uniqueIDs(objects []rawObject, key, kind string) (map[string]bool, error) {
+	ids := map[string]bool{}
+	for _, object := range objects {
+		id := text(object, key)
+		if strings.TrimSpace(id) == "" {
+			return nil, fmt.Errorf("a %s has no id", kind)
+		}
+		if ids[id] {
+			return nil, fmt.Errorf("%s %s appears twice", kind, id)
+		}
+		ids[id] = true
+	}
+	return ids, nil
+}
+
+// remoteHTTPS mirrors the phone's rule address check.
+func remoteHTTPS(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || strings.ToLower(u.Scheme) != "https" || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host != "localhost" && !strings.HasSuffix(host, ".localhost") && !strings.HasSuffix(host, ".local")
+}
+
+// requireMobileCompatible accepts a shared preset only if the phone decodes and
+// validates it to the same meaning the Go importer gives the Mac
+// (Models.swift decoders, MobileConfigurationService.importProfile/validate).
 func requireMobileCompatible(profile json.RawMessage) error {
 	var top rawObject
 	var document struct {
@@ -154,6 +209,7 @@ func requireMobileCompatible(profile json.RawMessage) error {
 		RuleSets      []rawObject `json:"rule_sets"`
 		Scenarios     []rawObject `json:"scenarios"`
 		Subscriptions []rawObject `json:"subscriptions"`
+		Tailscale     rawObject   `json:"tailscale"`
 	}
 	if json.Unmarshal(profile, &top) != nil || json.Unmarshal(profile, &document) != nil {
 		return fmt.Errorf("invalid seed profile")
@@ -161,17 +217,33 @@ func requireMobileCompatible(profile json.RawMessage) error {
 	if err := onlyKeys(top, mobileProfileKeys, "the preset"); err != nil {
 		return err
 	}
-	for _, key := range mobileRequiredKeys {
-		if _, ok := top[key]; !ok {
-			return fmt.Errorf("the preset must set %s: the phone requires it", key)
-		}
+	if err := requireKeys(top, mobileRequiredKeys, "the preset"); err != nil {
+		return err
 	}
 	if len(document.Subscriptions) > 0 {
 		return fmt.Errorf("the preset must not carry subscriptions: their routing is not compared across platforms")
 	}
+	if err := onlyKeys(document.Tailscale, mobileTailscaleKeys, "the preset's tailscale identity"); err != nil {
+		return err
+	}
+	lineIDs, err := uniqueIDs(document.Lines, "id", "line")
+	if err != nil {
+		return err
+	}
+	ruleIDs, err := uniqueIDs(document.RuleSets, "id", "rule set")
+	if err != nil {
+		return err
+	}
+	scenarioIDs, err := uniqueIDs(document.Scenarios, "id", "Scenario")
+	if err != nil {
+		return err
+	}
 	for _, line := range document.Lines {
 		what := "line " + text(line, "id")
 		if err := onlyKeys(line, mobileLineKeys, what); err != nil {
+			return err
+		}
+		if err := requireKeys(line, mobileLineRequired, what); err != nil {
 			return err
 		}
 		kind := text(line, "type")
@@ -189,14 +261,21 @@ func requireMobileCompatible(profile json.RawMessage) error {
 		if err := onlyKeys(rule, mobileRuleKeys, what); err != nil {
 			return err
 		}
-		if kind := text(rule, "type"); !mobileRuleTypes[kind] {
+		if err := requireKeys(rule, mobileRuleRequired, what); err != nil {
+			return err
+		}
+		kind := text(rule, "type")
+		if !mobileRuleTypes[kind] {
 			return fmt.Errorf("%s has type %q, which the phone does not support", what, kind)
 		}
 		if format := text(rule, "format"); !mobileRuleFormats[format] {
 			return fmt.Errorf("%s has format %q, which the phone does not support", what, format)
 		}
-		if _, ok := rule["enabled"]; !ok {
-			return fmt.Errorf("%s must set enabled: platforms default it differently", what)
+		var enabled bool
+		_ = json.Unmarshal(rule["enabled"], &enabled)
+		address := text(rule, "url")
+		if kind == "url" && ((enabled && strings.TrimSpace(address) == "") || (address != "" && !remoteHTTPS(address))) {
+			return fmt.Errorf("%s needs a remote HTTPS address", what)
 		}
 	}
 	for _, scenario := range document.Scenarios {
@@ -204,15 +283,36 @@ func requireMobileCompatible(profile json.RawMessage) error {
 		if err := onlyKeys(scenario, mobileScenarioKeys, what); err != nil {
 			return err
 		}
+		if err := requireKeys(scenario, mobileScenarioRequired, what); err != nil {
+			return err
+		}
+		// Without subscriptions, the one default exit the phone requires is a line.
+		if line := text(scenario, "default_line_id"); !lineIDs[line] || text(scenario, "default_subscription_id") != "" {
+			return fmt.Errorf("%s needs one default exit naming a line of the preset", what)
+		}
 		var bindings []rawObject
 		if err := json.Unmarshal(scenario["bindings"], &bindings); err != nil && len(scenario["bindings"]) > 0 {
 			return fmt.Errorf("%s has invalid bindings", what)
+		}
+		if _, err := uniqueIDs(bindings, "rule_set_id", what+" binding"); err != nil {
+			return err
 		}
 		for _, binding := range bindings {
 			if err := onlyKeys(binding, mobileBindingKeys, what+" binding"); err != nil {
 				return err
 			}
+			if err := requireKeys(binding, mobileBindingRequired, what+" binding"); err != nil {
+				return err
+			}
+			if !ruleIDs[text(binding, "rule_set_id")] || !lineIDs[text(binding, "line_id")] ||
+				text(binding, "subscription_id") != "" {
+				return fmt.Errorf("%s binds %s to something the preset does not define", what, text(binding, "rule_set_id"))
+			}
 		}
+	}
+	active := text(top, "active_scenario_id")
+	if (len(document.Scenarios) > 0 || active != "") && !scenarioIDs[active] {
+		return fmt.Errorf("the preset's active_scenario_id must name one of its Scenarios")
 	}
 	return nil
 }

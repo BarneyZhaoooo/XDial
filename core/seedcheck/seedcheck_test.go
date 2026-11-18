@@ -13,8 +13,8 @@ const authority = `{"format":"xdial-mobile-seed","schema_version":1,"revision":2
  "region_scenarios":{"cn":"domestic","*":"overseas"},
  "profile":{"lines":[{"id":"direct","name":"直连","type":"direct","enabled":true},
   {"id":"vpn","name":"公司 VPN","type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"}],
-  "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"domains":["example.com"]},
-   {"id":"cn","name":"国内网站","type":"url","enabled":true,"format":"srs","url":"https://rules.example/cn.srs"}],
+  "rule_sets":[{"id":"intranet","name":"公司内网","type":"manual","enabled":true,"url":"","format":"auto","domains":["example.com"],"cidrs":[]},
+   {"id":"cn","name":"国内网站","type":"url","enabled":true,"format":"srs","url":"https://rules.example/cn.srs","domains":[],"cidrs":[]}],
   "scenarios":[{"id":"domestic","name":"在国内","default_line_id":"vpn","bindings":[{"rule_set_id":"intranet","line_id":"vpn"},{"rule_set_id":"cn","line_id":"direct"}]},
    {"id":"overseas","name":"在国外","default_line_id":"direct","bindings":[{"rule_set_id":"cn","line_id":"vpn"},{"rule_set_id":"intranet","line_id":"vpn"}]}],
   "subscriptions":[],"active_scenario_id":"domestic"}}`
@@ -158,7 +158,7 @@ func TestLoadRequiresFieldsPlatformsDefaultDifferently(t *testing.T) {
 		if seed == authority {
 			t.Fatalf("%s: fixture did not change", name)
 		}
-		if _, err := Load([]byte(seed)); err == nil || !strings.Contains(err.Error(), "platforms default it differently") {
+		if _, err := Load([]byte(seed)); err == nil || !strings.Contains(err.Error(), "must set") {
 			t.Errorf("%s omitted: got %v", name, err)
 		}
 	}
@@ -170,10 +170,20 @@ func TestLoadRejectsWhatThePhoneDoesNotRead(t *testing.T) {
 		"native rule":   strings.Replace(authority, `"type":"manual","enabled":true,`, `"type":"native","enabled":true,`, 1),
 		"binding conditions": strings.Replace(authority, `{"rule_set_id":"intranet","line_id":"vpn"}`,
 			`{"rule_set_id":"intranet","line_id":"vpn","condition_ids":["x"]}`, 1),
-		"match order":   strings.Replace(authority, `"name":"在国外",`, `"name":"在国外","match_order":["cn"],`, 1),
-		"line type":     strings.Replace(authority, `"type":"vpn","enabled":true,`, `"type":"anytls","enabled":true,`, 1),
-		"rule format":   strings.Replace(authority, `"format":"srs"`, `"format":"source"`, 1),
-		"subscriptions": strings.Replace(authority, `"active_scenario_id"`, `"subscriptions":[{"id":"s"}],"active_scenario_id"`, 1),
+		"match order":          strings.Replace(authority, `"name":"在国外",`, `"name":"在国外","match_order":["cn"],`, 1),
+		"line type":            strings.Replace(authority, `"type":"vpn","enabled":true,`, `"type":"anytls","enabled":true,`, 1),
+		"rule format":          strings.Replace(authority, `"format":"srs"`, `"format":"source"`, 1),
+		"rule without cidrs":   strings.Replace(authority, `"domains":["example.com"],"cidrs":[]`, `"domains":["example.com"]`, 1),
+		"rule without url":     strings.Replace(authority, `"enabled":true,"url":"","format":"auto"`, `"enabled":true,"format":"auto"`, 1),
+		"ss alias":             strings.Replace(authority, `"type":"vpn","enabled":true,"vpn_server":"vpn.example.com:8443"`, `"type":"ss","enabled":true,"ss_port":1,"ss_method":"m"`, 1),
+		"plain http rule":      strings.Replace(authority, `"https://rules.example/cn.srs"`, `"http://rules.example/cn.srs"`, 1),
+		"unknown binding line": strings.Replace(authority, `{"rule_set_id":"cn","line_id":"direct"}`, `{"rule_set_id":"cn","line_id":"gone"}`, 1),
+		"duplicate binding":    strings.Replace(authority, `{"rule_set_id":"cn","line_id":"direct"}`, `{"rule_set_id":"intranet","line_id":"direct"}`, 1),
+		"no default exit":      strings.Replace(authority, `"name":"在国外","default_line_id":"direct",`, `"name":"在国外",`, 1),
+		"unknown active":       strings.Replace(authority, `"active_scenario_id":"domestic"`, `"active_scenario_id":"gone"`, 1),
+		"bad region":           strings.Replace(authority, `"cn":"domestic"`, `"china":"domestic"`, 1),
+		"repeated region":      strings.Replace(authority, `"cn":"domestic"`, `"cn":"domestic","CN":"overseas"`, 1),
+		"subscriptions":        strings.Replace(authority, `"active_scenario_id"`, `"subscriptions":[{"id":"s"}],"active_scenario_id"`, 1),
 	}
 	for name, seed := range cases {
 		if seed == authority {

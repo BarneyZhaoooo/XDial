@@ -8,6 +8,10 @@
 共享预置也只能用手机能读的内容：规则类型只有 `url` 和 `manual`，格式为 `auto`、`srs`、`json` 或 `text`，
 不支持 `invert`、`no_resolve`、`fetch_line_id`、按应用/进程匹配、分组条件、场景的 `match_order` 和订阅。
 Mac 能读得更多，但用了这些内容时手机会丢掉或拒绝整个预置，所以检查直接拒绝。
+规则对象要写全 `id`、`name`、`type`、`enabled`、`url`、`format`、`domains`、`cidrs`（手机解码需要每一项，没有的写空值）；
+线路类型写 `shadowsocks`，不要写简称 `ss`。检查还按手机的规则核对引用：每个场景有且只有一条存在的默认线路，
+绑定的规则和线路都要存在且不重复，地区只能是 `*` 或两个字母且不重复，规则地址必须是远程 HTTPS。
+iPhone、Apple TV 和 Mac 包里必须是 `xdial-mobile-seed` 格式；只有旧版桌面包用普通的配置文档。
 
 ## 放在哪儿
 

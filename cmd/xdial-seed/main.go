@@ -31,9 +31,13 @@ import (
 // represent. "unsupported" parts are skipped by the comparison and printed, so
 // a limitation is always visible, never silent.
 type platform struct {
-	seed        func(bundle string) (string, error)
-	rules       func(bundle string) (string, error)
-	unsupported map[string]string
+	// plainDocument: the app reads only a plain profile document; every other
+	// platform reads only the xdial-mobile-seed envelope (MobileSeed.decode on
+	// iPhone and Apple TV; on the Mac its revision drives how later builds update).
+	plainDocument bool
+	seed          func(bundle string) (string, error)
+	rules         func(bundle string) (string, error)
+	unsupported   map[string]string
 }
 
 func single(directory string) (string, error) {
@@ -83,6 +87,7 @@ var platforms = map[string]platform{
 	// The 心动 desktop package built from upstream release tags (v0.9.7)
 	// reads only a plain profile document and bundles no rule files.
 	"desktop-legacy": {
+		plainDocument: true,
 		seed: func(b string) (string, error) {
 			return single(filepath.Join(b, "Contents", "Resources", "SeedProfile"))
 		},
@@ -204,6 +209,13 @@ func check(args []string) error {
 	seed, err := seedcheck.Load(data)
 	if err != nil {
 		return fmt.Errorf("packaged preset: %v", err)
+	}
+	if seed.Mobile == target.plainDocument {
+		want := "an xdial-mobile-seed envelope"
+		if target.plainDocument {
+			want = "a plain profile document"
+		}
+		return fmt.Errorf("%s reads only %s; the packaged preset is not one", *name, want)
 	}
 	rulesPath, err := target.rules(*bundle)
 	if err != nil {
