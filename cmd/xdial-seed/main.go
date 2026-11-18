@@ -235,7 +235,7 @@ func check(args []string) error {
 		return fmt.Errorf("%s package differs from the authority in %d places", *name, len(differences))
 	}
 	scenarios, _ := want["scenarios"].([]any)
-	regions, _ := want["regions"].(map[string]any)
+	regions, _ := got["regions"].(map[string]any)
 	fmt.Printf("%s package matches the authority: %d Scenarios, %d regions, %d offline rule files\n",
 		*name, len(scenarios), len(regions), len(offline))
 	return nil
