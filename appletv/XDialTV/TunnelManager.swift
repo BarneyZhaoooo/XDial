@@ -2525,12 +2525,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     // 否则会抛 NEVPNError;这里只做结构正确性保证,运行时行为等真机验证。
     func startTunnel(profile: Profile, anyConnect: AnyConnectCredentials?,
                       allowSystemOnDemand: Bool,
+                      origin: ConnectionTimeline.StartOrigin,
                       completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
         let operationID = beginStartOperation(completion: completion)
         activeStartAllowsSystemOnDemand = allowSystemOnDemand
         let sessionID = UUID().uuidString
         timelineSessionID = sessionID
-        timeline?.beginSession(sessionID, markActive: false)
+        timeline?.beginSession(sessionID, markActive: false, origin: origin)
         recordTimeline("start_requested", detail: "anyconnect=\(anyConnect != nil) ondemand=\(allowSystemOnDemand)")
         guard isCurrentStartOperation(operationID) else { return }
         guard UserDefaults(suiteName: kAppGroupIdentifier) != nil else {

@@ -185,6 +185,7 @@ private final class SwitchSpyManager: TunnelManaging {
         profile: Profile,
         anyConnect: AnyConnectCredentials?,
         allowSystemOnDemand: Bool,
+        origin: ConnectionTimeline.StartOrigin,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
         engine?.setStatus("connected")
