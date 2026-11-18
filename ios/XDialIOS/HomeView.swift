@@ -38,8 +38,8 @@ struct HomeView: View {
                 : AnyLayout(VStackLayout(spacing: 22))
             // 拨盘跟着屏幕高度走：矮屏（Duo 折叠、横屏）缩小，展开的大屏放大一点。
             let dialDiameter = isWide
-                ? min(220, max(150, proxy.size.height * 0.31))
-                : min(196, max(142, proxy.size.height * 0.22))
+                ? min(240, max(170, proxy.size.height * 0.36))
+                : min(216, max(160, proxy.size.height * 0.26))
             ScrollView {
                 VStack(spacing: 22) {
                     header
@@ -385,13 +385,13 @@ struct HomeView: View {
             .disabled(status == "disconnecting")
             .accessibilityLabel(dialAccessibilityLabel)
             .accessibilityIdentifier("connection-toggle")
-            .padding(.top, 2)
-            .padding(.bottom, 4)
+            .padding(.top, dialDiameter < 200 ? 10 : 26)
+            .padding(.bottom, dialDiameter < 200 ? 4 : 14)
 
             VStack(spacing: 6) {
                 Text(statusTitle)
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(XDialTheme.ink)
                     .contentTransition(.opacity)
                     .accessibilityIdentifier("home-status")
 
@@ -401,12 +401,12 @@ struct HomeView: View {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text(formatDuration(context.date.timeIntervalSince(connectedAt)))
                                 .font(.system(.body, design: .rounded).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.82))
+                                .foregroundStyle(XDialTheme.inkSecondary)
                         }
                     } else {
                         Text(statusHint.isEmpty ? " " : statusHint)
                             .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.82))
+                            .foregroundStyle(XDialTheme.inkTertiary)
                             .multilineTextAlignment(.center)
                     }
                 }
@@ -414,6 +414,7 @@ struct HomeView: View {
             }
             .animation(.smooth(duration: 0.3), value: statusTitle)
 
+            // 这一格高度固定，连接前后下面的卡片不会跳。
             ZStack {
                 if app.isConnected {
                     trafficRow
@@ -429,13 +430,9 @@ struct HomeView: View {
                     .accessibilityIdentifier("home-sign-in")
                 }
             }
-
+            .frame(height: 54)
         }
-        .padding(20)
         .frame(maxWidth: .infinity)
-        .environment(\.colorScheme, .dark)
-        .background { DialInstrumentSurface() }
-        .clipShape(RoundedRectangle(cornerRadius: 30))
         .animation(.smooth(duration: 0.35), value: app.isConnected)
         .task(id: samplesTraffic) {
             await sampleTraffic()
@@ -690,18 +687,35 @@ struct HomeView: View {
                         showingAutoScenarios.toggle()
                     }
                 } label: {
-                    HomeRouteLabel(
-                        name: app.activeScenario?.name ?? app.tr("未选择场景", "No scenario selected"),
-                        reason: autoScenarioNote,
-                        symbol: app.activeScenario.map { ScenarioDescriber.symbol(for: $0, in: app.profile) } ?? "network",
-                        expanded: showingAutoScenarios
-                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(app.tr("当前选择", "Current selection"))
+                            .font(.caption)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                        Text(app.activeScenario?.name ?? app.tr("未选择场景", "No scenario selected"))
+                            .font(.headline)
+                            .foregroundStyle(XDialTheme.ink)
+                        Label(autoScenarioNote, systemImage: "location.fill")
+                            .font(.footnote)
+                            .foregroundStyle(XDialTheme.inkSecondary)
+                            .contentTransition(.opacity)
+                            .accessibilityIdentifier("home-auto-note")
+                        HStack {
+                            Text(showingAutoScenarios
+                                 ? app.tr("收起场景", "Hide scenarios")
+                                 : app.tr("展开场景 · 手动调整", "Show scenarios · Adjust manually"))
+                            Spacer()
+                            Image(systemName: showingAutoScenarios ? "chevron.up" : "chevron.down")
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(XDialTheme.accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(XDialTheme.surface, in: RoundedRectangle(cornerRadius: XDialTheme.cardRadius))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("home-scenario-disclosure")
-                .accessibilityLabel(app.tr("当前选择，\(app.activeScenario?.name ?? "")", "Current selection, \(app.activeScenario?.name ?? "")"))
-                .accessibilityHint(autoScenarioNote + app.tr("。", ". ") + (showingAutoScenarios
-                    ? app.tr("收起场景", "Hide scenarios") : app.tr("展开场景", "Show scenarios")))
                 .accessibilityValue(showingAutoScenarios
                                     ? app.tr("已展开", "Expanded")
                                     : app.tr("已收起", "Collapsed"))
@@ -760,8 +774,29 @@ struct HomeView: View {
                 Button {
                     presentSignIn(line.id)
                 } label: {
-                    HomeAccountLabel(name: displayName(line), detail: app.accountIsIncomplete
-                                     ? app.tr("未登录", "Not signed in") : username)
+                    HStack(spacing: 14) {
+                        Image(systemName: app.accountIsIncomplete ? "person.crop.circle.badge.plus" : "person.crop.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundStyle(XDialTheme.accent)
+                            .frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(displayName(line))
+                                .font(.headline)
+                                .foregroundStyle(XDialTheme.ink)
+                            Text(app.accountIsIncomplete
+                                 ? app.tr("未登录", "Not signed in")
+                                 : username)
+                                .font(.subheadline)
+                                .foregroundStyle(XDialTheme.inkSecondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(XDialTheme.inkTertiary)
+                    }
+                    .xdialCard(padding: 16)
+                    .contentShape(RoundedRectangle(cornerRadius: XDialTheme.cardRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)

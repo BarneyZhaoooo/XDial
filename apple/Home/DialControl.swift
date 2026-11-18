@@ -30,7 +30,13 @@ struct DialControl: View {
     @GestureState private var isDialing = false
     @State private var lastTouchAngle: Double?
 
-    private var ringInset: CGFloat { max(11, diameter * 0.075) }
+    private var ringInset: CGFloat {
+        #if os(macOS)
+        max(11, diameter * 0.075)
+        #else
+        max(9, diameter * 0.055)
+        #endif
+    }
     private var outerDiameter: CGFloat { diameter + ringInset * 2 }
     private var scale: CGFloat { diameter / (DialLayout.discRadius * 2) }
 
@@ -42,7 +48,9 @@ struct DialControl: View {
                     let time = context.date.timeIntervalSinceReferenceDate
                     ZStack {
                         statusRing(time: time)
+                        #if os(macOS)
                         scaleMarks
+                        #endif
                         disc
                     }
                 }
@@ -169,7 +177,7 @@ struct DialControl: View {
         let lineWidth = max(2.5, diameter * 0.014)
         return ZStack {
             Circle()
-                .stroke(isLit ? stateColor : Color.white.opacity(0.28), lineWidth: lineWidth)
+                .stroke(isLit ? stateColor : DialFinish.idleRing, lineWidth: lineWidth)
                 .shadow(color: isLit ? stateColor.opacity(0.5) : .clear, radius: 6)
             if phase == .working {
                 Circle()
@@ -189,6 +197,7 @@ struct DialControl: View {
         .frame(width: outerDiameter - lineWidth, height: outerDiameter - lineWidth)
     }
 
+    #if os(macOS)
     private var disc: some View {
         Circle()
             .fill(.clear)
@@ -215,6 +224,37 @@ struct DialControl: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    #else
+    @ViewBuilder
+    private var disc: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, macOS 26.0, *) {
+            // 液态玻璃盘面：未连接时是透明玻璃，连上后染成状态色。
+            Circle()
+                .fill(.clear)
+                .frame(width: diameter, height: diameter)
+                .glassEffect(
+                    Glass.regular.tint(isLit ? stateColor : nil).interactive(),
+                    in: Circle()
+                )
+        } else {
+            opaqueDisc
+        }
+        #else
+        opaqueDisc
+        #endif
+    }
+
+    private var opaqueDisc: some View {
+        Circle()
+            .fill(isLit ? stateColor : XDialTheme.dialFace)
+            .frame(width: diameter, height: diameter)
+            .shadow(color: .black.opacity(0.10), radius: 22, y: 12)
+            .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
+    }
+
+    #endif
 
     private var fingerStop: some View {
         let width = layout.stopWidth
@@ -245,21 +285,43 @@ struct DialControl: View {
         let size = layout.hubRadius * 2 * scale
         return ZStack {
             Circle()
-                .fill(.white.opacity(isLit ? 0.20 : 0.09))
+                .fill(isLit ? Color.white.opacity(0.20) : DialFinish.idleHub)
                 .overlay {
                     Circle().strokeBorder(
-                        Color.white.opacity(isLit ? 0.5 : 0.32),
+                        isLit ? DialFinish.litHubRim : DialFinish.idleHubRim,
                         lineWidth: 1
                     )
                 }
                 .shadow(color: .black.opacity(isLit ? 0.10 : 0.14), radius: size * 0.10, y: size * 0.05)
             Image(systemName: "power")
                 .font(.system(size: min(size * 0.44, diameter * 0.15), weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(DialFinish.glyph(phase: phase, isLit: isLit, stateColor: stateColor))
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false)
     }
+}
+
+/// The desktop dial sits on a dark instrument face. The phone dial sits directly on its adaptive canvas.
+private enum DialFinish {
+    #if os(macOS)
+    static let idleRing = Color.white.opacity(0.28)
+    static let idleHub = Color.white.opacity(0.09)
+    static let idleHubRim = Color.white.opacity(0.32)
+    static let litHubRim = Color.white.opacity(0.50)
+    static func glyph(phase: DialPhase, isLit: Bool, stateColor: Color) -> Color { .white }
+    static let hole = Color.black.opacity(0.28)
+    #else
+    static let idleRing = XDialTheme.hairline.opacity(0.9)
+    static let idleHub = XDialTheme.dialFace
+    static let idleHubRim = XDialTheme.hairline.opacity(0.8)
+    static let litHubRim = Color.white.opacity(0.38)
+    static func glyph(phase: DialPhase, isLit: Bool, stateColor: Color) -> Color {
+        if isLit { return .white }
+        return phase == .working ? stateColor : XDialTheme.dialInk
+    }
+    static let hole = XDialTheme.dialInk.opacity(0.16)
+    #endif
 }
 
 private struct DialPressStyle: ButtonStyle {
@@ -290,7 +352,7 @@ private struct DialHoles: View {
                 ZStack {
                     Circle()
                         .fill(
-                            Color.black.opacity(0.28)
+                            DialFinish.hole
                                 .shadow(.inner(color: .black.opacity(0.28), radius: size * 0.09, y: size * 0.06))
                         )
                         .opacity(isLit ? 0 : 1)

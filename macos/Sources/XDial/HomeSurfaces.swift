@@ -10,7 +10,7 @@ extension View {
 
     @ViewBuilder func xdialPrimaryAction() -> some View {
         #if compiler(>=6.2)
-        if #available(iOS 26, macOS 26, *) {
+        if #available(macOS 26, *) {
             self.buttonStyle(.glassProminent)
         } else {
             self.buttonStyle(.borderedProminent)
@@ -30,7 +30,7 @@ private struct HomeGlass<S: Shape>: ViewModifier {
 
     @ViewBuilder func body(content: Content) -> some View {
         #if compiler(>=6.2)
-        if #available(iOS 26, macOS 26, *), !reduceTransparency {
+        if #available(macOS 26, *), !reduceTransparency {
             content.glassEffect(.regular.tint(tint).interactive(interactive), in: shape)
         } else {
             content.background(fallback, in: shape)
@@ -88,15 +88,14 @@ struct HomeRouteLabel: View {
 
 struct HomeSymbol: View {
     let symbol: String
-    var selected = false
 
     var body: some View {
         Image(systemName: symbol)
             .font(.system(size: 17, weight: .semibold))
             .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(selected ? XDialTheme.surface : XDialTheme.accent)
+            .foregroundStyle(XDialTheme.accent)
             .frame(width: 34, height: 34)
-            .background(selected ? XDialTheme.accent : XDialTheme.accent.opacity(0.11), in: Circle())
+            .background(XDialTheme.accent.opacity(0.11), in: Circle())
             .accessibilityHidden(true)
     }
 }

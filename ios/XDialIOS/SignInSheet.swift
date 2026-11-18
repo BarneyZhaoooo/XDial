@@ -77,13 +77,12 @@ struct SignInSheet: View {
             .safeAreaInset(edge: .bottom) {
                 Button(action: submit) {
                     Text(app.tr("登录并连接", "Sign In and Connect"))
-                        .font(.headline).frame(maxWidth: .infinity, minHeight: 40)
                 }
-                .xdialPrimaryAction()
+                .buttonStyle(XDialPrimaryButtonStyle())
                 .disabled(!canSubmit)
                 .padding(.horizontal, 22)
                 .padding(.vertical, 12)
-
+                .background(.bar)
                 .accessibilityIdentifier("sign-in-submit")
             }
             .toolbar {
@@ -98,7 +97,17 @@ struct SignInSheet: View {
     }
 
     private var header: some View {
-        HomeAccountHeading(title: app.tr("登录\(lineName)", "Sign in to \(lineName)"))
+        VStack(alignment: .leading, spacing: 8) {
+            Text(app.tr("登录\(lineName)", "Sign in to \(lineName)"))
+                .font(.largeTitle.bold())
+                .foregroundStyle(XDialTheme.ink)
+            Text(app.tr(
+                "用你的公司账号登录，只需要填这一次。",
+                "Use your company account. You only need to do this once."
+            ))
+            .font(.body)
+            .foregroundStyle(XDialTheme.inkSecondary)
+        }
     }
 
     private var fields: some View {
