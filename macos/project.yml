@@ -96,6 +96,23 @@ targets:
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
           OTHER_CODE_SIGN_FLAGS: "--timestamp"
           ENABLE_HARDENED_RUNTIME: YES
+    postBuildScripts:
+      - name: Embed enterprise offline rules
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          source_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-${SRCROOT}/../ios/PrivateConfig}/RuleSets"
+          destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/SeedProfile/RuleSets"
+          rm -rf "${destination}"
+          if [ -f "${source_dir}/manifest.json" ]; then
+            mkdir -p "${destination}"
+            cp "${source_dir}/manifest.json" "${destination}/"
+            for rule in "${source_dir}"/*.srs; do
+              if [ -f "${rule}" ]; then cp "${rule}" "${destination}/"; fi
+            done
+          else
+            rmdir "${destination%/*}" 2>/dev/null || true
+          fi
     dependencies:
       - framework: ../build/frameworks/macos/Libbox.xcframework
         embed: false
@@ -272,6 +289,14 @@ targets:
           seed_dir="${resource_dir}/SeedProfile"
           rm -rf "${seed_dir}"
           seed_source="${XDIAL_SEED_PROFILE_FILE:-}"
+          shared_dir="${XDIAL_IOS_PRIVATE_CONFIG_DIR:-${SRCROOT}/../ios/PrivateConfig}"
+          if [ -n "${XDIAL_IOS_PRIVATE_CONFIG_DIR:-}" ] && [ ! -d "${shared_dir}" ]; then
+            echo "error: shared private configuration directory not found" >&2
+            exit 1
+          fi
+          if [ -z "${seed_source}" ] && [ -f "${shared_dir}/Seed.json" ]; then
+            seed_source="${shared_dir}/Seed.json"
+          fi
           if [ -z "${seed_source}" ]; then
             for candidate in "${SRCROOT}"/PrivateConfig/SeedProfile/*.json; do
               if [ -f "${candidate}" ]; then seed_source="${candidate}"; break; fi
@@ -392,6 +417,7 @@ targets:
       - Sources/XDial/LineLatencyStore.swift
       - Sources/XDial/RotaryDial.swift
       - Sources/XDial/ScenarioIconCatalog.swift
+      - ../apple/Home/ScenarioSelectionPolicy.swift
       - ../apple/Home/ScenarioDescriber.swift
       - Sources/XDial/WiFiSSIDAccessPolicy.swift
       - Sources/XDial/WiFiLinkState.swift

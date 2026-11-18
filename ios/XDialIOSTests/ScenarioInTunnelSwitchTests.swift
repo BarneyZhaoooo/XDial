@@ -153,6 +153,7 @@ private final class SwitchSpyManager: TunnelManaging {
     private(set) var switchRequests: [(scenarioID: String, revision: String)] = []
     private(set) var adoptedScenarios: [String] = []
     private(set) var stopCallCount = 0
+    private(set) var reapplied = false
     var switchReply: ScenarioSwitchReply = .unsupported
     var evaluationState: TunnelScenarioState?
     var evaluationUnsupported = false
@@ -192,7 +193,8 @@ private final class SwitchSpyManager: TunnelManaging {
         return true
     }
 
-    func requestScenarioSwitch(to scenarioID: String, revision: String) async -> ScenarioSwitchReply {
+    func requestScenarioSwitch(to scenarioID: String, revision: String, reapply: Bool) async -> ScenarioSwitchReply {
+        reapplied = reapply
         switchRequests.append((scenarioID, revision))
         return switchReply
     }
@@ -290,6 +292,20 @@ final class ScenarioInTunnelSwitchTests: XCTestCase {
         XCTAssertEqual(manager.evaluationRequestCount, 0)
         XCTAssertEqual(manager.stateRequestCount, 1)
         XCTAssertEqual(app.profile.activeScenarioID, "office")
+    }
+
+    func testApplyingEditedCurrentScenarioDoesNotStopTheTunnel() async {
+        let (app, _, manager) = makeApp()
+        app.connect()
+        await settle()
+        app.profile.scenarios[0].defaultLineID = "vpn"
+        XCTAssertTrue(app.save())
+        manager.switchReply = .switched(state(running: "office"))
+        app.reconnectToApplyChanges()
+        await settle()
+        XCTAssertTrue(manager.reapplied)
+        XCTAssertEqual(manager.stopCallCount, 0)
+        XCTAssertFalse(app.hasPendingRuntimeChanges)
     }
 
     func testManualSwitchKeepsTheVPNUpAndAdoptsTheNewScenario() async {

@@ -385,7 +385,7 @@ extension ProfileLibrary {
     private static func scopedID(profileID: String, objectID: String) -> String {
         "resource-" + SHA256.hash(data: Data((profileID + "/" + objectID).utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
-    private static func remap(_ original: Profile, using map: [String: String]) -> Profile {
+    static func remap(_ original: Profile, using map: [String: String]) -> Profile {
         func id(_ value: String) -> String { map[value] ?? value }
         func rule(_ source: RuleSet) -> RuleSet {
             var value = source

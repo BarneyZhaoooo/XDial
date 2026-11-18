@@ -987,7 +987,9 @@ extension Profile {
     }
 
     func scenario(matchingSSID ssid: String) -> Scenario? {
-        scenarios.first { $0.matchSSIDs.contains(ssid) }
+        let rules = scenarios.map { ScenarioAutoPolicy.WiFiRule(scenarioID: $0.id, ssids: $0.matchSSIDs) }
+        guard let pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: rules) else { return nil }
+        return scenarios.first { $0.id == pick.scenarioID }
     }
 
     static func bootstrap() -> Profile {
@@ -1055,8 +1057,8 @@ extension Profile {
 }
 
 extension Profile {
-    /// Current edited leaves for testing, so a changed child cannot borrow an old runtime measurement.
-    func latencyTestLines(for roots: [Line]) -> [Line] {
+    /// Resolve each leaf once in the current catalog, including nested groups.
+    func leafLines(for roots: [Line]) -> [Line] {
         let catalog = Dictionary(lines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var seen: Set<String> = []
         var result: [Line] = []

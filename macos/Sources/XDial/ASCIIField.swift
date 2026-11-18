@@ -2,7 +2,7 @@ import SwiftUI
 
 extension String {
     /// 把全角 ASCII（U+FF01-U+FF5E）转半角，全角空格转半角空格。
-    /// 用于密码、URL、服务器地址等只允许 ASCII 的字段。
+    /// 用于 URL、服务器地址等只允许 ASCII 的字段。
     func normalizedASCII() -> String {
         var out = ""
         out.reserveCapacity(self.unicodeScalars.count)
@@ -37,10 +37,11 @@ struct ASCIITextField: View {
     }
 }
 
-/// 只接受 ASCII 的密码字段，带眼睛按钮可切换显隐。
-struct ASCIISecureField: View {
+/// Keep credentials exactly as entered or supplied by a password manager.
+struct CredentialSecureField: View {
     let placeholder: String
     @Binding var text: String
+    var isPassword = true
     @State private var revealed = false
 
     var body: some View {
@@ -53,10 +54,7 @@ struct ASCIISecureField: View {
                 }
             }
             .autocorrectionDisabled(true)
-            .onChange(of: text) { _, newValue in
-                let n = newValue.normalizedASCII()
-                if n != newValue { text = n }
-            }
+            .textContentType(isPassword ? .password : nil)
             Button {
                 revealed.toggle()
             } label: {

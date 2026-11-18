@@ -11,6 +11,26 @@ enum SettingsLayoutPreview {
     static var outputDirectory = ""
     static var state: AppState!
 
+    /// Inspect the actual AppKit inputs used by AutoFill, including the field
+    /// pairing and the secure editor. Use only the synthetic preview account.
+    private static func checkAccountFields() {
+        let hosting = NSHostingView(rootView: HomeAccountView(request: .init(lineID: "account-fixture"))
+            .environmentObject(state!))
+        let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 380, height: 320),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        func inputs(_ view: NSView) -> [NSTextField] {
+            if let field = view as? NSTextField { return [field] }
+            return view.subviews.flatMap(inputs)
+        }
+        let fields = inputs(hosting)
+        precondition(fields.contains { $0.contentType == .username })
+        precondition(fields.contains { $0 is NSSecureTextField && $0.contentType == .password })
+        print("Account layout: native username and secure password fields verified")
+    }
+
     /// Uses production views in a window that is never shown. No relocation,
     /// user configuration, helper registration or networking is started.
     static func checkScenarioLayout() -> Never {
@@ -68,9 +88,14 @@ enum SettingsLayoutPreview {
                 exit(2)
             }
         }
+        if !arguments.contains("--user-configuration") {
+            library.profiles[0].profile.lines.append(Line(id: "account-fixture", name: "Test VPN", type: "vpn",
+                                                         vpnServer: "vpn.example.com"))
+        }
         state = AppState(previewLibrary: library)
         if !arguments.contains("--user-configuration") {
             state.profileLibraryLoaded = true
+            checkAccountFields()
             let initialIntent = state.desiredConnectionStateForDiagnostics
             state.selectHomeScenario(scenario.id)
             precondition(state.activeScenario?.id == scenario.id)

@@ -117,6 +117,7 @@ struct SignInSheet: View {
                     .frame(width: 22)
                     .foregroundStyle(XDialTheme.inkSecondary)
                 TextField(app.tr("用户名", "Username"), text: $username)
+                    .textContentType(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.asciiCapable)
@@ -142,6 +143,7 @@ struct SignInSheet: View {
                         SecureField(app.tr("密码", "Password"), text: $password)
                     }
                 }
+                .textContentType(.password)
                 .submitLabel(.go)
                 .focused($focus, equals: .password)
                 .onSubmit { if canSubmit { submit() } }

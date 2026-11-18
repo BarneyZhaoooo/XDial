@@ -3,9 +3,6 @@ import Foundation
 /// Facts the Provider holds at a committed Switch, before it decides how the
 /// source generation's already-attached relays end.
 struct ScenarioSwitchSourceDrainFacts: Equatable {
-    /// The request carried a host network epoch (an automatic Underlay
-    /// refresh), not a user-initiated Scenario change or reconnect.
-    let networkEpochSwitch: Bool
     let sourceScenarioID: String
     let targetScenarioID: String
     let sourceConfigurationFingerprint: String
@@ -30,7 +27,7 @@ enum ScenarioSwitchSourceDrainDecision: Equatable {
 /// the application's connection, which is only necessary when the source
 /// generation's sockets may no longer be valid or its routing is no longer
 /// what the user wants. The one case that provably needs neither is an
-/// automatic network-epoch Switch that recompiles the identical Scenario and
+/// automatic or manual reconnect that recompiles the identical Scenario and
 /// configuration over the identical default path (same default interface,
 /// IPv4 addresses and default routers — for example a DNS-only change).
 enum ScenarioSwitchSourceDrainPolicy {
@@ -46,7 +43,6 @@ enum ScenarioSwitchSourceDrainPolicy {
         _ facts: ScenarioSwitchSourceDrainFacts
     ) -> ScenarioSwitchSourceDrainDecision {
         guard
-            facts.networkEpochSwitch,
             !facts.sourceScenarioID.isEmpty,
             facts.sourceScenarioID == facts.targetScenarioID,
             !facts.sourceConfigurationFingerprint.isEmpty,

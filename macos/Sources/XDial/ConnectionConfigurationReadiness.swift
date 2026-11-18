@@ -34,9 +34,8 @@ struct ConnectionConfigurationBlocker: Equatable {
         }
         var lineIDs = scenario.bindings.map(\.lineID)
         lineIDs.append(scenario.defaultLineID)
-        for lineID in lineIDs where !lineID.isEmpty {
-            guard let line = profile.lines.first(where: { $0.id == lineID }),
-                  line.enabled, line.type == "vpn" else { continue }
+        let roots = lineIDs.compactMap { id in profile.lines.first { $0.id == id && $0.enabled } }
+        for line in profile.leafLines(for: roots) where line.enabled && line.type == "vpn" {
             var missing: [MissingField] = []
             if line.vpnServer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append(.server) }
             if line.vpnUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { missing.append(.username) }

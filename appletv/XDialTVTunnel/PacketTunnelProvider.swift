@@ -1785,6 +1785,7 @@ extension PacketTunnelProvider {
         to scenarioID: String,
         origin: TunnelScenarioState.SwitchRecord.Origin,
         expectedRevision: String?,
+        reapply: Bool = false,
         automaticValidation: (@Sendable () -> Bool)? = nil,
         completion: @escaping @Sendable (Result<TunnelScenarioState, Error>) -> Void
     ) {
@@ -1807,7 +1808,7 @@ extension PacketTunnelProvider {
             completion(.failure(scenarioError("当前连接由旧版 XDial 建立，请重新连接后再切换")))
             return
         }
-        if source.scenarioID == scenarioID {
+        if source.scenarioID == scenarioID && !reapply {
             scenarioLock.unlock()
             completion(.success(currentScenarioState()))
             return
@@ -2439,7 +2440,7 @@ extension PacketTunnelProvider {
             evaluateScenario(requestedByApp: true) { [weak self] state in
                 completion(self?.scenarioStateResponse(state))
             }
-        case "scenario-switch":
+        case "scenario-switch", "scenario-reapply":
             guard let scenarioID = object["scenario_id"] as? String, !scenarioID.isEmpty else {
                 completion(encodeResponse(ok: false, message: "场景切换参数不完整"))
                 return true
@@ -2447,7 +2448,8 @@ extension PacketTunnelProvider {
             switchScenario(
                 to: scenarioID,
                 origin: .app,
-                expectedRevision: object["catalog_revision"] as? String
+                expectedRevision: object["catalog_revision"] as? String,
+                reapply: cmd == "scenario-reapply"
             ) { [weak self] result in
                 guard let self else { return }
                 switch result {
