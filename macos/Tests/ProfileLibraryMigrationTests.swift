@@ -518,4 +518,23 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         let next = try ProfileLibraryMigration.addingMobileSeed(changed, named: "心动", id: "seed", to: created)
         XCTAssertEqual(next.scenarios.first { $0.id == "extra" }?.name, "新场景")
     }
+
+    func testAlignmentMovesWiFiBetweenUnchangedScenarios() {
+        var previous = Profile()
+        previous.scenarios = [Scenario(id: "a", name: "A", defaultLineID: "direct"),
+                              Scenario(id: "b", name: "B", matchSSIDs: ["OFFICE"], defaultLineID: "direct")]
+        var seed = previous
+        seed.scenarios[0].matchSSIDs = ["OFFICE"]
+        seed.scenarios[1].matchSSIDs = []
+        let moved = ProfileLibraryMigration.refreshedSeedScenarios(previous.scenarios, previous: previous, seed: seed,
+                                                                   owned: { _ in true }, prefix: "")
+        XCTAssertEqual(moved.map(\.matchSSIDs), [["OFFICE"], []])
+        // A trigger the user put on a Scenario outside the seed stays there.
+        let mine = Scenario(id: "mine", name: "Mine", matchSSIDs: ["OFFICE"], defaultLineID: "direct")
+        var claimed = previous.scenarios
+        claimed[1].matchSSIDs = []
+        let kept = ProfileLibraryMigration.refreshedSeedScenarios(claimed + [mine], previous: previous, seed: seed,
+                                                                  owned: { $0 != "mine" }, prefix: "")
+        XCTAssertEqual(kept.map(\.matchSSIDs), [[], [], ["OFFICE"]])
+    }
 }

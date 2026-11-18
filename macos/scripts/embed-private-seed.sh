@@ -33,7 +33,11 @@ if [ -z "${seed_source}" ]; then
     if [ -f "${candidate}" ]; then seed_source="${candidate}"; break; fi
   done
 fi
-[ -n "${seed_source}" ] || exit 0
+if [ -z "${seed_source}" ]; then
+  # An earlier build may have embedded a preset; an empty SeedProfile/ reads as an invalid one.
+  rmdir "${seed_dir}" 2>/dev/null || true
+  exit 0
+fi
 case "${seed_source}" in
   *.json) ;;
   *) echo "error: seed Profile must be a .json file: ${seed_source}" >&2; exit 1 ;;

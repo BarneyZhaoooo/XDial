@@ -220,6 +220,17 @@ enum ProfileLibraryMigration {
     static func refreshedSeedScenarios(_ scenarios: [Scenario], previous: Profile, seed: Profile,
                                        owned: (String) -> Bool, prefix: String) -> [Scenario] {
         var result = scenarios
+        // Wi-Fi triggers are settled together: a Scenario still on the previous seed's
+        // triggers takes the new seed's, and only triggers that stay where they are
+        // (the user's, or outside this seed) are reserved. Checking one Scenario at a
+        // time would drop a trigger the seed moves to a Scenario processed earlier.
+        let followsSeedWiFi = Set(seed.scenarios.compactMap { source -> String? in
+            guard owned(source.id), let old = previous.scenarios.first(where: { $0.id == source.id }),
+                  let scene = scenarios.first(where: { $0.id == source.id }),
+                  Set(scene.matchSSIDs) == Set(old.matchSSIDs) else { return nil }
+            return source.id
+        })
+        let reserved = Set(scenarios.filter { !followsSeedWiFi.contains($0.id) }.flatMap(\.matchSSIDs))
         for source in seed.scenarios {
             guard owned(source.id),
                   let old = previous.scenarios.first(where: { $0.id == source.id }),
@@ -236,9 +247,8 @@ enum ProfileLibraryMigration {
                 scene.matchOrder = source.matchOrder
             }
             if scene.iconOverride == old.iconOverride { scene.iconOverride = source.iconOverride }
-            if Set(scene.matchSSIDs) == Set(old.matchSSIDs) {
-                let others = Set(result.filter { $0.id != scene.id }.flatMap(\.matchSSIDs))
-                scene.matchSSIDs = source.matchSSIDs.filter { !others.contains($0) }
+            if followsSeedWiFi.contains(scene.id) {
+                scene.matchSSIDs = source.matchSSIDs.filter { !reserved.contains($0) }
             }
             result[index] = scene
         }
