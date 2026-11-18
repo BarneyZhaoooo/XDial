@@ -139,7 +139,9 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 		_ = json.Unmarshal(data, &object)
 		for key, value := range object {
 			// Secrets are the user's; empty values are formatting, not meaning.
-			if secretLineFields[key] || strings.HasPrefix(key, "identity_") || key == "verified" || isEmpty(value) {
+			// A Direct line has no protocol options, so only what it is counts.
+			direct := line.Type == "direct" && key != "id" && key != "name" && key != "type" && key != "enabled"
+			if direct || secretLineFields[key] || strings.HasPrefix(key, "identity_") || key == "verified" || isEmpty(value) {
 				delete(object, key)
 			}
 		}

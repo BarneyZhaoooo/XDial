@@ -74,3 +74,18 @@ func TestSecretsAndFormattingDoNotCount(t *testing.T) {
 		t.Fatalf("format synonyms reported as differences: %v", d)
 	}
 }
+
+func TestEffectiveValuesDoNotCount(t *testing.T) {
+	want := Fingerprint(mustLoad(t, authority), nil)
+	// An app fills defaults: Direct fetches rule sets, and a Direct line has no protocol options.
+	filled := strings.Replace(authority, `"format":"binary"`, `"format":"binary","fetch_line_id":"direct"`, 1)
+	filled = strings.Replace(filled, `"type":"direct","enabled":true}`, `"type":"direct","enabled":true,"anytls_port":443}`, 1)
+	filled = strings.Replace(filled, `"name":"在国外","default_line_id":"direct"`, `"name":"在国外","default_line_id":"direct","match_order":[]`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, filled), nil), nil); len(d) != 0 {
+		t.Fatalf("effective defaults reported as differences: %v", d)
+	}
+	viaVPN := strings.Replace(authority, `"format":"binary"`, `"format":"binary","fetch_line_id":"vpn"`, 1)
+	if d := Diff(want, Fingerprint(mustLoad(t, viaVPN), nil), nil); len(d) != 1 {
+		t.Fatalf("fetching rules through another line must count: %v", d)
+	}
+}

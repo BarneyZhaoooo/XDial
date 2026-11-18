@@ -58,4 +58,19 @@ go run ./cmd/xdial-seed check --authority <私有目录> --platform macos-store 
 只有平台声明的能力限制可以跳过，并在每次检查时打印；目前只有 `desktop-legacy` 声明了地区自动选择和随包规则。
 `legacy-document` 从 `Seed.json` 生成这类旧版本使用的 Profile 文档，`--check` 发现手改漂移时失败。
 
+### 安装与升级验收
+
+预置或迁移逻辑有改动时，用一个 Debug 包（App Store 版需加 `SWIFT_ACTIVE_COMPILATION_CONDITIONS="DEBUG XDIAL_STORE"`）
+在内存里跑一遍 App 启动时的预置决策，不读写钥匙串、配置库和预置记录：
+
+```sh
+XDial.app/Contents/MacOS/XDial --check-seed-acceptance <旧包的 SeedProfile 目录> <输出目录>
+go run ./cmd/xdial-seed effective --report <输出目录>/upgrade.json
+```
+
+依次写出全新安装（`fresh`）、从旧包升级且用户填了账号并手动选过场景（`upgrade`）、旧包加在用户自己的配置旁边且改过
+一个场景（`beside`）、用户删掉了旧预置（`deleted`）。每份报告都带着同一份预置按同一个 Profile 导入的结果，
+`effective` 按路由含义比较两者；`beside` 只应在用户改过的场景上不同，并且 `notes` 列出保留的字段。
+App Store 版是沙盒应用，旧预置目录和输出目录要放在它的容器里（`~/Library/Containers/<包名>/Data/tmp/`）。
+
 未注入预置时，新安装使用起步线路，用户在设置中添加或导入场景。
