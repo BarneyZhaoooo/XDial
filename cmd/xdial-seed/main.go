@@ -2,7 +2,6 @@
 //
 //	xdial-seed legacy-document --authority DIR [--write FILE | --check FILE]
 //	xdial-seed check --authority DIR --platform PLATFORM --bundle APP [--profile-name NAME]
-//	xdial-seed fingerprint FILE
 //	xdial-seed effective --report FILE [--name-prefix PREFIX]
 //
 // DIR is the private packaging repository's preset directory: Seed.json (the
@@ -105,8 +104,6 @@ func main() {
 		err = legacyDocument(os.Args[2:])
 	case "check":
 		err = check(os.Args[2:])
-	case "fingerprint":
-		err = fingerprint(os.Args[2:])
 	case "effective":
 		err = effective(os.Args[2:])
 	default:
@@ -119,7 +116,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: xdial-seed legacy-document|check|fingerprint ... (see source header)")
+	fmt.Fprintln(os.Stderr, "usage: xdial-seed legacy-document|check|effective ... (see source header)")
 	os.Exit(2)
 }
 
@@ -238,23 +235,6 @@ func check(args []string) error {
 	regions, _ := got["regions"].(map[string]any)
 	fmt.Printf("%s package matches the authority: %d Scenarios, %d regions, %d offline rule files\n",
 		*name, len(scenarios), len(regions), len(offline))
-	return nil
-}
-
-func fingerprint(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("fingerprint FILE")
-	}
-	data, err := os.ReadFile(args[0])
-	if err != nil {
-		return err
-	}
-	seed, err := seedcheck.Load(data)
-	if err != nil {
-		return err
-	}
-	out, _ := json.MarshalIndent(seedcheck.Fingerprint(seed, nil), "", "  ")
-	fmt.Println(string(out))
 	return nil
 }
 
