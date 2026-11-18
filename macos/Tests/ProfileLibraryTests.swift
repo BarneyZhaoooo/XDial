@@ -1,9 +1,59 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 import XCTest
 
 final class ProfileLibraryTests: XCTestCase {
+    func testNewAndMigratedLibrariesRemainReadableWithSeparateKeys() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fresh = directory.appendingPathComponent("fresh")
+        let old = directory.appendingPathComponent("old")
+        let service = "com.xd.xdial.tests." + UUID().uuidString
+        let legacy = service + ".legacy"
+        func remove(_ identifier: String) {
+            SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: identifier] as CFDictionary)
+        }
+        defer {
+            remove(service)
+            remove(legacy)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let library = ProfileLibrary()
+        let oldStore = ProfileLibraryStore(directory: old, keychainService: legacy)
+        try oldStore.save(library)
+        func updated(_ path: URL) -> ProfileLibraryStore {
+            ProfileLibraryStore(directory: path, keychainService: service, legacyKeychainService: legacy)
+        }
+        try updated(fresh).save(library)
+        let oldFile = old.appendingPathComponent("profiles.enc")
+        let encrypted = try Data(contentsOf: oldFile)
+        XCTAssertThrowsError(try ProfileLibraryStore(directory: old, keychainService: service).load())
+        func migratedItemStatus() -> OSStatus {
+            SecItemCopyMatching([
+                kSecClass: kSecClassGenericPassword, kSecAttrService: service,
+                kSecAttrAccount: "profile-library-migrated-key-v1"
+            ] as CFDictionary, nil)
+        }
+        // A preview may authenticate the ciphertext but must never migrate a key.
+        XCTAssertEqual(try updated(old).load(readOnly: true), library)
+        XCTAssertEqual(migratedItemStatus(), errSecItemNotFound)
+        var damaged = encrypted
+        damaged[damaged.count - 1] ^= 1
+        try damaged.write(to: oldFile)
+        XCTAssertThrowsError(try updated(old).loadOrCreate { XCTFail("Corrupt library was replaced"); return nil })
+        XCTAssertEqual(migratedItemStatus(), errSecItemNotFound)
+        XCTAssertEqual(try Data(contentsOf: oldFile), damaged)
+        try encrypted.write(to: oldFile)
+        XCTAssertEqual(try updated(old).load(), library)
+        XCTAssertEqual(migratedItemStatus(), errSecSuccess)
+        XCTAssertEqual(try Data(contentsOf: oldFile), encrypted)
+        XCTAssertEqual(try ProfileLibraryStore(directory: old, keychainService: legacy).load(), library)
+        remove(legacy)
+        XCTAssertEqual(try updated(old).load(), library)
+        XCTAssertEqual(try updated(fresh).load(), library)
+    }
+
     func testExplicitAcquisitionLineSurvivesRoundTrip() throws {
         let legacy = ProfileSource(url: "https://example.com/config")
         XCTAssertTrue(legacy.usesDirectAcquisition)

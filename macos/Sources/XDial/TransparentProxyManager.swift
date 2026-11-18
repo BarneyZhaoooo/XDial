@@ -32,6 +32,15 @@ private func isNumericIPAddress(
 final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate {
     static let shared = TransparentProxyManager()
 
+    /// Use the same opaque system snapshot for Store setup and connections.
+    nonisolated static func setupDefaultInterface(for path: Network.NWPath) -> (name: String, index: Int)? {
+        guard case let .success(snapshot)? = HostUnderlayCapture.snapshotResult(for: path) else {
+            return nil
+        }
+        return (snapshot.defaultInterface.name, snapshot.defaultInterface.index)
+    }
+
+
     typealias StatusHandler = (_ status: String, _ error: String?) -> Void
     typealias ReportHandler = (_ report: ConnectionReport) -> Void
     typealias ScenarioSwitchHandler =
@@ -369,7 +378,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
     /// never written into `ConnectionReportJournal`.
     func switchScenario(
         profileJSON: String,
-        refreshLineRuntimes: Bool,
+        mode: HostScenarioSwitchMode,
         networkEpochID: String? = nil,
         expectedUnderlayFingerprint: String? = nil,
         completion: @escaping (Result<ConnectionReport, Error>) -> Void
@@ -438,7 +447,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 plan.configurationFingerprint,
             profileJSON: profileJSON,
             targetReportJSON: targetReportJSON,
-            refreshLineRuntimes: refreshLineRuntimes,
+            mode: mode,
             networkEpochID: networkEpochID,
             expectedUnderlayFingerprint: expectedUnderlayFingerprint,
             candidateReport: targetReport,
@@ -603,11 +612,11 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         active.sourceReport = liveSourceReport
 
-        if liveSourceReport.scenario.id == active.targetScenarioID,
-           liveSourceReport.configurationFingerprint ==
-            active.targetConfigurationFingerprint,
-           activeUnderlay?.isEquivalent(to: underlay) == true,
-           !active.refreshLineRuntimes {
+        if active.mode.canReuseCommittedReport(
+            sameScenario: liveSourceReport.scenario.id == active.targetScenarioID,
+            sameConfiguration: liveSourceReport.configurationFingerprint == active.targetConfigurationFingerprint,
+            sameUnderlay: activeUnderlay?.isEquivalent(to: underlay) == true
+        ) {
             activeScenarioSwitch = nil
             recordScenarioSwitch(
                 active,
@@ -636,7 +645,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             underlayDefaultName: underlay.defaultInterface.name,
             underlayDefaultIndex: underlay.defaultInterface.index,
             systemDNSJSON: underlay.systemDNSJSON,
-            refreshLineRuntimes: active.refreshLineRuntimes,
+            refreshLineRuntimes: active.mode == .refreshUnderlay,
             networkEpochID: active.networkEpochID,
             underlayPathIdentity: underlay.pathIdentity
         )
@@ -779,6 +788,14 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 }
                 return .success(facts)
             })
+        }
+    }
+
+    func directCountry(transactionID: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            sendProviderDiagnostics(.init(cmd: .probeDirectCountry, transactionID: transactionID), timeout: 7) { result in
+                continuation.resume(returning: (try? result.get())?.directCountry)
+            }
         }
     }
 
@@ -1134,6 +1151,15 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         purpose: ActivationPurpose,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        #if XDIAL_STORE
+        // PlugInKit discovers the signed app extension in the host bundle.
+        let url = Bundle.main.builtInPlugInsURL?.appendingPathComponent("XDialStoreProxy.appex")
+        guard let url, Bundle(url: url)?.bundleIdentifier == XDialBuildIdentity.transparentProxyIdentifier else {
+            completion(.failure(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+            return
+        }
+        completion(.success(()))
+        #else
         guard
             activationCompletion == nil,
             activationVerificationRequest == nil,
@@ -1151,6 +1177,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             phase: purpose == .installation
                 ? .installationPreflight : .connection
         )
+        #endif
     }
 
     private func submitExtensionActivation() {
@@ -3064,8 +3091,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         var candidate: ConnectionReport?
         var shouldMirrorProviderReport = false
 
+        #if XDIAL_STORE
+        let probedProviderReport = ConnectionReportJournal.readProviderReport()
+        #else
         let probedProviderReport =
             PrivilegeManager.probeProviderConnectionReport()
+        #endif
         startAttempt?.noteProviderReport(probedProviderReport)
         if let providerReport = probedProviderReport,
            currentTransactionID == nil ||
@@ -5597,7 +5628,7 @@ private struct HostScenarioSwitch {
     let targetConfigurationFingerprint: String
     let profileJSON: String
     let targetReportJSON: String
-    let refreshLineRuntimes: Bool
+    let mode: HostScenarioSwitchMode
     let networkEpochID: String?
     let expectedUnderlayFingerprint: String?
     var candidateReport: ConnectionReport

@@ -306,17 +306,18 @@ journal 无法可靠写入时不能 Commit。入口：[事务处置](macos/Share
 - 当前 epoch、revision 与 generation 的就绪证明有效后才 Commit。迟到成功不能恢复旧
   ready；同一 Line 的新成功不能清除其他 Line 的失败或 Box 结构错误。
 - 提交原子切换新 flow 的 relay generation 与完整 DNS / route 配置；旧 flow 有界排空，
-  默认 1 秒后关闭。仅当 network epoch 重编译同一 Scenario 与配置指纹、默认路径身份
+  默认 1 秒后关闭。仅当手动重连或 network epoch 重编译同一 Scenario 与配置指纹、默认路径身份
   （默认接口、其 IPv4 地址与默认路由器）也未变时，旧 generation 已接入的 TCP flow 留在
   旧 Box 直至结束，最长 10 分钟；下一候选开始准备（路径变化即下一 epoch）或停止先使其
   退役，UDP association 仍 1 秒换代。保留期间租约仍只属于 committed 与另一个 generation
   ——候选或保留的旧源，二者不并存。规则、DNS 和默认出口不能分成多个可见提交。
 - 候选失败只清理候选，保留旧场景、网络设置和连接时长；提交中失败恢复旧 relay。
   无法证明旧 generation 健康时才进入全局回滚。报告同时保留 from、to、候选与仍承载流量的事务。
-- 任意时刻最多一个候选，latest-wins；相同目标与配置指纹为 no-op。显式断开优先取消候选
+- 任意时刻最多一个候选，latest-wins；重复选择同一场景且配置与网络均相同时复用原事务。点击重新连接始终启动候选。显式断开优先取消候选
   和恢复意图，再释放全部租约与系统接管。单例身份变化不能伪装成可复用的无中断切换。
-- 原理上无法保留旧连接的候选（AnyConnect 单例身份不同、规则需冷获取）不停在原场景：
-  宿主放弃 Switch，持久化目标场景后完整重连。其他候选失败仍保留原场景。
+- 同场景应用已保存配置与切换场景共用候选事务。Mac 候选可在旧连接上经 Direct 获取规则，
+  或用无系统入口的独立获取会话。遇到无法并存的单例协议身份时，报告候选失败并保留已提交场景。
+  更改系统接管方式仍需要重新建立入口。
 
 入口：[Line 能力池](core/libbox/line_runtime_pool.go)、[Switch 测试](core/libbox/switch_test.go)。
 
@@ -445,7 +446,7 @@ Debug 与正式版的 App、嵌套组件、签名、运行目录、App Group、I
 发布通道不改变身份：beta 用正式版的 Release 配置、签名和发布合约构建，只在标签、源分支和
 写入的清单上不同。
 支持新版格式的构建共用 `~/.xdial/configuration/profiles.enc` 和
-`com.kafeifei.xdial.configuration` 的配置库密钥。仅当共享库不存在时，只读复制历史库或
+`com.xd.xdial.configuration` 的配置库密钥。仅当共享库不存在时，只读复制历史库或
 转换旧配置为默认 Profile；原文件不修改，也不把新版修改回写旧版。现存库损坏或不可解密
 时停止加载和保存，不能回退为空配置。跨进程写入通过文件锁和读取快照校验防止覆盖。
 卸载不勾选删除数据时保留配置；明确勾选时删除共享库、已知旧配置和对应凭据，须先退出

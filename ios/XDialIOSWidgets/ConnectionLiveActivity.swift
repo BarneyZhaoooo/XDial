@@ -149,11 +149,10 @@ private struct DisconnectButton: View {
 }
 
 /// 灵动岛收起时的一侧网速。
-/// 灵动岛会按这里内容的宽度伸缩，所以这里既要放得下，也不能比以前更占地方：
+/// 灵动岛会按这里内容的宽度伸缩，所以这里既要放得下，也不能比以前更占地方，箭头也一直留着：
 /// - 横着的灵动岛：箭头在左、数字在右，宽度跟着数字走；`short` 最多四个字符，最宽也比以前窄。
 /// - 竖着的灵动岛（iPhone Duo 等）每侧只有一枚胶囊宽，箭头放旁边连「12K」都放不下，
-///   会被截成「…」；这时只留数字，上面是下载、下面是上传，和横着时左下载、右上传对应，
-///   一行字的高度也不比以前高。
+///   会被截成「…」；这时把小一号的箭头紧贴在数字上面，每侧高 20pt，只比一行字高 5pt。
 /// 排法拿最宽的写法去试，只取决于灵动岛的形状，不会因为网速变化而换排法或字号。
 private struct CompactSpeed: View {
     let symbol: String
@@ -163,14 +162,25 @@ private struct CompactSpeed: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 2) {
-                Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .bold))
+                arrow(size: 9)
                 number(size: 12)
             }
-            number(size: 11)
-            number(size: 10)
+            // 竖着时用小一号的箭头紧贴在数字上面，每侧只比一行字高几个点。
+            VStack(spacing: -2) {
+                arrow(size: 6, weight: .heavy)
+                number(size: 11)
+            }
+            VStack(spacing: -2) {
+                arrow(size: 6, weight: .heavy)
+                number(size: 10)
+            }
         }
         .foregroundStyle(tint)
+    }
+
+    private func arrow(size: CGFloat, weight: Font.Weight = .bold) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: weight))
     }
 
     private func number(size: CGFloat) -> some View {

@@ -55,6 +55,9 @@ final class SettingsDockProxyCoordinator {
     }
 
     func present() {
+        #if XDIAL_STORE
+        desiredVisible = true
+        #else
         desiredVisible = true
         dismissalFallbackTask?.cancel()
         dismissalFallbackTask = nil
@@ -90,6 +93,7 @@ final class SettingsDockProxyCoordinator {
                 self.runningApplication = application
             }
         }
+        #endif
     }
 
     private var helperBundleURL: URL {
@@ -102,6 +106,9 @@ final class SettingsDockProxyCoordinator {
     }
 
     func dismiss() {
+        #if XDIAL_STORE
+        desiredVisible = false
+        #else
         desiredVisible = false
         dismissalFallbackTask?.cancel()
         DistributedNotificationCenter.default().postNotificationName(
@@ -124,5 +131,6 @@ final class SettingsDockProxyCoordinator {
             }
             self.dismissalFallbackTask = nil
         }
+        #endif
     }
 }

@@ -437,7 +437,7 @@ test-profile-document-bridge: libbox-macos-xcframework
 		-framework Libbox -framework Foundation -framework Security \
 		-framework SystemConfiguration -framework IOKit -framework Network \
 		-lresolv -lz -lc++ macos/Shared/JSONValue.swift \
-		macos/Sources/XDial/Models.swift tools/profile-document-check.swift \
+		apple/Home/ScenarioSelectionPolicy.swift macos/Sources/XDial/Models.swift tools/profile-document-check.swift \
 		-o $(BUILD_DIR)/profile-document-check
 	$(BUILD_DIR)/profile-document-check docs/examples/profile-next-company.json
 

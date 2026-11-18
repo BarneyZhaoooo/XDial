@@ -30,14 +30,12 @@ final class ScenarioSwitchSourceRetentionTests: XCTestCase {
     ).pathIdentity
 
     private func facts(
-        networkEpochSwitch: Bool = true,
         targetScenarioID: String = "office",
         targetConfigurationFingerprint: String = "config-1",
         sourcePath: String?? = .none,
         targetPath: String?? = .none
     ) -> ScenarioSwitchSourceDrainFacts {
         ScenarioSwitchSourceDrainFacts(
-            networkEpochSwitch: networkEpochSwitch,
             sourceScenarioID: "office",
             targetScenarioID: targetScenarioID,
             sourceConfigurationFingerprint: "config-1",
@@ -47,7 +45,7 @@ final class ScenarioSwitchSourceRetentionTests: XCTestCase {
         )
     }
 
-    func testSamePathNetworkEpochRetainsFlowsWithHardBound() {
+    func testSamePathReconnectRetainsFlowsWithHardBound() {
         XCTAssertEqual(
             ScenarioSwitchSourceDrainPolicy.decide(facts()),
             .retainFlows(limit: 600)
@@ -83,17 +81,6 @@ final class ScenarioSwitchSourceRetentionTests: XCTestCase {
         )
     }
 
-    /// A user-initiated Switch or reconnect carries no network epoch; it
-    /// keeps today's drain even when nothing else changed.
-    func testUserInitiatedSwitchKeepsBoundedDrain() {
-        XCTAssertEqual(
-            ScenarioSwitchSourceDrainPolicy.decide(
-                facts(networkEpochSwitch: false)
-            ),
-            .boundedDrain
-        )
-    }
-
     /// An older host, or a start without the token, never proves the path.
     func testUnknownPathIdentityKeepsBoundedDrain() {
         XCTAssertEqual(
@@ -120,7 +107,6 @@ final class ScenarioSwitchSourceRetentionTests: XCTestCase {
         XCTAssertEqual(
             ScenarioSwitchSourceDrainPolicy.decide(
                 ScenarioSwitchSourceDrainFacts(
-                    networkEpochSwitch: true,
                     sourceScenarioID: "",
                     targetScenarioID: "",
                     sourceConfigurationFingerprint: "",

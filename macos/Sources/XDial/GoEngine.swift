@@ -29,6 +29,10 @@ final class GoEngine: ObservableObject {
     static let shared = GoEngine()
 
     private let transparentProxy = TransparentProxyManager.shared
+    #if XDIAL_STORE
+    private let localSetup = LocalTailscaleSetupRuntime()
+    private var setupLine: String?
+    #endif
     private let socketPath = XDialBuildIdentity.daemonSocketPath
     private var fd: Int32 = -1
     private var readSource: DispatchSourceRead?
@@ -184,7 +188,7 @@ final class GoEngine: ObservableObject {
     /// atomically commits the target transaction.
     func switchScenario(
         profileJSON: String,
-        refreshLineRuntimes: Bool,
+        mode: HostScenarioSwitchMode,
         networkEpochID: String? = nil,
         expectedUnderlayFingerprint: String? = nil,
         completion: @escaping (Result<ConnectionReport, Error>) -> Void
@@ -206,7 +210,7 @@ final class GoEngine: ObservableObject {
                 }
                 self.transparentProxy.switchScenario(
                     profileJSON: profileJSON,
-                    refreshLineRuntimes: refreshLineRuntimes,
+                    mode: mode,
                     networkEpochID: networkEpochID,
                     expectedUnderlayFingerprint: expectedUnderlayFingerprint
                 ) { [weak self] result in
@@ -226,6 +230,10 @@ final class GoEngine: ObservableObject {
     private func releaseTailscaleSetupForConnection(
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        #if XDIAL_STORE
+        setupLine = nil
+        localSetup.stop { completion(.success(())) }
+        #else
         guard ensureSocket() else {
             completion(.failure(requestError("无法联系后台服务以结束 Tailscale 配置会话"))); return
         }
@@ -240,6 +248,7 @@ final class GoEngine: ObservableObject {
         if !sent {
             gate.finish(.failure(requestError("无法发送 Tailscale 配置会话结束请求")))
         }
+        #endif
     }
 
     func cancelScenarioSwitch() {
@@ -510,6 +519,11 @@ final class GoEngine: ObservableObject {
         lineID: String,
         completion: (() -> Void)? = nil
     ) {
+        #if XDIAL_STORE
+        guard setupLine == lineID else { completion?(); return }
+        setupLine = nil
+        localSetup.stop { completion?() }
+        #else
         guard ensureSocket() else {
             completion?()
             return
@@ -523,6 +537,7 @@ final class GoEngine: ObservableObject {
         if !sent {
             completion?()
         }
+        #endif
     }
 
     // MARK: - Request sending
@@ -655,6 +670,33 @@ final class GoEngine: ObservableObject {
             gate.finish(.failure(self.requestError("Tailscale 请求超时，请刷新后重试")))
         }
         let completion: (Result<TailscaleRuntimeStatus, Error>) -> Void = { gate.finish($0) }
+        #if XDIAL_STORE
+        switch cmd {
+        case "tailscale-prepare":
+            guard let profile else { completion(.failure(TunnelRuntimeError.unavailable)); return }
+            if setupLine == lineID && authKey.isEmpty && localSetup.isActive {
+                localSetup.status(lineID: lineID, completion: completion)
+            } else {
+                localSetup.stop { [self] in
+                    setupLine = lineID
+                    localSetup.start(profileJSON: profile, lineID: lineID, authKey: authKey, completion: completion)
+                }
+            }
+        case "tailscale-status":
+            localSetup.status(lineID: lineID, completion: completion)
+        case "tailscale-login":
+            localSetup.beginLogin(lineID: lineID, completion: completion)
+        case "tailscale-logout":
+            localSetup.logout(lineID: lineID) { [self] result in
+                switch result {
+                case .failure(let error): completion(.failure(error))
+                case .success: localSetup.status(lineID: lineID, completion: completion)
+                }
+            }
+        default:
+            completion(.failure(TunnelRuntimeError.unavailable))
+        }
+        #else
         Task { [weak self] in
             let ok = await self?.ensureHelperAsync() ?? false
             guard gate.isPending else { return }
@@ -694,6 +736,7 @@ final class GoEngine: ObservableObject {
                 completion(.failure(self.requestError("无法发送 Tailscale 请求")))
             }
         }
+        #endif
     }
 
     private func requestError(_ message: String) -> NSError {
@@ -894,6 +937,7 @@ final class GoEngine: ObservableObject {
     }
 
     private func nudgeResolver(_ reason: ResolverRefreshReason?) {
+        #if !XDIAL_STORE
         guard let reason else { return }
         let trigger = reason.rawValue
         guard ensureSocket() else {
@@ -922,6 +966,7 @@ final class GoEngine: ObservableObject {
                     + " error=request could not be sent"
             )
         }
+        #endif
     }
 
     private func reconcileTransparentProxyStatus() {

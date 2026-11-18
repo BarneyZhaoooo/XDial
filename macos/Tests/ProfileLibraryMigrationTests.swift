@@ -169,6 +169,35 @@ final class ProfileLibraryMigrationTests: XCTestCase {
         return try library.validated()
     }
 
+    func testMobileSeedKeepsEditsAndMapsRegionsIntoImportedNamespace() throws {
+        let directory = try temporaryHome()
+        let data = Data(#"{"format":"xdial-mobile-seed","schema_version":1,"revision":2,"region_scenarios":{"nz":"office","*":"away"},"profile":{"scenarios":[{"id":"office"},{"id":"away"}]}}"#.utf8)
+        try data.write(to: directory.appendingPathComponent("Seed.json"))
+        let source = try XCTUnwrap(SeedProfile.load(directory: directory))
+        let applied = SeedProfileLedger.Entry(profileID: "seed", digest: "mobile-v1-999")
+        XCTAssertTrue(applied.isNewer(than: source))
+        XCTAssertFalse(SeedProfileLedger.Entry(profileID: "seed", digest: source.digest).isNewer(than: source))
+        var incoming = Profile.bootstrap()
+        incoming.lines[1].vpnServer = "vpn.example.com"
+        incoming.scenarios = [Scenario(id: "scoped-a", name: "Office", defaultLineID: "vpn"),
+                              Scenario(id: "scoped-b", name: "Away", defaultLineID: "direct")]
+        incoming.activeScenarioID = "scoped-b"
+        XCTAssertEqual(source.regionTargets(in: incoming), ["NZ": "scoped-a", "*": "scoped-b"])
+        var library = ProfileLibrary()
+        let selection = library.activeScenarioID
+        library.profiles[0].profile.lines.append(Line(id: "saved", name: "Saved VPN", type: "vpn",
+            vpnServer: "vpn.example.com", vpnUsername: "employee", vpnPassword: "Ｐass word"))
+        let updated = try ProfileLibraryMigration.addingMobileSeed(incoming, named: "Seed", id: "seed", to: library)
+        XCTAssertEqual(updated.activeScenarioID, selection)
+        XCTAssertEqual(updated.scenarios.first?.defaultLineID, "saved")
+        XCTAssertEqual(updated.snapshot().lines.first { $0.id == "saved" }?.vpnPassword, "Ｐass word")
+        XCTAssertEqual(updated.scenarios.prefix(2).map(\.name), ["Office", "Away"])
+        var edited = updated
+        edited.scenarios[0].defaultLineID = "direct"
+        let next = try ProfileLibraryMigration.addingMobileSeed(incoming, named: "Seed", id: "seed", to: edited)
+        XCTAssertEqual(next.scenarios[0].defaultLineID, "direct")
+    }
+
     func testSeedLoadsOneNamedDocumentAndRejectsAmbiguousDirectories() throws {
         let home = try temporaryHome()
         let directory = home.appendingPathComponent("SeedProfile")
