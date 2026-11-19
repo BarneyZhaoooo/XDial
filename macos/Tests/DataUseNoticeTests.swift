@@ -49,4 +49,14 @@ final class DataUseNoticeTests: XCTestCase {
         allowed = true
         XCTAssertNotNil(store.test([line], profileID: "p"))
     }
+
+    func testCollectionClaimCoversOnlyTheClientAndCompanyLinesNeedAnOwnAccount() {
+        for isChinese in [true, false] {
+            let text = MacDataUseNotice.sections(isChinese: isChinese, companyPreset: true)
+                .flatMap(\.points).joined(separator: "\n")
+            XCTAssertFalse(text.contains("不运行收集") || text.contains("runs no server"))
+            XCTAssertTrue(text.contains(isChinese ? "自己的公司账号" : "your own company account"))
+            XCTAssertTrue(text.contains(isChinese ? "以公司的规定为准" : "governed by your company's policies"))
+        }
+    }
 }
