@@ -125,6 +125,11 @@ enum ProfileDocumentService {
     /// the body and its referenced rule sources only through the explicit Line.
     @MainActor
     static func read(source: ProfileSource, profileID: String, state: AppState) async throws -> Profile {
+        // Adding or refreshing a subscription goes online; the App Store build waits for the notice.
+        guard state.dataUseNoticeAccepted else {
+            state.presentDataUseNotice()
+            throw ProfileLibraryError.invalid(state.tr("请先阅读并确认数据使用说明。", "Review and confirm the data use notice first."))
+        }
         guard !source.usesDirectAcquisition, let lineID = source.fetchLineID else {
             return try await read(content: "", url: source.url, profileID: profileID, nodesOnly: source.nodesOnly)
         }
@@ -187,7 +192,7 @@ extension AppState {
     }
 
     func refreshDueProfiles() {
-        guard profileLibraryLoaded else { return }
+        guard profileLibraryLoaded, dataUseNoticeAccepted else { return }
         let now = Date()
         for record in profileLibrary.profiles {
             guard let source = record.source, source.refreshInterval > 0,

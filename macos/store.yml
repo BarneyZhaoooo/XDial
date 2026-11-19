@@ -56,6 +56,8 @@ targets:
         XDialTransparentProxyBundleIdentifier: "$(XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER)"
         XDialSourceRevision: "$(XDIAL_SOURCE_REVISION)"
         XDialBuildFlavor: store
+        # 与 App Store Connect 填写的隐私政策一致；数据使用说明和设置里链接到这里。
+        XDialPrivacyPolicyURL: https://xindong.github.io/XDial/privacy/
     settings:
       base:
         PRODUCT_NAME: XDial

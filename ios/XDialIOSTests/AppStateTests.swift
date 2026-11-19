@@ -3606,6 +3606,18 @@ final class DataUseNoticeTests: XCTestCase {
         }
     }
 
+    func testCollectionClaimCoversOnlyTheClientAndCompanyLinesNeedAnOwnAccount() {
+        for zh in [true, false] {
+            for preset in [true, false] {
+                let text = DataUseNotice.sections(isChinese: zh, companyPreset: preset).flatMap(\.points).joined()
+                // 公司网关由公司运营：说明只为客户端作承诺，不说「不运行收集数据的服务器」。
+                XCTAssertFalse(text.contains("不运行收集") || text.contains("runs no server"))
+                XCTAssertTrue(text.contains(zh ? "自己的公司账号" : "your own company account"))
+                XCTAssertTrue(text.contains(zh ? "以公司的规定为准" : "governed by your company's policies"))
+            }
+        }
+    }
+
     func testPrivacyPolicyLinkMatchesTheStoreRecord() {
         // 与 App Store Connect 里填写的隐私政策地址一致；说明页和设置都链接到它。
         XCTAssertEqual(DataUseNoticeView.privacyPolicyURL?.absoluteString, "https://xindong.github.io/XDial/privacy/")

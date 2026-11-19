@@ -161,6 +161,11 @@ private struct MenuBarLabel: View {
                 openWindow(id: "installation")
                 NSApp.activate(ignoringOtherApps: true)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .xdialOpenDataUseNotice)) { _ in
+                ApplicationWindowLifecycleController.shared.prepareToPresentInstallationWindow()
+                openWindow(id: DataUseNoticeView.windowID)
+                NSApp.activate(ignoringOtherApps: true)
+            }
         #if DEBUG
             .onReceive(NotificationCenter.default.publisher(for: .xdialDebugOpenSettings)) { _ in
                 ApplicationWindowLifecycleController.shared
@@ -250,6 +255,10 @@ struct XDialApp: App {
             }
             .onDisappear { trafficInfo.stop() }
             .task {
+                // Shown before the App Store build first goes online; it cannot connect until confirmed.
+                if !state.dataUseNoticeAccepted { state.presentDataUseNotice() }
+            }
+            .task {
                 await updateChecker.pollForUpdates()
             }
         }
@@ -299,6 +308,14 @@ struct XDialApp: App {
         .defaultSize(width: 480, height: 420)
         .windowResizability(.contentSize)
 
+        Window("XDial 数据使用说明", id: DataUseNoticeView.windowID) {
+            DataUseNoticeView()
+                .environmentObject(state)
+                .tint(XDialPalette.accent)
+                .background(InstallationWindowChrome())
+        }
+        .windowResizability(.contentSize)
+
         Window("XDial 更新", id: "update") {
             AppUpdateView(updater: updateChecker)
                 .environmentObject(state)
@@ -318,6 +335,7 @@ final class ApplicationWindowLifecycleController {
         case settings
         case installation
         case update
+        case dataUse = "data-use"
     }
 
     private var observers: [NSObjectProtocol] = []
@@ -399,6 +417,10 @@ final class ApplicationWindowLifecycleController {
             window.level = .floating
             window.styleMask.remove(.miniaturizable)
             prepareToPresentUpdateWindow()
+        case .dataUse:
+            window.level = .floating
+            window.styleMask.remove(.miniaturizable)
+            prepareToPresentInstallationWindow()
         }
     }
 
@@ -422,7 +444,7 @@ final class ApplicationWindowLifecycleController {
         _ = NSApp.setActivationPolicy(.accessory)
         lastPolicyTransitionSucceeded =
             NSApp.activationPolicy() == .accessory
-        if !hasOpenWindow(.installation), !hasOpenWindow(.update) {
+        if !hasOpenWindow(.installation), !hasOpenWindow(.update), !hasOpenWindow(.dataUse) {
             NSApp.deactivate()
         }
     }
