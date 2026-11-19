@@ -426,8 +426,8 @@ private struct LineEditorView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
     @State private var pendingSaveTask: Task<Void, Never>?
+    @State private var tailscaleLoginPage: TailscaleLoginPage?
     @State private var hasPendingChanges = false
     @State private var saveFailureMessage: String?
     @State private var tailscaleRuntimeStatus: TailscaleRuntimeStatus?
@@ -502,6 +502,17 @@ private struct LineEditorView: View {
         }
         .onAppear {
             refreshTailscaleStatusIfAvailable()
+        }
+        .sheet(item: $tailscaleLoginPage, onDismiss: refreshTailscaleStatusIfAvailable) { page in
+            InAppSafariView(url: page.url)
+                .ignoresSafeArea()
+        }
+        .onChange(of: app.resumedTailscaleSetupLineID) { _, resumed in
+            // 切到后台时设置为释放锁停下，回到前台已重新跑起来：接着读状态，没登录就再打开登录页。
+            guard resumed == lineID else { return }
+            app.acknowledgeResumedTailscaleSetup()
+            pendingTailscaleSetupLogin = true
+            continueTailscaleSetupAfterStart()
         }
         .onChange(of: app.engine.status) { _, _ in
             if app.canQueryTailscaleRuntime(lineID: lineID) {
@@ -921,6 +932,7 @@ private struct LineEditorView: View {
                 }
                 if status.backendState.lowercased() == "running" {
                     pendingTailscaleSetupLogin = false
+                    tailscaleLoginPage = nil
                 } else {
                     beginTailscaleLogin()
                 }
@@ -954,7 +966,8 @@ private struct LineEditorView: View {
                     }
                     if let url = validTailscaleAuthURL(status.authURL) {
                         pendingTailscaleSetupLogin = false
-                        openURL(url)
+                        // 在 App 内打开：登录期间 App 留在前台，设置运行时能直接收到登录结果。
+                        tailscaleLoginPage = TailscaleLoginPage(url: url)
                     } else if status.backendState.lowercased() == "running" {
                         pendingTailscaleSetupLogin = false
                         refreshTailscaleStatusIfAvailable()
@@ -968,7 +981,7 @@ private struct LineEditorView: View {
                     pendingTailscaleSetupLogin = false
                     // 旧链接仍可能在控制面有效；先保持用户可继续，再明确展示刷新失败。
                     if let fallbackURL {
-                        openURL(fallbackURL)
+                        tailscaleLoginPage = TailscaleLoginPage(url: fallbackURL)
                     }
                     tailscaleStatusError = tailscaleErrorMessage(error)
                 }

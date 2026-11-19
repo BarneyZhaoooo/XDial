@@ -604,6 +604,10 @@ final class AppState: ObservableObject {
     private var lastPersistedProfile = Profile.bootstrap()
     private var runningProfileSnapshot: Profile?
     @Published private(set) var tailscaleSetupLineID: String?
+    /// 切到后台时为释放状态锁停下、回到前台要接着做的独立 Tailscale 设置线路。
+    private var backgroundPausedTailscaleSetupLineID: String?
+    /// 回到前台后重新跑起来的设置线路；配置页据此接着读登录状态，必要时再打开登录页。
+    @Published private(set) var resumedTailscaleSetupLineID: String?
     @Published private(set) var isStoppingTailscaleSetup = false
     @Published private var runtimeTailscaleNeedsLoginIDs: Set<String> = []
     private var tailscaleSetupGeneration: UInt64 = 0
@@ -2702,13 +2706,13 @@ final class AppState: ObservableObject {
                             )]
                         )
                         self.engine.lastError = error.localizedDescription
-                        self.finishTailscaleSetup {
+                        self.stopTailscaleSetup {
                             completion(.failure(error))
                         }
                     }
                 case .failure(let error):
                     self.engine.lastError = error.localizedDescription
-                    self.finishTailscaleSetup {
+                    self.stopTailscaleSetup {
                         completion(.failure(error))
                     }
                 }
@@ -2733,7 +2737,57 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// App 将被系统挂起。独立设置的 Libbox 在 App Group 共享容器里持有 Tailscale 状态锁，
+    /// 挂起时仍持有会被 RunningBoard 以 0xdead10cc 结束进程。先停掉设置（释放锁），记下线路，
+    /// 回到前台再由 resumeTailscaleSetupAfterBackground 接着做。没有设置在跑时直接完成。
+    func pauseTailscaleSetupForBackground(completion: @escaping () -> Void) {
+        // An explicit finish may already be releasing the lock. Join that stop
+        // without marking the user-finished setup for automatic resumption.
+        if isStoppingTailscaleSetup {
+            stopTailscaleSetup(completion: completion)
+            return
+        }
+        guard let lineID = tailscaleSetupLineID else {
+            completion()
+            return
+        }
+        backgroundPausedTailscaleSetupLineID = lineID
+        appLog("tailscale setup paused before suspension; releasing its state lock")
+        stopTailscaleSetup(completion: completion)
+    }
+
+    /// 回到前台：接着做被后台打断的设置。用户已开始别的设置、线路已删除或正式连接接管时不恢复。
+    func resumeTailscaleSetupAfterBackground() {
+        // The lifecycle guard retries after stop only if the app is still active.
+        // Do not enqueue a resume here: another background transition can invalidate it.
+        guard !isStoppingTailscaleSetup,
+              let lineID = backgroundPausedTailscaleSetupLineID else { return }
+        backgroundPausedTailscaleSetupLineID = nil
+        guard canStartTailscaleSetup(lineID: lineID) else {
+            appLog("tailscale setup not resumed after background: setup no longer applies")
+            return
+        }
+        prepareTailscaleLogin(lineID: lineID) { [weak self] result in
+            Task { @MainActor [weak self] in
+                guard let self, case .success = result, self.tailscaleSetupLineID == lineID else { return }
+                self.resumedTailscaleSetupLineID = lineID
+            }
+        }
+    }
+
+    /// 配置页已接手恢复后的设置。
+    func acknowledgeResumedTailscaleSetup() {
+        resumedTailscaleSetupLineID = nil
+    }
+
+    /// 用户明确结束或取消设置。后台暂停期间的停止尚未完成时也算数：回到前台不再自动恢复。
     func finishTailscaleSetup(completion: (() -> Void)? = nil) {
+        backgroundPausedTailscaleSetupLineID = nil
+        stopTailscaleSetup(completion: completion)
+    }
+
+    /// 停下设置并释放状态锁，不改变是否在回到前台后恢复。
+    private func stopTailscaleSetup(completion: (() -> Void)? = nil) {
         if let completion {
             tailscaleSetupFinishCompletions.append(completion)
         }
