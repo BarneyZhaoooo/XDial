@@ -19,6 +19,12 @@ Tailscale 登录会话，设置窗口由菜单栏主程序显示。Developer ID 
 `macos/scripts/embed-private-seed.sh` 嵌入，归档后用 `cmd/xdial-seed check` 核对，见 [Mac 预置说明](../../macos/Examples/README.md#与手机共用一份预置)。宿主、扩展分别使用
 Mac App Store 描述文件及 Apple Distribution 签名，上传包使用 Mac Installer Distribution 签名。
 
+商店构建分两种配置，`ios/project.yml` 和 `macos/store.yml` 相同：
+- **TestFlight**：用 `Release` 配置，主程序和 iOS 隧道扩展预填 `ITSAppUsesNonExemptEncryption = false`，上传后不再询问出口合规。
+- **正式上架**：用 `-configuration AppStore` 归档。它与 `Release` 相同，只是各目标都不写这个键，由 App Store Connect 按实际发行地区回答。
+
+预填 `false` 的前提是只用标准加密，并且不在法国商店分发；正式归档不能沿用它。
+
 
 Apple TV 正式包定位为公司内部使用，保留企业预置；从 `appletv/project.yml` 生成。
 先用 `make libbox-xcframework` 构建 tvOS 引擎，将与实际链接版本核对过的许可文本放入

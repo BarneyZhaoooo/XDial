@@ -6,6 +6,11 @@ options:
 configs:
   Debug: debug
   Release: release
+  AppStore: release
+# 出口合规（ITSAppUsesNonExemptEncryption）只写在 Debug 和 Release：TestFlight 构建继续
+# 预填 false（只用标准加密，即随 Go 和 sing-box 编入的 TLS、DTLS、AES-GCM、ChaCha20-Poly1305，
+# 且不在法国商店分发）。正式上架用 AppStore 配置归档（`-configuration AppStore`），
+# 它与 Release 相同但不预填这个键，由 App Store Connect 按实际发行地区回答。
 
 settings:
   base:
@@ -63,8 +68,6 @@ targets:
         CFBundleDisplayName: XDial Tunnel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        # Same export compliance answer as the app; see INFOPLIST_KEY_ITSAppUsesNonExemptEncryption.
-        ITSAppUsesNonExemptEncryption: false
         XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
         XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
         XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
@@ -91,6 +94,14 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: true
         SKIP_INSTALL: true
         TARGETED_DEVICE_FAMILY: "1"
+        # Lets the per-configuration INFOPLIST_KEY below merge into the Info.plist above.
+        GENERATE_INFOPLIST_FILE: true
+      configs:
+        # Same export compliance answer as the app; AppStore leaves it unset (see configs at the top).
+        Debug:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+        Release:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
     dependencies:
       - framework: ../build/frameworks/ios/Libbox.xcframework
         embed: false
@@ -186,18 +197,18 @@ targets:
         CURRENT_PROJECT_VERSION: "11"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_CFBundleDisplayName: XDial
-        # Export compliance: the app implements only standard encryption (TLS, DTLS,
-        # AES-GCM, ChaCha20-Poly1305 via Go and sing-box) and is not offered on the
-        # French App Store, so App Store Connect needs no encryption documentation.
-        # Offering it in France needs an encryption declaration with the French
-        # import document, and these keys then change.
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_NSSupportsLiveActivities: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # TestFlight answer; AppStore leaves it unset (see configs at the top).
+        Debug:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+        Release:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
     postBuildScripts:
       # 企业包的预置配置和随包规则不进仓库：打包时从被忽略的 ios/PrivateConfig，
       # 或 XDIAL_IOS_PRIVATE_CONFIG_DIR 指向的目录里取。两处都没有时，App 用空白起步配置。

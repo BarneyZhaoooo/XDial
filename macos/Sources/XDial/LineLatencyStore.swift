@@ -415,12 +415,16 @@ final class LineLatencyStore: ObservableObject {
     }
     private var failedAt: [String: Int64] = [:]
 
+    /// False while the App Store build waits for the data use notice: no test may go online.
+    var permitsNetworkTests: () -> Bool = { true }
+
     /// A batch deduplicates concrete members. It reuses committed capabilities
     /// where available and explicitly probes ordinary proxies otherwise.
     /// Native urltest groups reconsider history; manually pinned groups and the
     /// Profile itself are never changed by a measurement.
     @discardableResult
     func test(_ requested: [Line], profileID: String, group: Line? = nil, scope: TestScope = .allMembers, onlyMissing: Bool = false, control: TestControl? = nil) -> UUID? {
+        guard permitsNetworkTests() else { return nil }
         if let control, let running = activeJob(for: control, profileID: profileID) { return running.id }
         let jobID = UUID()
         var probes: Set<PendingProbe> = []

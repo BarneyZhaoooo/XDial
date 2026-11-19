@@ -2,6 +2,13 @@ name: XDialStore
 options:
   deploymentTarget:
     macOS: "15.0"
+configs:
+  Debug: debug
+  Release: release
+  AppStore: release
+# 出口合规（ITSAppUsesNonExemptEncryption）只写在 Debug 和 Release：TestFlight 构建继续
+# 预填 false（理由见 ios/project.yml）。正式上架用 AppStore 配置归档（`-configuration AppStore`），
+# 它与 Release 相同但不预填这个键，由 App Store Connect 按实际发行地区回答。
 settings:
   base:
     DEVELOPMENT_TEAM: SX9RG894L5
@@ -42,7 +49,6 @@ targets:
         LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
         CFBundleDisplayName: XDial
         CFBundleIconFile: AppIcon
-        ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.utilities
         LSUIElement: true
         NSLocationUsageDescription: XDial uses Wi-Fi names for automatic scenario selection.
@@ -50,13 +56,24 @@ targets:
         XDialTransparentProxyBundleIdentifier: "$(XDIAL_TRANSPARENT_PROXY_BUNDLE_IDENTIFIER)"
         XDialSourceRevision: "$(XDIAL_SOURCE_REVISION)"
         XDialBuildFlavor: store
+        # 与 App Store Connect 填写的隐私政策一致；数据使用说明和设置里链接到这里。
+        XDialPrivacyPolicyURL: https://xindong.github.io/XDial/privacy/
     settings:
-      PRODUCT_NAME: XDial
-      PRODUCT_BUNDLE_IDENTIFIER: com.xd.xdial.ios
-      PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Host
-      CODE_SIGN_ENTITLEMENTS: Store/Host.entitlements
-      # The preset embed reads the private configuration directory named at build time.
-      ENABLE_USER_SCRIPT_SANDBOXING: NO
+      base:
+        PRODUCT_NAME: XDial
+        PRODUCT_BUNDLE_IDENTIFIER: com.xd.xdial.ios
+        PROVISIONING_PROFILE_SPECIFIER: XDial macOS TestFlight Host
+        CODE_SIGN_ENTITLEMENTS: Store/Host.entitlements
+        # The preset embed reads the private configuration directory named at build time.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # Lets the per-configuration INFOPLIST_KEY below merge into Store/Host-Info.plist.
+        GENERATE_INFOPLIST_FILE: true
+      configs:
+        # TestFlight answer; AppStore leaves it unset (see configs at the top).
+        Debug:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+        Release:
+          INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
     postBuildScripts:
       - name: Embed company preset
         basedOnDependencyAnalysis: false

@@ -130,15 +130,17 @@ enum DataUseNotice {
             "All of these services see your IP address. Requests to the DNS and the check and lookup services carry no account, password or configuration content."
         ))
         return [
-            Section(title: t("开发者不收集你的数据", "We do not collect your data"), symbol: "hand.raised", points: [
-                t("XDial 没有账号系统，也不运行收集用户数据的服务器；App 里没有广告、分析、崩溃收集或追踪 SDK。",
-                  "XDial has no account system and runs no server that collects user data; the app contains no advertising, analytics, crash-reporting or tracking SDK."),
-                t("你的浏览内容和访问记录不会发给我们。",
-                  "What you browse and visit is never sent to us."),
+            Section(title: t("XDial 客户端不收集你的数据", "The XDial client does not collect your data"), symbol: "hand.raised", points: [
+                t("XDial 客户端里没有广告、分析、崩溃收集或追踪 SDK，也不会把你的使用情况、浏览内容或访问记录发给 XDial 的开发者。",
+                  "The XDial client contains no advertising, analytics, crash-reporting or tracking SDK, and does not send your usage, browsing or visit history to XDial's developers."),
             ]),
             Section(title: t("流量去向", "Where your traffic goes"), symbol: "arrow.triangle.branch", points: [
-                t("网络流量按你的配置直接发往目标网站，或发往你配置的服务器。这些服务器由你或你的服务提供方运营，他们如何处理数据以他们的政策为准。",
-                  "Traffic goes straight to its destination or to the servers you configure. Those servers are run by you or your provider, whose own policies govern how they handle data."),
+                t("网络流量按你的配置直接发往目标网站，或发往所选线路的服务器。",
+                  "Traffic goes straight to its destination or to the server of the line you use, according to your configuration."),
+                t("使用公司 VPN 线路时，需要你自己的公司账号，App 里不内置任何员工账号或密码。连接后，由公司的 VPN 网关负责认证，并转发经它的流量；网关会记录什么、保留多久、谁能查看，以公司的规定为准，不在本说明的范围内。",
+                  "A company VPN line needs your own company account; the app ships with no employee account or password. Once connected, the company's VPN gateway authenticates you and forwards the traffic sent through it; what the gateway records, for how long and who can see it are governed by your company's policies and are outside this notice."),
+                t("其他线路的服务器由你或你的服务提供方运营，如何处理数据以他们的政策为准。",
+                  "Servers of other lines are run by you or your provider, whose own policies govern how they handle data."),
                 t("连接 AnyConnect 线路时，按该协议向你的 VPN 服务器发送设备名、网卡地址和由它们生成的设备标识；使用 Tailscale 线路时，设备名会发给 Tailscale 的服务器。",
                   "With an AnyConnect line, XDial sends your VPN server the device name, network interface address and a device identifier derived from them, as that protocol requires; with a Tailscale line, the device name is sent to Tailscale's servers."),
             ]),

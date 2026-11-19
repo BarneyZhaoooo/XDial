@@ -414,6 +414,18 @@ struct MainPopover: View {
             .background { DialInstrumentSurface() }
             .clipShape(RoundedRectangle(cornerRadius: 22))
 
+            if !state.dataUseNoticeAccepted {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "hand.raised").foregroundStyle(.secondary)
+                    Text(state.tr("连接前请阅读并确认数据使用说明。", "Review and confirm the data use notice before connecting."))
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                Button(state.tr("阅读数据使用说明…", "Read the Data Use Notice…")) { state.presentDataUseNotice() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("home-data-use-notice")
+            }
             if state.profile.scenarios.isEmpty {
                 Button(state.tr("前往配置添加场景", "Open configuration to add a scenario")) {
                     state.editorPosition.tab = 2
