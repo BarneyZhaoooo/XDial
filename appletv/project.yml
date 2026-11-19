@@ -72,6 +72,8 @@ targets:
         buildPhase: resources
       - path: ../ios/XDialShared/XDialIdentity.swift
       - path: ../macos/Shared/AutomaticConnectionPolicy.swift
+      - path: ../ios/XDialIOS/MobileSeed.swift
+      - path: ../ios/XDialIOS/MobileConfigurationSupport.swift
     info:
       path: XDialTV/Info.plist
       properties:
@@ -99,6 +101,28 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME: LaunchImage
+    postBuildScripts:
+      # Only an explicit, authorized private input is embedded. Reused build
+      # directories must not leak a previous company's preset into a blank app.
+      - name: Embed authorized private configuration
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/PrivateConfig"
+          rm -rf "${destination}"
+          source_dir="${XDIAL_PRIVATE_CONFIG_DIR:-}"
+          [ -n "${source_dir}" ] || exit 0
+          if [ ! -f "${source_dir}/Seed.json" ]; then
+            echo "error: authorized private input must contain Seed.json" >&2
+            exit 1
+          fi
+          mkdir -p "${destination}"
+          cp "${source_dir}/Seed.json" "${destination}/Seed.json"
+          if [ -d "${source_dir}/RuleSets" ]; then
+            mkdir -p "${destination}/RuleSets"
+            find "${source_dir}/RuleSets" -maxdepth 1 -type f \( -name '*.srs' -o -name '*.json' \) \
+              -exec cp {} "${destination}/RuleSets/" \;
+          fi
     dependencies:
       - target: XDialTVTunnel
         embed: true

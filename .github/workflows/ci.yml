@@ -96,6 +96,8 @@ jobs:
           echo "$PWD/build/tools" >> "$GITHUB_PATH"
       - name: go test
         run: make test
+      - name: tvOS preset acceptance gates
+        run: python3 -m unittest discover -s scripts/tests -p test_tvos_store_app.py -v
 
   macos:
     name: macOS (swift compile + tests)

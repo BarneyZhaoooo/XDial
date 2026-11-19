@@ -24,10 +24,12 @@ struct RootView: View {
     private static func makeState() -> AppState {
         #if DEBUG && targetEnvironment(simulator)
         let engine = FakeTunnelEngine()
-        return AppState(engine: engine, tunnelManager: FakeTunnelManager(engine: engine))
+        return AppState(engine: engine, tunnelManager: FakeTunnelManager(engine: engine),
+                        seed: MobileSeed.bundled?.profileSeed)
         #else
         let engine = GoEngine.shared
-        return AppState(engine: engine, tunnelManager: TunnelManager(engine: engine))
+        return AppState(engine: engine, tunnelManager: TunnelManager(engine: engine),
+                        seed: MobileSeed.bundled?.profileSeed)
         #endif
     }
 
@@ -50,7 +52,7 @@ struct RootView: View {
         }
         .environmentObject(app)
         #if DEBUG && targetEnvironment(simulator)
-        .onAppear { app.seedDemoDataForSimulator() }
+        .onAppear { if !app.hasCompanyPreset { app.seedDemoDataForSimulator() } }
         #endif
     }
 }
