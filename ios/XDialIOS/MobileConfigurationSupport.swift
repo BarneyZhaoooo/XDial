@@ -395,6 +395,9 @@ enum MobileDiagnosticsService {
             profile: profile, lastError: lastError, dataPathSummary: dataPathSummary,
             autoScenarioSummary: autoScenarioSummary, isChinese: isChinese)
         var sections = [base]
+        if let timeline, let summary = ConnectionTimelineReport.reconnectSummary(timeline, isChinese: isChinese) {
+            sections.append(redactedKeepingAddresses(summary, using: profile))
+        }
         if let environment {
             sections.append((isChinese ? "环境：" : "Environment: ") + environment)
         }

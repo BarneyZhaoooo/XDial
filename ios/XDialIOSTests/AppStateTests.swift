@@ -102,6 +102,7 @@ private final class CancellingTunnelManager: TunnelManaging {
         profile: Profile,
         anyConnect: AnyConnectCredentials?,
         allowSystemOnDemand: Bool,
+        origin: ConnectionTimeline.StartOrigin,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
         completion(.failure(CancellationError()))
@@ -325,6 +326,7 @@ private final class RuntimeSpyManager: TunnelManaging {
     private(set) var removeCallCount = 0
     private(set) var lastAnyConnect: AnyConnectCredentials?
     private(set) var lastProfile: Profile?
+    private(set) var lastOrigin: ConnectionTimeline.StartOrigin?
     private(set) var lastAllowSystemOnDemand: Bool?
     private(set) var systemOnDemandRequests: [Bool] = []
     private(set) var systemOnDemandSetupSuspensions: [Bool] = []
@@ -375,11 +377,13 @@ private final class RuntimeSpyManager: TunnelManaging {
         profile: Profile,
         anyConnect: AnyConnectCredentials?,
         allowSystemOnDemand: Bool,
+        origin: ConnectionTimeline.StartOrigin,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
         startCallCount += 1
         lastProfile = profile
         lastAnyConnect = anyConnect
+        lastOrigin = origin
         lastAllowSystemOnDemand = allowSystemOnDemand
         engine?.setStatus("connected")
         completion(.success(()))
@@ -1534,11 +1538,13 @@ final class AppStateTests: XCTestCase {
         app.connect()
         await Task.yield()
         XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(manager.lastOrigin, .user)
 
         engine.setStatus("disconnected")
         XCTAssertTrue(app.canConnect, app.activeConfigurationIssues.joined(separator: "\n"))
         try? await Task.sleep(for: .milliseconds(1_200))
         XCTAssertEqual(manager.startCallCount, 2)
+        XCTAssertEqual(manager.lastOrigin, .autoRetry)
         XCTAssertTrue(app.isConnected)
 
         // A preference reload may publish the old system status before stop finishes.

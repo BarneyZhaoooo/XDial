@@ -14,6 +14,10 @@ enum ConnectionTimeline {
     static let maxDetailCharacters = 160
     static let fileName = "connection-timeline.json"
 
+    enum StartOrigin: String {
+        case user, appIntent, autoRetry, configurationChange, scenarioChange, system
+    }
+
     enum Source: String, Codable, Sendable {
         case app
         case tunnel
@@ -43,6 +47,8 @@ enum ConnectionTimeline {
         /// Duration of the step this event closes, in milliseconds.
         var ms: Int?
         var detail: String?
+        var occurrences: Int?
+        var lastAt: Int64?
     }
 
     struct Session: Codable, Equatable, Sendable {
@@ -50,6 +56,32 @@ enum ConnectionTimeline {
         var startedAt: Int64
         var events: [Event]
         var droppedEvents: Int
+        var startOrigin: String?
+        var connectedAt: Int64?
+        var systemConnectedAt: Int64?
+        var stopRequestedAt: Int64?
+        var stopReason: Event?
+        var runtimeDisconnect: Event?
+
+        mutating func record(_ event: Event) {
+            if event.stage == "app.connection_established" { systemConnectedAt = event.t }
+            if event.stage == "app.stop_requested" { stopRequestedAt = event.t }
+            if event.stage == "tunnel.runtime_disconnected" { runtimeDisconnect = event }
+            if event.stage == "tunnel.stop_reason" { stopReason = event }
+            if event.occurrences != nil,
+               let index = events.lastIndex(where: {
+                   $0.stage == event.stage && $0.t == event.t && $0.detail == event.detail && $0.result == event.result
+               }) {
+                events[index] = event
+                return
+            }
+            if events.count >= maxEventsPerSession {
+                // Preserve startup and rotate the remaining slots for the latest evidence.
+                events.remove(at: maxEventsPerSession / 4)
+                droppedEvents += 1
+            }
+            events.append(event)
+        }
     }
 
     struct File: Codable, Equatable, Sendable {
@@ -58,6 +90,14 @@ enum ConnectionTimeline {
         /// attaches to it when the system started the tunnel on its own.
         var activeSessionID: String?
         var sessions: [Session] = []
+
+        /// Reconcile only the exported copy with a fresh system status. The
+        /// extension owns the persisted marker and may be starting concurrently.
+        func reportingDisconnected() -> File {
+            var report = self
+            report.activeSessionID = nil
+            return report
+        }
     }
 
     static func nowMilliseconds() -> Int64 {
@@ -192,6 +232,12 @@ final class ConnectionTimelineStore: @unchecked Sendable {
     private let lockURL: URL
     private let queue = DispatchQueue(label: "com.kafeifei.xdial.connection-timeline", qos: .utility)
 
+    // Only the extension produces survey events. All state below belongs to queue.
+    private var surveySession = ""
+    private var survey: ConnectionTimeline.Event?
+    private var surveyDirty = false
+    private var checkpoint: DispatchWorkItem?
+
     init(directory: URL) {
         fileURL = directory.appendingPathComponent(ConnectionTimeline.fileName)
         lockURL = directory.appendingPathComponent(ConnectionTimeline.fileName + ".lock")
@@ -207,13 +253,17 @@ final class ConnectionTimelineStore: @unchecked Sendable {
 
     /// Starts (or reuses) a session and makes it the active tunnel session when
     /// `markActive` is true.
-    func beginSession(_ id: String, markActive: Bool) {
+    func beginSession(_ id: String, markActive: Bool, origin: ConnectionTimeline.StartOrigin? = nil) {
         let now = ConnectionTimeline.nowMilliseconds()
         queue.async { [self] in
+            finishSurvey()
             mutate { file in
                 if !file.sessions.contains(where: { $0.id == id }) {
                     file.sessions.append(ConnectionTimeline.Session(
                         id: id, startedAt: now, events: [], droppedEvents: 0))
+                }
+                if let origin, let index = file.sessions.firstIndex(where: { $0.id == id }) {
+                    file.sessions[index].startOrigin = origin.rawValue
                 }
                 if markActive { file.activeSessionID = id }
             }
@@ -222,6 +272,7 @@ final class ConnectionTimelineStore: @unchecked Sendable {
 
     func endActiveSession(_ id: String, completion: @escaping @Sendable () -> Void = {}) {
         queue.async { [self] in
+            finishSurvey()
             mutate { file in
                 if file.activeSessionID == id { file.activeSessionID = nil }
             }
@@ -243,19 +294,55 @@ final class ConnectionTimelineStore: @unchecked Sendable {
             t: timestamp ?? ConnectionTimeline.nowMilliseconds(), src: source, stage: stage,
             result: result, ms: ms, detail: ConnectionTimeline.sanitized(detail))
         queue.async { [self] in
-            mutate { file in
-                let id = preferActiveSession ? (file.activeSessionID ?? id) : id
-                guard !id.isEmpty else { return }
-                if let index = file.sessions.firstIndex(where: { $0.id == id }) {
-                    if file.sessions[index].events.count >= ConnectionTimeline.maxEventsPerSession {
-                        file.sessions[index].droppedEvents += 1
-                    } else {
-                        file.sessions[index].events.append(event)
+            if event.stage == "tunnel.scenario_decision", !preferActiveSession {
+                if var previous = survey, id == surveySession,
+                   previous.detail == event.detail, previous.result == event.result {
+                    previous.occurrences = (previous.occurrences ?? 1) + 1
+                    previous.lastAt = event.t
+                    previous.ms = event.ms
+                    survey = previous
+                    surveyDirty = true
+                    if checkpoint == nil {
+                        let item = DispatchWorkItem { [weak self] in self?.persistSurvey() }
+                        checkpoint = item
+                        queue.asyncAfter(deadline: .now() + 60, execute: item)
                     }
-                } else {
-                    file.sessions.append(ConnectionTimeline.Session(
-                        id: id, startedAt: event.t, events: [event], droppedEvents: 0))
+                    return
                 }
+                finishSurvey()
+                surveySession = id
+                survey = event
+            } else {
+                finishSurvey()
+            }
+            persist(event, session: id, preferActiveSession: preferActiveSession)
+        }
+    }
+
+    private func persistSurvey() {
+        checkpoint?.cancel()
+        checkpoint = nil
+        if surveyDirty, let survey {
+            persist(survey, session: surveySession)
+            surveyDirty = false
+        }
+    }
+
+    private func finishSurvey() {
+        persistSurvey()
+        survey = nil
+    }
+
+    private func persist(_ event: ConnectionTimeline.Event, session id: String, preferActiveSession: Bool = false) {
+        mutate { file in
+            let id = preferActiveSession ? (file.activeSessionID ?? id) : id
+            guard !id.isEmpty else { return }
+            if let index = file.sessions.firstIndex(where: { $0.id == id }) {
+                file.sessions[index].record(event)
+            } else {
+                var session = ConnectionTimeline.Session(id: id, startedAt: event.t, events: [], droppedEvents: 0)
+                session.record(event)
+                file.sessions.append(session)
             }
         }
     }
@@ -333,6 +420,52 @@ final class ConnectionTimelineStore: @unchecked Sendable {
 /// Plain-text rendering for the shareable diagnostics report. Times are relative
 /// to the session start so the two processes line up without exposing clocks.
 enum ConnectionTimelineReport {
+    /// Keep the previous ending and current start together even when either trace is full.
+    static func reconnectSummary(_ file: ConnectionTimeline.File, isChinese: Bool) -> String? {
+        let sessions = file.sessions.sorted { $0.startedAt > $1.startedAt }
+        guard let latest = sessions.first else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        func time(_ ms: Int64) -> String {
+            formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+        }
+        var lines: [String] = []
+        func ending(_ session: ConnectionTimeline.Session, previous: Bool) {
+            let label = previous ? (isChinese ? "上次连接" : "Previous session") : (isChinese ? "本次连接" : "Latest session")
+            if let t = session.stopRequestedAt ?? session.events.last(where: { $0.stage == "app.stop_requested" })?.t {
+                lines.append("\(label) · \(time(t)) · " + (isChinese ? "App 请求断开" : "App requested stop"))
+            }
+            if let event = session.runtimeDisconnect ?? session.events.last(where: { $0.stage == "tunnel.runtime_disconnected" }) {
+                lines.append("\(label) · \(time(event.t)) · " + (isChinese ? "引擎断开" : "Engine disconnected")
+                             + (event.detail.map { " " + $0 } ?? ""))
+            }
+            if let event = session.stopReason ?? session.events.last(where: { $0.stage == "tunnel.stop_reason" }) {
+                lines.append("\(label) · \(time(event.t)) · " + (isChinese ? "系统停止原因 " : "System stop reason ") + (event.detail ?? "?"))
+            } else if session.id != file.activeSessionID {
+                let last = session.events.map { $0.lastAt ?? $0.t }.max() ?? session.startedAt
+                lines.append("\(label) · " + (isChinese ? "最后记录 " : "Last record ") + time(last)
+                             + (isChinese ? " · 停止原因未知" : " · stop reason unknown"))
+            }
+        }
+        if sessions.count > 1 { ending(sessions[1], previous: true) }
+        let origin: String
+        switch latest.startOrigin.flatMap(ConnectionTimeline.StartOrigin.init(rawValue:)) {
+        case .user: origin = isChinese ? "用户连接" : "User connect"
+        case .appIntent: origin = "App Intent"
+        case .autoRetry: origin = isChinese ? "App 自动重试" : "App automatic retry"
+        case .configurationChange: origin = isChinese ? "应用配置后重连" : "Reconnect after configuration change"
+        case .scenarioChange: origin = isChinese ? "切换场景后重连" : "Reconnect after scenario change"
+        case .system: origin = isChinese ? "系统启动" : "System start"
+        case nil: origin = isChinese ? "来源未知" : "Unknown origin"
+        }
+        lines.append((isChinese ? "本次启动" : "Latest start") + " · \(time(latest.startedAt)) · \(origin)")
+        if let connected = latest.systemConnectedAt ?? latest.events.first(where: { $0.stage == "app.connection_established" })?.t {
+            lines.append((isChinese ? "已连接" : "Connected") + " · " + time(connected))
+        }
+        ending(latest, previous: false)
+        return lines.joined(separator: "\n")
+    }
+
     static func render(
         _ file: ConnectionTimeline.File,
         latest count: Int = 3,
@@ -357,8 +490,8 @@ enum ConnectionTimelineReport {
             }
             if session.droppedEvents > 0 {
                 lines.append(isChinese
-                    ? "  （另有 \(session.droppedEvents) 条事件因上限未记录）"
-                    : "  (\(session.droppedEvents) more events were not recorded)")
+                    ? "  （另有 \(session.droppedEvents) 条事件因上限省略）"
+                    : "  (\(session.droppedEvents) earlier events omitted at capacity)")
             }
         }
         return lines.joined(separator: "\n")
@@ -369,11 +502,15 @@ enum ConnectionTimelineReport {
         var parts = [String(format: "+%.1fs", offset), event.src.rawValue.padding(toLength: 6, withPad: " ", startingAt: 0), event.stage]
         if let result = event.result { parts.append(result.rawValue) }
         if let ms = event.ms { parts.append(String(format: "%.1fs", Double(ms) / 1000)) }
+        if let count = event.occurrences, let last = event.lastAt {
+            parts.append(String(format: "×%d → +%.1fs", count, Double(last - sessionStart) / 1000))
+        }
         if let detail = event.detail { parts.append(detail) }
         return parts.joined(separator: " ")
     }
 
     static func shortID(_ id: String) -> String {
-        String(id.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
+        let uuid = id.hasPrefix("tunnel-") ? String(id.dropFirst("tunnel-".count)) : id
+        return String(uuid.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
     }
 }

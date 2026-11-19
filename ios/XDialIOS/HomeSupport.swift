@@ -138,6 +138,6 @@ extension AppState {
             }
         }
         guard selectScenario(id), canConnect else { return }
-        connect()
+        connect(origin: .scenarioChange)
     }
 }

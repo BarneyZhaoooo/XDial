@@ -99,7 +99,7 @@ final class MobileIntentHost: XDialIntentHosting {
                 : issues)
         }
 
-        app.connect()
+        app.connect(origin: .appIntent)
         // connect() 在同一 MainActor 回合里进入 connecting；仍为 disconnected 表示
         // 保存或校验已同步失败，错误已写入 lastError。
         if app.engine.status == "disconnected" { throw connectionFailure() }

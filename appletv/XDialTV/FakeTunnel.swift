@@ -361,6 +361,7 @@ final class FakeTunnelManager: TunnelManaging, ObservableObject {
     /// connecting→connected。
     func startTunnel(profile: Profile, anyConnect: AnyConnectCredentials?,
                      allowSystemOnDemand: Bool,
+                     origin: ConnectionTimeline.StartOrigin,
                      completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
         appLog("FakeTunnelManager.startTunnel — 模拟拉起隧道")
         isProfileInstalled = true

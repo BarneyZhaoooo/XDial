@@ -122,6 +122,91 @@ final class ConnectionTimelineTests: XCTestCase {
         XCTAssertLessThanOrEqual(bytes, ConnectionTimeline.maxFileBytes)
     }
 
+    func testLongConnectionCoalescesSurveysAndKeepsTheStopAcrossReconnect() throws {
+        let store = ConnectionTimelineStore(directory: directory)
+        let url = directory.appendingPathComponent(ConnectionTimeline.fileName)
+        store.beginSession("old", markActive: true, origin: .user)
+        store.append(session: "old", source: .tunnel, stage: "tunnel.start_begin")
+        func survey(_ index: Int, _ result: ConnectionTimeline.Result, _ detail: String) {
+            store.append(session: "old", source: .tunnel, stage: "tunnel.scenario_decision",
+                         result: result, ms: index, detail: detail, at: Int64(index))
+        }
+        survey(1, .ok, "CN network=a")
+        store.flush()
+        let inode = try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? NSNumber
+        XCTAssertNotNil(inode)
+        for index in 2...2000 { survey(index, .ok, "CN network=a") }
+        store.flush()
+        // Atomic writes replace the inode. Repeated probes haven't rewritten the file.
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? NSNumber, inode)
+        survey(2001, .ok, "CN network=b")
+        survey(2002, .dns, "network=b dns-failed")
+        survey(2003, .dns, "network=b dns-failed")
+        survey(2004, .ok, "CN network=b")
+        for index in 0..<40 {
+            store.append(session: "old", source: .app, stage: "before-stop-\(index)")
+        }
+        store.append(session: "old", source: .app, stage: "app.stop_requested")
+        store.append(session: "old", source: .tunnel, stage: "tunnel.stop_reason", detail: "reason=3 (noNetworkAvailable)")
+        let events = try XCTUnwrap(store.snapshot().sessions.first?.events)
+        let surveys = events.filter { $0.stage == "tunnel.scenario_decision" }
+        XCTAssertEqual(surveys.map { $0.occurrences ?? 1 }, [2000, 1, 2, 1])
+        XCTAssertEqual(surveys.first?.t, 1)
+        XCTAssertEqual(surveys.first?.lastAt, 2000)
+        for index in 0..<220 {
+            store.append(session: "old", source: .app, stage: "tick-\(index)")
+        }
+        store.endActiveSession("old")
+        store.beginSession("new", markActive: true, origin: .autoRetry)
+        store.append(session: "new", source: .app, stage: "app.connection_established")
+        let snapshot = store.snapshot()
+        let old = try XCTUnwrap(snapshot.sessions.first { $0.id == "old" })
+        XCTAssertEqual(old.events.count, ConnectionTimeline.maxEventsPerSession)
+        XCTAssertEqual(old.events.first?.stage, "tunnel.start_begin")
+        XCTAssertEqual(old.events.last?.stage, "tick-219")
+        XCTAssertFalse(old.events.contains { $0.stage == "tunnel.stop_reason" })
+        let summary = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(snapshot, isChinese: true))
+        for label in ["App 请求断开", "reason=3 (noNetworkAvailable)", "App 自动重试", "已连接"] {
+            XCTAssertTrue(summary.contains(label), summary)
+        }
+    }
+
+    func testBackgroundStartUsesSystemDateAndDisconnectedSnapshotClearsStaleMarker() throws {
+        let store = ConnectionTimelineStore(directory: directory)
+        store.beginSession("system", markActive: true, origin: .system)
+        store.append(session: "system", source: .app, stage: "app.status.connected", at: 500_000)
+        store.append(session: "system", source: .app, stage: "app.connection_established", at: 10_000)
+        let running = store.snapshot()
+        XCTAssertEqual(running.sessions.first?.systemConnectedAt, 10_000)
+        let stale = running.reportingDisconnected()
+        XCTAssertNil(stale.activeSessionID)
+        XCTAssertEqual(running.activeSessionID, "system")
+        XCTAssertEqual(store.snapshot().activeSessionID, "system")
+        let summary = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(stale, isChinese: true))
+        XCTAssertTrue(summary.contains("停止原因未知"))
+        XCTAssertTrue(summary.contains("最后记录"))
+        XCTAssertFalse(ConnectionTimelineReport.render(stale, isChinese: true).contains("进行中"))
+    }
+
+    func testLegacyObservationTimeIsNotReportedAsSystemConnectionTime() throws {
+        var file = ConnectionTimeline.File()
+        file.sessions = [.init(id: "legacy", startedAt: 1_000, events: [
+            .init(t: 500_000, src: .app, stage: "app.status.connected")
+        ], droppedEvents: 0, connectedAt: 500_000)]
+        let summary = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(file, isChinese: true))
+        XCTAssertFalse(summary.contains("已连接"))
+    }
+
+    func testLegacyFullSessionWithoutStopDoesNotInventReasonOrDisconnectTime() throws {
+        let raw = #"{"version":1,"activeSessionID":"new","sessions":[{"id":"old","startedAt":1000,"events":[{"t":2000,"src":"tunnel","stage":"tunnel.region_probe","result":"dns"}],"droppedEvents":2190},{"id":"new","startedAt":5000,"events":[],"droppedEvents":0}]}"#
+        let file = try JSONDecoder().decode(ConnectionTimeline.File.self, from: Data(raw.utf8))
+        let text = try XCTUnwrap(ConnectionTimelineReport.reconnectSummary(file, isChinese: true))
+        XCTAssertTrue(text.contains("最后记录"))
+        XCTAssertTrue(text.contains("停止原因未知"))
+        XCTAssertTrue(text.contains("来源未知"))
+        XCTAssertFalse(text.contains("已连接"))
+    }
+
     func testCorruptFileIsReplacedInsteadOfBlockingWrites() throws {
         try Data("not json".utf8).write(to: directory.appendingPathComponent(ConnectionTimeline.fileName))
         let store = ConnectionTimelineStore(directory: directory)

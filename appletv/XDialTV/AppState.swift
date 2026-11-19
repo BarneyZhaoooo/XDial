@@ -254,6 +254,7 @@ protocol TunnelManaging: AnyObject {
     /// 走的是 sendProviderMessage，只有隧道已经在跑时才有意义，不能从冷启动拉起隧道。
     func startTunnel(profile: Profile, anyConnect: AnyConnectCredentials?,
                       allowSystemOnDemand: Bool,
+                      origin: ConnectionTimeline.StartOrigin,
                       completion: @escaping @Sendable (Result<Void, Error>) -> Void)
     /// 保存用户的系统级重连意图。启用请求只会在连接验收通过且安全启动包可用后生效。
     func setSystemOnDemandEnabled(_ enabled: Bool)
@@ -1272,7 +1273,7 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(300))
                 guard let self else { return }
                 if self.canConnect {
-                    self.connect()
+                    self.connect(origin: .configurationChange)
                 } else {
                     self.engine.lastError = self.activeConfigurationIssues.prefix(3).joined(
                         separator: self.tr("；", "; ")
@@ -1319,21 +1320,21 @@ final class AppState: ObservableObject {
             try? await Task.sleep(for: .seconds(delaySeconds))
             guard !Task.isCancelled, let self, self.autoReconnectEnabled, self.canConnect else { return }
             self.autoReconnectTask = nil
-            self.startConnection(resetAutoReconnectAttempt: false)
+            self.connect(origin: .autoRetry)
         }
     }
 
-    private func startConnection(resetAutoReconnectAttempt: Bool) {
-        if resetAutoReconnectAttempt {
+    func connect(origin: ConnectionTimeline.StartOrigin = .user) {
+        if origin != .autoRetry {
             autoReconnectAttempt = 0
             autoReconnectTask?.cancel()
             autoReconnectTask = nil
         }
         disconnectRequested = false
-        performConnectionStart()
+        performConnectionStart(origin: origin)
     }
 
-    private func performConnectionStart() {
+    private func performConnectionStart(origin: ConnectionTimeline.StartOrigin) {
         guard canConnect else { return }
         guard save() else { return }
         // persist() normalizes and upgrades the profile (including the visible
@@ -1353,7 +1354,8 @@ final class AppState: ObservableObject {
         tunnelManager.startTunnel(
             profile: profile,
             anyConnect: anyConnect,
-            allowSystemOnDemand: true
+            allowSystemOnDemand: true,
+            origin: origin
         ) { [weak self] result in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -1396,10 +1398,6 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Connect
-
-    func connect() {
-        startConnection(resetAutoReconnectAttempt: true)
-    }
 
     func disconnect() {
         if !persistenceRequiresRecovery { engine.lastError = nil }

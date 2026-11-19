@@ -468,6 +468,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     // MARK: - stopTunnel
 
+    private static func stopDetail(_ reason: NEProviderStopReason) -> String {
+        let name: String
+        switch reason {
+        case .none: name = "none"
+        case .userInitiated: name = "userInitiated"
+        case .providerFailed: name = "providerFailed"
+        case .noNetworkAvailable: name = "noNetworkAvailable"
+        case .unrecoverableNetworkChange: name = "unrecoverableNetworkChange"
+        case .providerDisabled: name = "providerDisabled"
+        case .authenticationCanceled: name = "authenticationCanceled"
+        case .configurationFailed: name = "configurationFailed"
+        case .idleTimeout: name = "idleTimeout"
+        case .configurationDisabled: name = "configurationDisabled"
+        case .configurationRemoved: name = "configurationRemoved"
+        case .superceded: name = "superceded"
+        case .userLogout: name = "userLogout"
+        case .userSwitch: name = "userSwitch"
+        case .connectionFailed: name = "connectionFailed"
+        case .sleep: name = "sleep"
+        case .appUpdate: name = "appUpdate"
+        case .internalError: name = "internalError"
+        @unknown default: name = "unknown"
+        }
+        return "reason=\(reason.rawValue) (\(name))"
+    }
+
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         let completion = StopCompletionGate(completionHandler)
         // 先原子失效所有启动回调并摘除资源，再等串行队列真正清理旧会话。
@@ -480,7 +506,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 #if os(iOS)
                 self?.clearRunningScenario()
                 #endif
-                self?.recordTimeline("stop_reason", detail: "reason=\(reason.rawValue)")
+                self?.recordTimeline("stop_reason", detail: Self.stopDetail(reason))
                 self?.recordDiagnostic("stopping")
                 os_log("stopTunnel: reason=%d", log: self?.log ?? .default,
                        type: .info, reason.rawValue)
@@ -848,7 +874,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
         #endif
         setLastError(error.localizedDescription)
-        recordDiagnostic("runtime_disconnected")
+        recordDiagnostic("runtime_disconnected", detail: "code=\((error as NSError).code) " + ConnectionTimeline.failureKeywords(error.localizedDescription))
         monitor?.cancel()
         completion?.finish(error)
         cancelTunnelWithError(error)
@@ -1455,7 +1481,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // A system-initiated start (on-demand) carries no app attempt ID; the
         // extension then owns the session ID and the app attaches to it.
         let sessionID = attemptID.isEmpty ? "tunnel-" + UUID().uuidString : attemptID
-        timeline?.beginSession(sessionID, markActive: true)
+        timeline?.beginSession(sessionID, markActive: true, origin: attemptID.isEmpty ? .system : nil)
         diagnosticLock.lock()
         timelineSessionID = sessionID
         activeAttemptID = attemptID
@@ -1937,8 +1963,8 @@ extension PacketTunnelProvider {
             if !switched.bundle.scenarioName.isEmpty {
                 activityUpdater.updateScenarioName(switched.bundle.scenarioName)
             }
-        } else {
-            recordDiagnostic("scenario_switch_failed")
+        } else if case .failure(let error) = outcome {
+            recordDiagnostic("scenario_switch_failed", detail: ConnectionTimeline.failureKeywords(error.localizedDescription))
         }
         return updateScenarioState { state in
             state.switchingTo = nil
@@ -2167,6 +2193,7 @@ extension PacketTunnelProvider {
             try? engine.abortPreparedSwitch()
             return .failure(scenarioError("连接已结束"))
         }
+        recordTimeline("scenario_switch_handover")
         do {
             try engine.commitPreparedSwitch()
         } catch {
@@ -2207,10 +2234,13 @@ extension PacketTunnelProvider {
             if case .failure(let restoreError) = startReplacementEngine(
                 source, dialAddress: sourceDialAddress, underlay: underlay, generation: generation
             ) {
+                recordTimeline("scenario_switch_restore_failed", detail: ConnectionTimeline.failureKeywords(restoreError.localizedDescription))
                 terminateRunningAttempt(generation, error: providerError(
                     41,
                     "切换场景失败，原来的场景也没能恢复：\(restoreError.localizedDescription)"
                 ))
+            } else {
+                recordTimeline("scenario_switch_restored")
             }
             return .failure(scenarioError("新场景没能连上：\(targetError.localizedDescription)"))
         }
@@ -2403,6 +2433,8 @@ extension PacketTunnelProvider {
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
         let networkToken = ScenarioNetworkIdentity.diagnosticToken(path: network, ssid: ssid)
         var evidence = RegionProbeEvidence()
+        var probeDetail = ""
+        var probeResult: ConnectionTimeline.Result?
         if pick == nil, !policy.regionScenarios.isEmpty {
             var probeError: NSError?
             let regionStartedAt = ProcessInfo.processInfo.systemUptime
@@ -2410,14 +2442,15 @@ extension PacketTunnelProvider {
             evidence = RegionProbeEvidence.decode(raw)
             evidence.ms = evidence.ms ?? ConnectionTimeline.elapsedMilliseconds(since: regionStartedAt)
             let code = evidence.code ?? ""
-            let basis = "path=direct network=\(networkToken) service=\(evidence.endpoint ?? "none")"
+            let basis = "path=direct service=\(evidence.endpoint ?? "none")"
                 + (evidence.attempts.isEmpty ? "" : " failed=\(evidence.attempts)")
             if let probeError {
                 let failure = probeError.localizedDescription
-                recordTimeline("region_probe", result: ConnectionTimeline.classify(probeFailure: failure),
-                               ms: evidence.ms, detail: basis + " " + ConnectionTimeline.failureKeywords(failure))
+                probeResult = ConnectionTimeline.classify(probeFailure: failure)
+                probeDetail = ConnectionTimeline.failureKeywords(failure) + " " + basis
             } else {
-                recordTimeline("region_probe", result: .ok, ms: evidence.ms, detail: "region=\(code) " + basis)
+                probeResult = .ok
+                probeDetail = "region=\(code) " + basis
             }
             if probeError == nil, code.count == 2, code.allSatisfy({ $0.isASCII && $0.isUppercase }) {
                 exit = .found(code: code, viaTunnel: true)
@@ -2430,9 +2463,14 @@ extension PacketTunnelProvider {
                 exit = .failed(viaTunnel: true, reason: probeError.map { sanitizedDiagnosticText($0.localizedDescription) ?? "" })
             }
         }
+        let choice = pick.map { picked in
+            picked.scenarioID == runningID ? "current" : "other-" + ScenarioNetworkIdentity.opaqueToken(picked.scenarioID)
+        } ?? "none"
+        let decision = "network=\(networkToken) ssid=\(ssidRead ? "read" : "unread") pick=\(choice)"
+            + " running=\(ScenarioNetworkIdentity.opaqueToken(runningID))"
         recordTimeline(
-            "scenario_decision", ms: ConnectionTimeline.elapsedMilliseconds(since: surveyStart),
-            detail: "ssid=\(ssidRead ? "read" : "unread") pick=\(pick?.scenarioID == nil ? "none" : (pick?.scenarioID == runningID ? "current" : "other"))")
+            "scenario_decision", result: probeResult, ms: ConnectionTimeline.elapsedMilliseconds(since: surveyStart),
+            detail: decision + " " + probeDetail)
         let record = ScenarioSurveyRecord(
             at: Date(),
             ssidRead: ssidRead,
