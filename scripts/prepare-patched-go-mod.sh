@@ -271,6 +271,14 @@ grep -Fq 'options.DisableCache = true' \
 	"${patched_sing_box_dir}/dns/client.go"
 grep -Fq 'xdialUpstreamFailed = xdialCloseFailedRelay(source, destination, direction, err)' \
 	"${patched_sing_box_dir}/route/conn.go"
+grep -Fq 'duplexDst, isDuplex := xdialWriteCloser(destination); isDuplex' \
+	"${patched_sing_box_dir}/route/conn.go"
+grep -Fq 'func xdialWriteCloser(' \
+	"${patched_sing_box_dir}/route/xdial_half_close.go"
+grep -Fq 'func TestXDialRelayForwardsApplicationHalfCloseToTrackedUpstream(' \
+	"${patched_sing_box_dir}/route/xdial_half_close_test.go"
+grep -Fq 'func TestXDialRelayHalfCloseOfAFinishedUpstreamIsQuiet(' \
+	"${patched_sing_box_dir}/route/xdial_half_close_test.go"
 grep -Fq 'func xdialCloseFailedRelay(' \
 	"${patched_sing_box_dir}/route/xdial_relay_close.go"
 grep -Fq 'func TestXDialRelayForwardsUpstreamResetAsReset(' \

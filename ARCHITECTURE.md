@@ -71,9 +71,11 @@ IPv6 接口地址（临时地址在稳定网络上轮换）不进入比较；Pro
 macOS 已绑定 flow 的接口是系统既有裁决，经认证且有长度上限的 metadata 传给 sing-box；
 Scenario 先选 Line，仅最终属于 Direct 的 flow 恢复该绑定，其他 Line 不继承它。
 
-TCP flow 的结束方式如实传给应用：上游正常结束时应用读到流的结尾；上游被重置、
-超时或以其他错误结束，数据面把回环上的入站连接按重置关闭，Provider 再把它作为对端重置
-交给 flow，不把被打断的流说成正常结束。入站连接自己先出错的（应用已经结束这条流）照常关闭。
+TCP flow 的结束方式如实传给应用：上游正常结束是半关闭，应用读到流的结尾；应用先结束
+发送方向时同样只半关闭上游，应答照常送回，不因出站连接外面的跟踪、计数包装而变成整条
+关闭。上游被重置、超时或以其他错误结束，数据面把回环上的入站连接按重置关闭，Provider
+再把它作为对端重置交给 flow，不把被打断的流说成正常结束。入站连接自己先出错的（应用
+已经结束这条流）照常关闭。
 数据面 warn 及以上的日志经 Provider 进统一日志，公开部分不含地址、域名和凭据。
 
 本机 SOCKS5 由 Provider 持有 `127.0.0.1:<port>`，只接受本机无认证 TCP CONNECT，不设置
@@ -94,7 +96,8 @@ TCP flow 的结束方式如实传给应用：上游正常结束时应用读到�
 [Provider](macos/TransparentProxyExtension/TransparentProxyProvider.swift)、
 [flow metadata](macos/Shared/TransparentProxyFlowMetadata.swift)、
 [本机 SOCKS5](macos/TransparentProxyExtension/LocalSOCKSShareListener.swift)、
-[流结束补丁](patches/sing-box/0017-reset-inbound-when-upstream-fails.patch)、
+流结束补丁（[重置](patches/sing-box/0017-reset-inbound-when-upstream-fails.patch)、
+[半关闭](patches/sing-box/0018-forward-half-close-through-transparent-wrappers.patch)）、
 [数据面日志](core/libbox/dataplane_log.go)。
 
 ### 3.2 Tailscale 与 MagicDNS（D33）
