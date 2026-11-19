@@ -488,11 +488,14 @@ final class LocalTailscaleSetupRuntime {
         if let startError = session.startError {
             completeStart(session, result: .failure(startError))
         }
+        // The engine has released its resources. Publish idle before notifying
+        // callers: a stop completion can synchronously start the next session.
+        // Never overwrite that new session's phase after delivering callbacks.
+        phase = .idle
         while !session.stopCompletions.isEmpty {
             let completion = session.stopCompletions.removeFirst()
             completion()
         }
-        phase = .idle
     }
 
     private func handleStopFailure(_ session: Session, error: Error) {
