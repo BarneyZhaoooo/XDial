@@ -3130,6 +3130,27 @@ final class ConnectOnOpenTests: XCTestCase {
         XCTAssertEqual(manager.startCallCount, 1)
     }
 
+    func testStaleNetworkDoesNotConsumeLaunchConnection() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        let pilot = ScenarioAutoPilot()
+        let generation = pilot.networkGeneration
+        pilot.noteNetworkChanged()
+        let stale = await app.connectAfterOpeningIfWanted {
+            generation == pilot.networkGeneration
+        }
+        XCTAssertFalse(stale)
+        XCTAssertEqual(manager.startCallCount, 0)
+
+        // 新网络判断完毕后仍保留启动机会；没有匹配场景也可以继续。
+        let currentGeneration = pilot.networkGeneration
+        let current = await app.connectAfterOpeningIfWanted {
+            currentGeneration == pilot.networkGeneration
+        }
+        XCTAssertTrue(current)
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(manager.lastOrigin, .launch)
+    }
+
     func testManualDisconnectIsNotUndoneByReturningToTheApp() async {
         let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
         await app.connectAfterOpeningIfWanted()

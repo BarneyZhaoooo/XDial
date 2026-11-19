@@ -1348,11 +1348,11 @@ final class AppState: ObservableObject {
     /// 打开 XDial 后自动连接一次。首页在 App 回到前台、读完系统里的连接状态并按网络选好场景后调用。
     /// 已连接、正在连接、配置或账号不完整时不发起；不重试，失败交给已有的掉线重连规则（它不重试首次连接失败）。
     @discardableResult
-    func connectAfterOpeningIfWanted() async -> Bool {
+    func connectAfterOpeningIfWanted(while contextIsCurrent: () -> Bool = { true }) async -> Bool {
         guard openConnectPending else { return false }
         await refreshTunnelProfileStatusAndWait()
         // 等待期间用户可能已经点了连接或断开，那就以用户为准。
-        guard openConnectPending else { return false }
+        guard openConnectPending, !Task.isCancelled, contextIsCurrent() else { return false }
         openConnectPending = false
         guard AutomaticConnectionPolicy.shouldConnectOnLaunch(
             enabled: connectOnOpenEnabled,
