@@ -14,7 +14,7 @@
 </head>
 <body>
 <h1>XDial 隐私政策</h1>
-<p class="meta">更新于 2026 年 11 月 20 日 · 适用于 XDial iOS 版与 macOS 版</p>
+<p class="meta">更新于 2026 年 11 月 20 日 · 适用于 XDial iPhone、Mac 商店版和 Apple TV 版</p>
 
 <p>XDial 是一款网络分流工具，由 XD Entertainment Pte Ltd 发布。它在本机按你设置的场景和规则转发网络流量。iPhone 版使用系统 VPN 扩展，Mac 商店版使用系统网络扩展。</p>
 
@@ -27,7 +27,7 @@
 <h2>保存在你设备上的信息</h2>
 <ul>
   <li>线路、场景、规则和订阅等配置只保存在你的设备上；线路密码等凭据保存在系统钥匙串中。</li>
-  <li>为了按网络自动选择场景，XDial 会在本机读取当前 Wi‑Fi 名称，不会发送到任何地方。</li>
+  <li>在 iPhone 和 Mac 上，为了按网络自动选择场景，XDial 会在本机读取当前 Wi‑Fi 名称，不会发送到任何地方。</li>
   <li>灵动岛和实时活动里显示的网速只在本机计算。</li>
 </ul>
 
@@ -59,6 +59,9 @@
 <p>如果你要按 Wi-Fi 名称自动切换场景，Mac 版可在你点击相关设置时请求 macOS 的「使用期间」定位权限，以读取当前 Wi-Fi 名称。名称只在本机与场景设置比对。你也可以手动选择场景。</p>
 <p>查询一条已连接线路的公网 IPv4 地址时，Mac 版可经该线路访问 Cloudflare 或腾讯（r.inews.qq.com/api/ip2city）。被访问的服务能看到这条线路的出口 IP。XDial 从腾讯的响应中读取 IP 地址；这项探测不会发送 Wi-Fi 名称或设备定位坐标，也不会读取响应中的城市。</p>
 
+<h2>Apple TV 的网络请求</h2>
+<p>你通过遥控器选择场景。客户端不按地区或 Wi-Fi 名称切换场景，也不为此请求定位。连接时，默认域名查询使用 Cloudflare 公共 DNS（1.1.1.1，未加密）；AnyConnect 可使用 VPN 提供的 DNS，Tailscale 按自身的方式解析名称。网络检测可访问 Cloudflare、Apple、阿里公共 DNS 和 Google 的测速地址；检查线路出口可访问 Amazon 或 Cloudflare。这些服务可看到连接来源 IP。</p>
+<p>配置 AnyConnect 后，VPN 网关可收到设备名、设备类型、网卡地址及协议使用的设备标识。启用 Tailscale 后，设备信息发往对应的控制服务。规则和订阅提供方可收到配置中给出的完整请求地址。登录公司 VPN 时，员工凭据由网关验证。</p>
 <h2>儿童</h2>
 <p>XDial 企业版供获授权的员工和设备使用。</p>
 
@@ -68,7 +71,7 @@
 <hr>
 
 <h1>XDial Privacy Policy</h1>
-<p class="meta">Updated November 20, 2026 · Applies to XDial for iOS and macOS</p>
+<p class="meta">Updated November 20, 2026 · Applies to XDial for iPhone, Mac App Store and Apple TV</p>
 
 <p>XDial is a network routing tool published by XD Entertainment Pte Ltd. It routes traffic on your device according to your scenarios and rules. The iPhone app uses the system VPN extension, and the Mac App Store app uses a system network extension.</p>
 
@@ -81,7 +84,7 @@
 <h2>Information kept on your device</h2>
 <ul>
   <li>Lines, scenarios, rules and subscriptions are stored only on your device; credentials such as line passwords are kept in the system Keychain.</li>
-  <li>To pick a scenario for the current network, XDial reads the Wi‑Fi name on the device. It is never sent anywhere.</li>
+  <li>On iPhone and Mac, XDial can read the Wi‑Fi name on the device to pick a scenario for the current network. It is never sent anywhere.</li>
   <li>The speeds shown in the Dynamic Island and Live Activity are computed on the device.</li>
 </ul>
 
@@ -113,6 +116,9 @@
 <p>If you want to switch scenarios by Wi-Fi name, the Mac app can request macOS location permission while in use when you choose the relevant setting. This lets it read the current Wi-Fi name and match it against your scenarios on the Mac. You can also choose a scenario manually.</p>
 <p>When checking a connected line’s public IPv4 address, the Mac app may contact Cloudflare or Tencent (r.inews.qq.com/api/ip2city) through that line. The service sees the line’s exit IP address. XDial reads the IP address from Tencent’s response. This probe does not send the Wi-Fi name or device coordinates. It does not read the city from the response.</p>
 
+<h2>Network requests on Apple TV</h2>
+<p>You choose a scenario with the remote. The client does not select scenarios by region or Wi-Fi name and does not request location for this purpose. While connected, default DNS queries go to Cloudflare public DNS (1.1.1.1, unencrypted). AnyConnect may use the VPN's DNS server and Tailscale resolves its own names. Connectivity and latency checks may contact Cloudflare, Apple, Alibaba public DNS and Google test addresses. A line's exit IP may be checked with Amazon or Cloudflare. The services contacted can see the source IP.</p>
+<p>An AnyConnect gateway can receive the device name, device type, interface address and protocol-specific device identifier. A configured Tailscale control service receives node information. Rule and subscription providers receive the full URL in the configuration. When using a company VPN, the gateway authenticates the employee's credentials.</p>
 <h2>Children</h2>
 <p>XDial enterprise is intended for authorized employees and devices.</p>
 
