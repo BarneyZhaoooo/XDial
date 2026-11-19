@@ -7,6 +7,9 @@ import WidgetKit
 /// 后台启动 App，因此状态不能只挂在视图的 StateObject 上。
 @MainActor
 enum MobileAppRuntime {
+    /// 进后台前释放独立 Tailscale 设置持有的共享状态锁，回到前台再接着设置。
+    static let tailscaleSetupBackgroundGuard = TailscaleSetupBackgroundGuard(app: state)
+
     static let state: AppState = {
         let state = makeState()
         // 已连接期间由 VPN 扩展按这份规则判断，App 被挂起时也照样生效。

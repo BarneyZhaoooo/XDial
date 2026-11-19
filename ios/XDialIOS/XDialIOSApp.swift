@@ -20,6 +20,7 @@ struct XDialIOSApp: App {
 
 struct MobileRootView: View {
     @StateObject private var app: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         _app = StateObject(wrappedValue: MobileAppRuntime.state)
@@ -28,6 +29,13 @@ struct MobileRootView: View {
     var body: some View {
         HomeView()
             .environmentObject(app)
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background: MobileAppRuntime.tailscaleSetupBackgroundGuard.enteredBackground()
+                case .active: MobileAppRuntime.tailscaleSetupBackgroundGuard.becameActive()
+                default: break
+                }
+            }
             #if targetEnvironment(simulator)
             .onAppear {
                 // -XDialRealFlow 跳过演示数据，按真机首次安装的流程验证。

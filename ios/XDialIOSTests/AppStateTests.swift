@@ -1,5 +1,6 @@
 import Combine
 import Security
+import UIKit
 import XCTest
 @testable import XDial
 
@@ -3037,5 +3038,189 @@ final class AppStateTests: XCTestCase {
 private extension RuleBinding {
     var isConnectivityAcceptanceBindingForTest: Bool {
         ruleSetID == RuleSet.connectivityDirectID || ruleSetID == RuleSet.connectivityAnyConnectID
+    }
+}
+
+/// 独立 Tailscale 设置在 App 进后台时释放共享状态锁，回到前台接着做。
+@MainActor
+final class TailscaleSetupBackgroundTests: XCTestCase {
+    private func makePersistence() -> AppPersistenceContext {
+        let context = AppPersistenceContext.testing(identifier: "tsbg-" + UUID().uuidString)
+        XCTAssertTrue(context.clearForTesting())
+        addTeardownBlock { XCTAssertTrue(context.clearForTesting()) }
+        return context
+    }
+
+    private var engine = RuntimeSpyEngine()
+
+    private func makeApp() -> (AppState, RuntimeSpyManager, TailscaleSetupRuntimeSpy) {
+        engine = RuntimeSpyEngine()
+        let manager = RuntimeSpyManager(engine: engine)
+        let runtime = TailscaleSetupRuntimeSpy()
+        let app = AppState(engine: engine, tunnelManager: manager, tailscaleSetupRuntime: runtime,
+                           persistence: makePersistence())
+        var profile = Profile.bootstrap()
+        profile.lines[1].vpnServer = "gateway.example.com"
+        profile.lines[1].vpnUsername = "tester"
+        profile.lines[1].vpnPassword = "secret"
+        profile.lines.append(Line(id: "tail", name: "Home Tailnet", type: "tailscale"))
+        profile.scenarios = [Scenario(id: "test-scenario", name: "Test", defaultLineID: "vpn")]
+        profile.activeScenarioID = "test-scenario"
+        profile.ensureConnectivityTestConfiguration()
+        app.profile = profile
+        return (app, manager, runtime)
+    }
+
+    private func startSetup(_ app: AppState) {
+        app.prepareTailscaleLogin(lineID: "tail") { _ in }
+        XCTAssertEqual(app.tailscaleSetupLineID, "tail")
+    }
+
+    private func settle() async {
+        for _ in 0..<5 { await Task.yield() }
+    }
+
+    func testPauseStopsTheRuntimeAndResumeRestartsTheSameLine() async {
+        let (app, manager, runtime) = makeApp()
+        startSetup(app)
+        var paused = false
+        app.pauseTailscaleSetupForBackground { paused = true }
+        XCTAssertTrue(paused)
+        XCTAssertEqual(runtime.stopCallCount, 1, "stopping the runtime releases its state lock")
+        XCTAssertFalse(runtime.isActive)
+        XCTAssertNil(app.tailscaleSetupLineID)
+        XCTAssertEqual(manager.systemOnDemandSetupSuspensions, [true, false])
+
+        app.resumeTailscaleSetupAfterBackground()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.map(\.lineID), ["tail", "tail"])
+        XCTAssertEqual(app.tailscaleSetupLineID, "tail")
+        XCTAssertEqual(app.resumedTailscaleSetupLineID, "tail")
+        app.acknowledgeResumedTailscaleSetup()
+        XCTAssertNil(app.resumedTailscaleSetupLineID)
+
+        // 只恢复一次：之后再回到前台不会重复启动。
+        app.resumeTailscaleSetupAfterBackground()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 2)
+    }
+
+    func testPauseWithoutSetupDoesNothing() {
+        let (app, _, runtime) = makeApp()
+        var paused = false
+        app.pauseTailscaleSetupForBackground { paused = true }
+        XCTAssertTrue(paused)
+        XCTAssertEqual(runtime.stopCallCount, 0)
+        app.resumeTailscaleSetupAfterBackground()
+        XCTAssertTrue(runtime.startCalls.isEmpty)
+    }
+
+    func testResumeWaitsForTheStopToFinish() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        runtime.deferStopCompletion = true
+        var paused = false
+        app.pauseTailscaleSetupForBackground { paused = true }
+        XCTAssertFalse(paused)
+        app.resumeTailscaleSetupAfterBackground() // 回到前台时锁还没放完
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 1, "must not start while the previous runtime still holds the lock")
+        runtime.completeStop()
+        await settle()
+        XCTAssertTrue(paused)
+        XCTAssertEqual(runtime.startCalls.count, 2)
+        XCTAssertEqual(app.tailscaleSetupLineID, "tail")
+    }
+
+    func testResumeIsSkippedWhenTheLineIsGone() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        app.pauseTailscaleSetupForBackground {}
+        app.profile.lines.removeAll { $0.id == "tail" }
+        app.resumeTailscaleSetupAfterBackground()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 1)
+        XCTAssertNil(app.tailscaleSetupLineID)
+        XCTAssertNil(app.resumedTailscaleSetupLineID)
+    }
+
+    func testResumeIsSkippedWhileAFormalConnectionIsStarting() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        app.pauseTailscaleSetupForBackground {}
+        engine.setStatus("connecting")
+        app.resumeTailscaleSetupAfterBackground()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 1)
+        XCTAssertNil(app.tailscaleSetupLineID)
+    }
+
+    // MARK: - Grace period before suspension
+
+    private final class TaskLog {
+        var begun = 0
+        var ended: [UIBackgroundTaskIdentifier] = []
+        var expiration: (@MainActor () -> Void)?
+    }
+
+    private func makeGuard(_ app: AppState, grace: Duration) -> (TailscaleSetupBackgroundGuard, TaskLog) {
+        let log = TaskLog()
+        let tasks = TailscaleSetupBackgroundGuard.BackgroundTasks(
+            begin: { expiration in
+                log.begun += 1
+                log.expiration = expiration
+                return UIBackgroundTaskIdentifier(rawValue: 42)
+            },
+            end: { log.ended.append($0) }
+        )
+        return (TailscaleSetupBackgroundGuard(app: app, grace: grace, tasks: tasks), log)
+    }
+
+    func testShortTripAwayKeepsTheSignInRunning() async throws {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        let (guardian, log) = makeGuard(app, grace: .milliseconds(300))
+        guardian.enteredBackground()
+        XCTAssertEqual(log.begun, 1)
+        try await Task.sleep(for: .milliseconds(50))
+        guardian.becameActive() // 比如去验证器 App 看了一眼两步验证码
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(runtime.stopCallCount, 0)
+        XCTAssertEqual(app.tailscaleSetupLineID, "tail")
+        XCTAssertEqual(log.ended.count, 1)
+    }
+
+    func testStayingAwayReleasesTheLockBeforeTheBackgroundTaskEnds() async throws {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        let (guardian, log) = makeGuard(app, grace: .milliseconds(50))
+        guardian.enteredBackground()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(runtime.stopCallCount, 1)
+        XCTAssertFalse(runtime.isActive)
+        XCTAssertEqual(log.ended.count, 1, "the background task ends only after the stop completed")
+
+        guardian.becameActive()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 2)
+        XCTAssertEqual(app.resumedTailscaleSetupLineID, "tail")
+    }
+
+    func testExpiringBackgroundTimePausesAtOnce() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        let (guardian, log) = makeGuard(app, grace: .seconds(60))
+        guardian.enteredBackground()
+        log.expiration?()
+        XCTAssertEqual(runtime.stopCallCount, 1)
+        XCTAssertEqual(log.ended.count, 1)
+        _ = guardian
+    }
+
+    func testNoBackgroundTaskWithoutSetup() {
+        let (app, _, _) = makeApp()
+        let (guardian, log) = makeGuard(app, grace: .milliseconds(50))
+        guardian.enteredBackground()
+        XCTAssertEqual(log.begun, 0)
     }
 }
