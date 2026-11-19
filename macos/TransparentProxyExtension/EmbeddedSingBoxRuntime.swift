@@ -2994,6 +2994,14 @@ private final class EngineCallback: NSObject, LibboxCallbackProtocol {
                     message: "AnyConnect 线路已恢复，其他线路未重启",
                     taskID: currentTaskID
                 )
+            case .idle:
+                // Dormant is not a recovery: the Line keeps its ready task and
+                // re-establishes its session when something needs it.
+                currentReporter.note(
+                    code: "anyconnect-line-idle",
+                    message: "服务器按空闲策略结束了 AnyConnect 会话，有流量时再连接",
+                    taskID: currentTaskID
+                )
             case .waiting:
                 currentReporter.setTask(
                     id: currentTaskID,

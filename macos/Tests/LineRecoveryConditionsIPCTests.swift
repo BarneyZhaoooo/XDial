@@ -309,3 +309,32 @@ final class LineRecoveryConditionsIPCTests: XCTestCase {
         XCTAssertEqual(gate.phase, .running, "waiting must not look like a stopped data plane")
     }
 }
+
+final class AnyConnectLineIdleStatusTests: XCTestCase {
+    /// A dormant Line is neither failing nor recovering; the Provider must be
+    /// able to tell it apart from both.
+    func testDecodesIdleStatus() throws {
+        let raw = """
+        {"status":"line_idle","line_type":"vpn","attempt":0,"max_attempts":3,"reason":"server-idle-timeout"}
+        """
+
+        let status = try JSONDecoder().decode(
+            AnyConnectLineRuntimeStatus.self,
+            from: Data(raw.utf8)
+        )
+
+        XCTAssertEqual(status.state, .idle)
+        XCTAssertTrue(status.isAnyConnect)
+        XCTAssertEqual(status.reason, "server-idle-timeout")
+    }
+
+    func testIdleStatusLeavesTheDataPlaneRunning() {
+        var gate = EngineCallbackRuntimeGate()
+        gate.consumeStatus("{\"status\":\"connected\"}")
+        gate.consumeStatus(
+            "{\"status\":\"line_idle\",\"line_type\":\"vpn\"}"
+        )
+
+        XCTAssertEqual(gate.phase, .running)
+    }
+}

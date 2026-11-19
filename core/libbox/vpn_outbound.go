@@ -105,7 +105,7 @@ func (o *vpnOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	// 连接到解析后的目标:读方向只会收到该 peer 的包(源地址天然正确),
 	// 写方向即便 sing-box 传来的是 FQDN(空 IP)的 UDPAddr,也由 vpnPacketConn
 	// 重定向到 raddr。ListenPacket 语义是"每个目标一条流",连接式最贴合。
-	conn, err := o.line.DialUDP(nil, raddr)
+	conn, err := o.line.DialUDP(ctx, nil, raddr)
 	if err != nil {
 		return nil, E.Cause(err, "AnyConnect outbound: listen packet to ", destination)
 	}
@@ -163,7 +163,7 @@ func (o *vpnOutbound) resolveViaTunnel(ctx context.Context, server netip.Addr, f
 	}
 
 	raddr := &net.UDPAddr{IP: net.IP(server.AsSlice()), Port: 53}
-	conn, err := o.line.DialUDP(nil, raddr)
+	conn, err := o.line.DialUDP(ctx, nil, raddr)
 	if err != nil {
 		return netip.Addr{}, false
 	}
