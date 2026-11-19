@@ -1,6 +1,6 @@
 --- a/route/conn.go
 +++ b/route/conn.go
-@@ -275,7 +275,7 @@
+@@ -275,10 +275,10 @@
  	var xdialUpstreamFailed bool
  	if err != nil {
  		xdialUpstreamFailed = xdialCloseFailedRelay(source, destination, direction, err)
@@ -8,15 +8,34 @@
 +	} else if duplexDst, isDuplex := xdialWriteCloser(destination); isDuplex {
  		err = duplexDst.CloseWrite()
  		if err != nil {
- 			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err)
+-			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err)
++			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err, done.Load())
+ 		}
+ 	} else {
+ 		destination.Close()
+--- a/route/xdial_relay_close.go
++++ b/route/xdial_relay_close.go
+@@ -45,7 +45,10 @@
+ // a clean end, so a destination that was already dead surfaces here. The
+ // failing connection is known: it is the upstream exactly when relaying the
+ // upload direction, where the application is still waiting for an answer.
+-func xdialCloseAfterFailedHalfClose(source net.Conn, destination net.Conn, download bool, err error) bool {
++func xdialCloseAfterFailedHalfClose(source net.Conn, destination net.Conn, download bool, err error, peerFinished bool) bool {
++	if peerFinished {
++		return xdialHalfCloseFailureAfterPeerFinished(source, destination)
++	}
+ 	if download {
+ 		common.Close(source, destination)
+ 		return false
 --- /dev/null
 +++ b/route/xdial_half_close.go
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,36 @@
 +package route
 +
 +import (
 +	"net"
 +
++	"github.com/sagernet/sing/common"
 +	N "github.com/sagernet/sing/common/network"
 +)
 +
@@ -36,9 +55,20 @@
 +	writeCloser, isDuplex := writer.(N.WriteCloser)
 +	return writeCloser, isDuplex
 +}
++
++// xdialHalfCloseFailureAfterPeerFinished closes both ends quietly when a
++// half-close failed after the other relay direction had already finished. That
++// direction either delivered the upstream's end of stream in full or reported
++// its own failure, so the application has nothing more to learn: an upstream
++// that sent its FIN and was then torn down refuses the half-close, and that is
++// not an interruption of anything.
++func xdialHalfCloseFailureAfterPeerFinished(source net.Conn, destination net.Conn) bool {
++	common.Close(source, destination)
++	return false
++}
 --- /dev/null
 +++ b/route/xdial_half_close_test.go
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,97 @@
 +package route
 +
 +import (
@@ -46,6 +76,7 @@
 +	"net"
 +	"sync/atomic"
 +	"testing"
++	"time"
 +
 +	"github.com/sagernet/sing-box/log"
 +	"github.com/sagernet/sing/common/bufio"
@@ -108,4 +139,30 @@
 +
 +func (c *xdialFramingConn) Upstream() any {
 +	return c.Conn
++}
++
++// The upstream finished sending and was then torn down (a FIN followed by a
++// reset is common when a server closes with input still unread). The answer
++// already reached the application in full, so when the application finishes in
++// turn there is nothing left to signal: the failed half-close of the dead
++// upstream is not reported and does not reset the application.
++func TestXDialRelayHalfCloseOfAFinishedUpstreamIsQuiet(t *testing.T) {
++	fixture := newXDialTrackedRelayFixture(t)
++
++	_, err := fixture.origin.Write([]byte("answer"))
++	require.NoError(t, err)
++	require.NoError(t, fixture.origin.CloseWrite())
++	received, err := io.ReadAll(fixture.application)
++	require.NoError(t, err)
++	require.Equal(t, "answer", string(received))
++
++	require.NoError(t, fixture.origin.SetLinger(0))
++	require.NoError(t, fixture.origin.Close())
++	time.Sleep(50 * time.Millisecond)
++
++	require.NoError(t, fixture.application.CloseWrite())
++	_, err = fixture.application.Read(make([]byte, 1))
++	require.ErrorIs(t, err, io.EOF, "a finished exchange must not end in a reset")
++	time.Sleep(50 * time.Millisecond)
++	require.Empty(t, fixture.logs.warnings())
 +}
