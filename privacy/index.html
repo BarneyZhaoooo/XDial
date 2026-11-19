@@ -14,9 +14,9 @@
 </head>
 <body>
 <h1>XDial 隐私政策</h1>
-<p class="meta">更新于 2026 年 11 月 17 日 · 适用于 XDial iOS 版与 macOS 版</p>
+<p class="meta">更新于 2026 年 11 月 19 日 · 适用于 XDial iOS 版与 macOS 版</p>
 
-<p>XDial 是一款网络分流工具，由 XD Entertainment Pte Ltd 发布。它在你的设备上建立本地 VPN，按你设置的场景和规则，把网络流量分别直连或交给你配置的线路。</p>
+<p>XDial 是一款网络分流工具，由 XD Entertainment Pte Ltd 发布。它在本机按你设置的场景和规则转发网络流量。iPhone 版使用系统 VPN 扩展，Mac 商店版使用系统网络扩展。</p>
 
 <h2>我们不收集你的数据</h2>
 <ul>
@@ -34,11 +34,20 @@
 <h2>XDial 自己发出的网络请求</h2>
 <ul>
   <li><strong>你的流量</strong>：按你的配置直连，或发往你配置的线路服务器（例如所在单位的 VPN）。这些服务器由其运营者管理，适用其运营者的隐私政策。</li>
-  <li><strong>判断出口地区</strong>：自动选择场景时，XDial 会访问 Apple（gspe1-ssl.ls.apple.com）和 Cloudflare（/cdn-cgi/trace）的公开接口，读取当前网络出口所在的国家或地区。</li>
+  <li><strong>判断出口地区</strong>：配置了按出口地区选择场景时，XDial 可访问 Apple（gspe1-ssl.ls.apple.com）和 Cloudflare（/cdn-cgi/trace）的公开接口，读取当前网络出口所在的国家或地区。</li>
   <li><strong>连接自检</strong>：连接后会访问 Google、Apple 和 Cloudflare 的公开测试地址，确认网络和分流是否生效。</li>
   <li><strong>规则与订阅更新</strong>：从你配置的规则集和订阅地址下载更新。</li>
 </ul>
-<p>和所有网络请求一样，这些服务会看到你的 IP 地址；XDial 不会附带任何能识别你身份的信息。</p>
+<p>连接你配置的远端服务时，该服务会收到建立连接所需的信息。例如，AnyConnect 服务器可收到凭据、设备名称、网卡地址和协议使用的设备标识。Tailscale 控制服务器可收到设备名称、节点公钥等注册节点所需的信息。请使用你信任的服务器或订阅。</p>
+
+<h2>iPhone 的 DNS 和网络检测</h2>
+<ul>
+  <li>通过本地 VPN 解析域名时，默认使用 Cloudflare 公共 DNS（1.1.1.1，未加密的 UDP）。通过 AnyConnect 解析的名称可发往 VPN 提供的 DNS，Tailscale 名称由其解析服务处理。相应的 DNS 提供方可以看到交给它的域名查询。</li>
+  <li>连接时，XDial 可以访问 Amazon（checkip.amazonaws.com）或 Cloudflare 来查看线路的出口 IP。连接自检使用 Cloudflare 和 Apple 的测试地址，必要时使用阿里云的公共地址（223.5.5.5）。启用自动节点测速的线路还会定期访问 Google（www.gstatic.com）或配置指定的测速地址。</li>
+  <li>按出口地区选择场景需要预置地区映射。无此映射的公众版不会为该功能向 Apple 或 Cloudflare 查询地区。</li>
+  <li>这些服务会看到连接的来源 IP，可能是代理线路的出口。XDial 的连通性探测不会附带线路凭据。下载订阅时，订阅服务会收到你配置的订阅地址及其中的访问令牌。</li>
+  <li>连接记录和诊断可包含出口 IP 等信息，保存在设备上。你可以主动导出或分享给自己选定的接收方。向公开问题区反馈时，请先移除密码、订阅地址和能识别你或所在网络的内容。</li>
+</ul>
 
 <h2>儿童</h2>
 <p>XDial 不面向儿童，也不会有意收集任何人的个人信息。</p>
@@ -49,9 +58,9 @@
 <hr>
 
 <h1>XDial Privacy Policy</h1>
-<p class="meta">Updated November 17, 2026 · Applies to XDial for iOS and macOS</p>
+<p class="meta">Updated November 19, 2026 · Applies to XDial for iOS and macOS</p>
 
-<p>XDial is a network routing tool published by XD Entertainment Pte Ltd. It runs a local VPN on your device and, following the scenarios and rules you set, sends each connection either directly or through the lines you configure.</p>
+<p>XDial is a network routing tool published by XD Entertainment Pte Ltd. It routes traffic on your device according to your scenarios and rules. The iPhone app uses the system VPN extension, and the Mac App Store app uses a system network extension.</p>
 
 <h2>We do not collect your data</h2>
 <ul>
@@ -69,11 +78,20 @@
 <h2>Network requests XDial makes</h2>
 <ul>
   <li><strong>Your traffic</strong> goes directly or to the line servers you configured (for example your organization's VPN). Those servers are run by their operators, whose privacy policies apply.</li>
-  <li><strong>Exit region</strong>: when choosing a scenario automatically, XDial queries public endpoints of Apple (gspe1-ssl.ls.apple.com) and Cloudflare (/cdn-cgi/trace) to learn the country or region of the current network exit.</li>
+  <li><strong>Exit region</strong>: when configured to choose a scenario by exit region, XDial can query public endpoints of Apple (gspe1-ssl.ls.apple.com) and Cloudflare (/cdn-cgi/trace) to learn the country or region of the current network exit.</li>
   <li><strong>Connection self-check</strong>: after connecting, XDial requests public test URLs from Google, Apple and Cloudflare to confirm that the network and routing work.</li>
   <li><strong>Rule and subscription updates</strong> are downloaded from the addresses you configured.</li>
 </ul>
-<p>As with any network request, these services see your IP address; XDial adds nothing that identifies you.</p>
+<p>When connecting to a remote service you configure, that service receives the information its protocol needs. For example, an AnyConnect server may receive credentials, the device name, a network interface address and a device identifier. A Tailscale control server may receive the device name, node public key and other node registration information. Choose servers and subscriptions you trust.</p>
+
+<h2>DNS and network checks on iPhone</h2>
+<ul>
+  <li>For name resolution through the local VPN, the default is Cloudflare public DNS (1.1.1.1, unencrypted UDP). Names resolved through AnyConnect may go to the DNS server supplied by that VPN. Tailscale names use its resolver. The respective DNS provider can see the names sent to it.</li>
+  <li>When connecting, XDial may check a line’s public IP address with Amazon (checkip.amazonaws.com) or Cloudflare. Connectivity tests use Cloudflare and Apple test addresses and may fall back to an Alibaba Cloud public address (223.5.5.5). Lines that automatically measure node latency periodically reach Google (www.gstatic.com) or the test address in your configuration.</li>
+  <li>Exit-region selection requires a preset with region mappings. A public build without those mappings does not query Apple or Cloudflare for that feature.</li>
+  <li>These services can see the source IP of the connection, which may be your proxy’s exit address. Connectivity tests do not include line credentials. When a subscription is downloaded, its provider receives the subscription URL and any access token in that URL.</li>
+  <li>Connection history and diagnostics, which may contain exit IP addresses, stay on your device. You can export or share them with a recipient you select. Remove passwords, subscription URLs and information identifying you or your network before posting in a public issue.</li>
+</ul>
 
 <h2>Children</h2>
 <p>XDial is not directed at children and does not knowingly collect personal information from anyone.</p>
