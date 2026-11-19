@@ -3,11 +3,14 @@ import UniformTypeIdentifiers
 
 struct MobileSettingsView: View {
     @EnvironmentObject private var app: AppState
+    /// 为 true 时，打开后直接弹出「导入配置」并复位。用绑定读取弹出时的当前值。
+    var startsImport: Binding<Bool>? = nil
 
     @State private var timelineSnapshot: ConnectionTimeline.File?
     @State private var exportDocument: MobileJSONDocument?
     @State private var isExporting = false
     @State private var isImporting = false
+    @State private var showingDataUseNotice = false
     @State private var isConfirmingReset = false
     @State private var isConfirmingProfileRemoval = false
     @State private var notice: SettingsNotice?
@@ -28,7 +31,9 @@ struct MobileSettingsView: View {
                                     .font(.title)
                                     .foregroundStyle(XDialTheme.accent)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(line.name.isEmpty ? app.tr("公司 VPN", "Company VPN") : line.name)
+                                    Text(line.name.isEmpty
+                                         ? (app.hasCompanyPreset ? app.tr("公司 VPN", "Company VPN") : app.tr("VPN 账号", "VPN Account"))
+                                         : line.name)
                                         .foregroundStyle(XDialTheme.ink)
                                     Text(app.accountIsIncomplete
                                          ? app.tr("未登录", "Not signed in")
@@ -131,6 +136,19 @@ struct MobileSettingsView: View {
                     }
                     .accessibilityIdentifier("settings-diagnostics")
 
+                    Button {
+                        showingDataUseNotice = true
+                    } label: {
+                        Label(app.tr("数据使用说明", "How XDial Uses Data"), systemImage: "hand.raised")
+                    }
+                    .accessibilityIdentifier("settings-data-use")
+                    if let url = DataUseNoticeView.privacyPolicyURL {
+                        Link(destination: url) {
+                            Label(app.tr("隐私政策", "Privacy Policy"), systemImage: "doc.text")
+                        }
+                        .accessibilityIdentifier("settings-privacy-policy")
+                    }
+
                     Picker(selection: $app.language) {
                         Text("简体中文").tag(Lang.zh)
                         Text("English").tag(Lang.en)
@@ -161,9 +179,12 @@ struct MobileSettingsView: View {
                     }
                     .disabled(app.hasActiveTunnel || app.isBusy)
                 } footer: {
-                    Text(app.tr(
+                    Text(app.hasCompanyPreset ? app.tr(
                         "恢复默认会回到公司预置的线路和场景，账号需要重新登录。连接期间不可用。",
                         "Restoring returns to the company's lines and scenarios; you will sign in again. Unavailable while connected."
+                    ) : app.tr(
+                        "恢复默认会清空线路、规则和场景。连接期间不可用。",
+                        "Restoring clears lines, rules and scenarios. Unavailable while connected."
                     ))
                 }
             }
@@ -194,6 +215,17 @@ struct MobileSettingsView: View {
             .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
                 handleImport(result)
             }
+            .sheet(isPresented: $showingDataUseNotice) {
+                DataUseNoticeView(mode: .review).environmentObject(app)
+            }
+            .task {
+                // 设置页弹出的动画还没结束时，系统会忽略再弹出的文件选择。
+                guard let startsImport, startsImport.wrappedValue else { return }
+                startsImport.wrappedValue = false
+                guard !app.hasActiveTunnel else { return }
+                try? await Task.sleep(for: .milliseconds(600))
+                isImporting = true
+            }
             .confirmationDialog(
                 app.tr("恢复默认配置？", "Restore the default configuration?"),
                 isPresented: $isConfirmingReset,
@@ -204,9 +236,12 @@ struct MobileSettingsView: View {
                 }
                 Button(app.tr("取消", "Cancel"), role: .cancel) {}
             } message: {
-                Text(app.tr(
+                Text(app.hasCompanyPreset ? app.tr(
                     "线路、规则和场景会回到公司默认配置，当前配置不会保留。",
                     "Lines, rules and scenarios return to the company defaults. The current configuration is not kept."
+                ) : app.tr(
+                    "线路、规则和场景会被清空，当前配置不会保留。",
+                    "Lines, rules and scenarios are cleared. The current configuration is not kept."
                 ))
             }
             .confirmationDialog(

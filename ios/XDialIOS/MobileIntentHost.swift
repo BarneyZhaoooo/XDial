@@ -45,6 +45,10 @@ enum MobileAppRuntime {
             _ = persistence.clearForTesting()
             UserDefaults.standard.removeObject(forKey: "xdial.auto-scenario")
         }
+        // 界面自动化从已确认数据使用说明之后开始；-XDialUITestingDataUseNotice 用来测说明本身。
+        if isUITesting, !arguments.contains("-XDialUITestingDataUseNotice") {
+            persistence.defaults.set(AppState.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
+        }
         return AppState(
             engine: engine,
             tunnelManager: manager,
@@ -89,6 +93,12 @@ final class MobileIntentHost: XDialIntentHosting {
         await app.refreshTunnelProfileStatusAndWait()
         await waitWhileBusy(timeout: .seconds(10))
         if app.hasFormalTunnel { return }
+        guard app.dataUseNoticeAccepted else {
+            throw XDialIntentError.failed(app.tr(
+                "请先打开 XDial，阅读并确认数据使用说明后再连接。",
+                "Open XDial and confirm the data use notice before connecting."
+            ))
+        }
         guard app.tailscaleSetupLineID == nil else {
             throw XDialIntentError.failed(app.tr(
                 "正在设置 Tailscale 线路，请在 App 内完成后再连接。",

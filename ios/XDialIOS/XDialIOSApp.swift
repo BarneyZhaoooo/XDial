@@ -37,6 +37,12 @@ struct MobileRootView: View {
                 @unknown default: break
                 }
             }
+            .fullScreenCover(isPresented: Binding(
+                get: { !app.dataUseNoticeAccepted },
+                set: { _ in }
+            )) {
+                DataUseNoticeView(mode: .firstUse).environmentObject(app)
+            }
             #if targetEnvironment(simulator)
             .onAppear {
                 // -XDialRealFlow 跳过演示数据，按真机首次安装的流程验证。

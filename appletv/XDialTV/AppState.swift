@@ -436,6 +436,8 @@ struct AppPersistenceContext {
     var seedRevisionKey: String { "xdial.preset-scenario-version" }
     /// 「打开 XDial 后自动连接」，默认关闭。
     var connectOnOpenKey: String { "xdial.connect-on-open" }
+    /// 用户已确认的「数据使用说明」版本。说明内容有实质变化时把 AppState.dataUseNoticeVersion 加一。
+    var dataUseNoticeKey: String { "xdial.data-use-notice-version" }
 
     static let production = AppPersistenceContext(
         defaults: .standard,
@@ -538,6 +540,16 @@ final class AppState: ObservableObject {
     }
 
     /// 「打开 XDial 后自动连接」。只决定启动后是否发起一次普通连接，不接管系统层的按需连接。
+    /// 当前的「数据使用说明」版本。App Store 审核指南 5.4 要求 VPN App 在用户使用服务前
+    /// 说明收集哪些数据、如何使用；用户确认之前不发起连接，也不做需要联网的自动判断。
+    static let dataUseNoticeVersion = 1
+    @Published private(set) var dataUseNoticeAccepted: Bool
+
+    func acceptDataUseNotice() {
+        persistence.defaults.set(Self.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
+        dataUseNoticeAccepted = true
+    }
+
     @Published var connectOnOpenEnabled: Bool {
         didSet {
             persistence.defaults.set(connectOnOpenEnabled, forKey: persistence.connectOnOpenKey)
@@ -577,6 +589,8 @@ final class AppState: ObservableObject {
     let seed: ProfileSeed?
     /// 「恢复默认配置」用的那份：有预置用预置，没有用空白起步配置。
     var defaultProfile: Profile { seed?.profile ?? Profile.bootstrap() }
+    /// 包里带着企业预置（内部分发）。公开版不带预置，界面不能假定用户有公司账号或公司默认配置。
+    var hasCompanyPreset: Bool { seed != nil }
     private let keychainPrefix = "xdial-line-"
     private let subKeychainPrefix = "xdial-sub-"
     private var persistedRevision: String?
@@ -644,6 +658,9 @@ final class AppState: ObservableObject {
     }
 
     func directExitCountry() async -> ExitCountryProbeResult {
+        guard dataUseNoticeAccepted else {
+            return ExitCountryProbeResult(code: nil, failure: "未确认数据使用说明")
+        }
         guard isConnected, let tunnelManager else {
             return ExitCountryProbeResult(code: nil, failure: "未连接")
         }
@@ -1209,6 +1226,13 @@ final class AppState: ObservableObject {
         }
         self.autoReconnectEnabled = persistence.defaults.object(forKey: persistence.autoReconnectKey) as? Bool ?? true
         let connectOnOpen = persistence.defaults.object(forKey: persistence.connectOnOpenKey) as? Bool ?? false
+        #if os(tvOS)
+        // Apple TV 还没有说明页和确认入口，不受这道确认限制；tvOS 公开上架前要补上说明页。
+        self.dataUseNoticeAccepted = true
+        #else
+        self.dataUseNoticeAccepted =
+            persistence.defaults.integer(forKey: persistence.dataUseNoticeKey) >= Self.dataUseNoticeVersion
+        #endif
         self.connectOnOpenEnabled = connectOnOpen
         self.openConnectPending = connectOnOpen
         self.systemOnDemandEnabled = persistence.defaults.object(
@@ -1353,7 +1377,8 @@ final class AppState: ObservableObject {
     /// 已连接、正在连接、配置或账号不完整时不发起；不重试，失败交给已有的掉线重连规则（它不重试首次连接失败）。
     @discardableResult
     func connectAfterOpeningIfWanted(while contextIsCurrent: () -> Bool = { true }) async -> Bool {
-        guard openConnectPending else { return false }
+        // 还没确认数据使用说明：这次启动的连接留到确认之后。
+        guard openConnectPending, dataUseNoticeAccepted else { return false }
         await refreshTunnelProfileStatusAndWait()
         // 等待期间用户可能已经点了连接或断开，那就以用户为准。
         guard openConnectPending, !Task.isCancelled, contextIsCurrent() else { return false }
@@ -1376,6 +1401,13 @@ final class AppState: ObservableObject {
 
     func connect(origin: ConnectionTimeline.StartOrigin = .user) {
         if origin != .launch { openConnectPending = false }
+        guard dataUseNoticeAccepted else {
+            engine.lastError = tr(
+                "请先阅读并确认数据使用说明，再连接。",
+                "Review and confirm the data use notice before connecting."
+            )
+            return
+        }
         if origin != .autoRetry {
             autoReconnectAttempt = 0
             autoReconnectTask?.cancel()
@@ -3185,8 +3217,9 @@ extension AppState {
     }
 
     /// App 回到前台、打开「自动」或网络变化时：请扩展按当前网络判断一次。
+    /// 用户确认数据使用说明之前不请扩展判断：判断可能查询出口地区。确认后首页会重新判断一次。
     func requestTunnelScenarioEvaluation() async -> TunnelScenarioEvaluationResult {
-        guard isConnected, let tunnelManager else { return .unavailable }
+        guard dataUseNoticeAccepted, isConnected, let tunnelManager else { return .unavailable }
         switch await tunnelManager.requestScenarioEvaluation() {
         case .evaluated(let state):
             adoptTunnelScenario(state, base: nil)

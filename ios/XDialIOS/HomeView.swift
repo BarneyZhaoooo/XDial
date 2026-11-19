@@ -9,6 +9,8 @@ struct HomeView: View {
     @State private var signInLineID: SignInTarget?
     @State private var connectAfterSignIn = false
     @State private var showingSettings = false
+    /// 打开设置时直接弹出「导入配置」（公开版首页空状态的入口）。
+    @State private var settingsStartsImport = false
     @State private var showingAdvanced = false
     @State private var showingProblemDetail = false
     @State private var isConfirmingReset = false
@@ -89,8 +91,8 @@ struct HomeView: View {
             }
             .environmentObject(app)
         }
-        .sheet(isPresented: $showingSettings) {
-            MobileSettingsView()
+        .sheet(isPresented: $showingSettings, onDismiss: { settingsStartsImport = false }) {
+            MobileSettingsView(startsImport: $settingsStartsImport)
                 .environmentObject(app)
         }
         .sheet(isPresented: $showingAdvanced) {
@@ -110,9 +112,12 @@ struct HomeView: View {
             }
             Button(app.tr("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text(app.tr(
+            Text(app.hasCompanyPreset ? app.tr(
                 "线路、规则和场景会回到公司默认配置，账号需要重新登录。",
                 "Lines, rules and scenarios return to the company defaults. You will need to sign in again."
+            ) : app.tr(
+                "线路、规则和场景会被清空，回到初始状态。",
+                "Lines, rules and scenarios are cleared back to the initial state."
             ))
         }
         .sensoryFeedback(.error, trigger: problem?.detail) { _, new in new != nil }
@@ -127,6 +132,10 @@ struct HomeView: View {
             Task {
                 await refreshScenarioAndConnectAfterOpening()
             }
+        }
+        .onChange(of: app.dataUseNoticeAccepted) { _, accepted in
+            // 确认说明后接着做刚才没做的判断，以及本次启动的自动连接。
+            if accepted { Task { await refreshScenarioAndConnectAfterOpening() } }
         }
         .onChange(of: autoScenario) { _, isOn in
             showingAutoScenarios = false
@@ -157,7 +166,8 @@ struct HomeView: View {
         // 所有入口（首次显示、回到前台、换网络、开关、断开与点连接）都先读系统状态。
         // 冷启动时扩展可能已经在跑，不能把 App 的初始 disconnected 当成真实状态。
         await app.refreshTunnelProfileStatusAndWait()
-        guard !Task.isCancelled, autoScenario, !app.profile.scenarios.isEmpty else { return }
+        // 用户确认数据使用说明之前，不做需要联网的自动判断（出口地区查询）。
+        guard !Task.isCancelled, app.dataUseNoticeAccepted, autoScenario, !app.profile.scenarios.isEmpty else { return }
         if app.isConnected {
             // 网络变化时扩展自己已经在判断，这里只同步它的结论。
             if afterNetworkChange, app.tunnelScenarioState != nil {
@@ -312,7 +322,8 @@ struct HomeView: View {
     private var problem: ConnectionProblem? {
         ConnectionProblem.classify(
             app.engine.lastError.map(userFacingConnectionText),
-            isChinese: app.language == .zh
+            isChinese: app.language == .zh,
+            companyPreset: app.hasCompanyPreset
         )
     }
     private var setupIssues: [String] {
@@ -357,7 +368,9 @@ struct HomeView: View {
             return app.tr("轻点拨盘断开", "Tap the dial to disconnect")
         }
         if app.activeScenarioNeedsSignIn {
-            return app.tr("登录公司账号后就能连接", "Sign in with your company account to connect")
+            return app.hasCompanyPreset
+                ? app.tr("登录公司账号后就能连接", "Sign in with your company account to connect")
+                : app.tr("登录账号后就能连接", "Sign in to connect")
         }
         if !app.isConnectionConfigured {
             return app.tr("当前场景还没设置好", "This scenario isn't ready yet")
@@ -730,14 +743,31 @@ struct HomeView: View {
                     symbol: "square.stack.3d.up.slash",
                     tint: XDialTheme.inkSecondary,
                     title: app.tr("还没有场景", "No scenarios yet"),
-                    message: app.tr(
+                    message: app.hasCompanyPreset ? app.tr(
                         "场景决定哪些网站走公司 VPN。恢复默认配置就能直接用。",
                         "A scenario decides which sites use the company VPN. Restore the defaults to get started."
+                    ) : app.tr(
+                        "场景决定哪些网站走哪条线路。导入你的配置文件，或者在「线路与规则」里添加服务器和场景。",
+                        "A scenario decides which line each site uses. Import your configuration file, or add your servers and scenarios in Lines & Rules."
                     ),
                     identifier: "home-no-scenarios"
                 ) {
-                    Button(app.tr("恢复默认配置", "Restore Defaults")) { isConfirmingReset = true }
-                        .buttonStyle(XDialPillButtonStyle())
+                    if app.hasCompanyPreset {
+                        Button(app.tr("恢复默认配置", "Restore Defaults")) { isConfirmingReset = true }
+                            .buttonStyle(XDialPillButtonStyle())
+                    } else {
+                        HStack(spacing: 10) {
+                            Button(app.tr("导入配置", "Import")) {
+                                settingsStartsImport = true
+                                showingSettings = true
+                            }
+                            .buttonStyle(XDialPillButtonStyle())
+                            .accessibilityIdentifier("home-import-configuration")
+                            Button(app.tr("添加线路", "Add a Line")) { showingAdvanced = true }
+                                .buttonStyle(XDialPillButtonStyle())
+                                .accessibilityIdentifier("home-add-line")
+                        }
+                    }
                 }
             } else if !autoScenario || showingAutoScenarios {
                 VStack(spacing: 10) {
@@ -811,7 +841,9 @@ struct HomeView: View {
 
     private func displayName(_ line: Line) -> String {
         let name = line.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? app.tr("公司 VPN", "Company VPN") : name
+        return name.isEmpty
+            ? (app.hasCompanyPreset ? app.tr("公司 VPN", "Company VPN") : app.tr("VPN 账号", "VPN Account"))
+            : name
     }
 
     private func presentSignIn(_ lineID: String) {
