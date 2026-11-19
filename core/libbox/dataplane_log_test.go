@@ -349,11 +349,50 @@ func TestDataPlaneKeepsUpstreamFinCleanAndQuiet(t *testing.T) {
 	if string(received) != "bye" {
 		t.Fatalf("application received %q", received)
 	}
+	// 上游只结束了它的发送方向，应用这一侧还能继续发。
+	if _, err := application.Write([]byte("late")); err != nil {
+		t.Fatalf("write after upstream FIN: %v", err)
+	}
+	late := make([]byte, 4)
+	if _, err := io.ReadFull(origin, late); err != nil || string(late) != "late" {
+		t.Fatalf("origin received %q: %v", late, err)
+	}
 	if err := application.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := origin.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("origin read = %v, want EOF", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if lines := sink.snapshot(); len(lines) != 0 {
+		t.Fatalf("a clean flow reached the sink: %+v", lines)
+	}
+}
+
+// 应用发完请求先结束发送方向、再等应答，是 TCP 的正常用法。数据面给每条出站连接
+// 套的跟踪包装不转发半关闭，上游连接曾因此被整个关掉，应答丢失。
+func TestDataPlaneForwardsApplicationHalfCloseAndDeliversTheReply(t *testing.T) {
+	sink := &recordingDataPlaneLogSink{}
+	application, origin := relayThroughDataPlane(t, sink)
+
+	if err := application.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := origin.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("origin read = %v, want EOF", err)
+	}
+	if _, err := origin.Write([]byte("reply")); err != nil {
+		t.Fatalf("origin could not answer after the application's FIN: %v", err)
+	}
+	if err := origin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	received, err := io.ReadAll(application)
+	if err != nil {
+		t.Fatalf("application read = %v, want the reply and a clean EOF", err)
+	}
+	if string(received) != "reply" {
+		t.Fatalf("application received %q", received)
 	}
 	time.Sleep(50 * time.Millisecond)
 	if lines := sink.snapshot(); len(lines) != 0 {
