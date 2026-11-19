@@ -49,6 +49,10 @@
   <li>连接记录和诊断可包含出口 IP 等信息，保存在设备上。你可以主动导出或分享给自己选定的接收方。向公开问题区反馈时，请先移除密码、订阅地址和能识别你或所在网络的内容。</li>
 </ul>
 
+<h2>Mac 的 Wi-Fi 权限和线路出口地址</h2>
+<p>如果你要按 Wi-Fi 名称自动切换场景，Mac 版可在你点击相关设置时请求 macOS 的「使用期间」定位权限，以读取当前 Wi-Fi 名称。名称只在本机与场景设置比对。你也可以手动选择场景。</p>
+<p>查询一条已连接线路的公网 IPv4 地址时，Mac 版可经该线路访问 Cloudflare 或腾讯（r.inews.qq.com/api/ip2city）。被访问的服务能看到这条线路的出口 IP。XDial 从腾讯的响应中读取 IP 地址；这项探测不会发送 Wi-Fi 名称或设备定位坐标，也不会读取响应中的城市。</p>
+
 <h2>儿童</h2>
 <p>XDial 不面向儿童，也不会有意收集任何人的个人信息。</p>
 
@@ -92,6 +96,10 @@
   <li>These services can see the source IP of the connection, which may be your proxy’s exit address. Connectivity tests do not include line credentials. When a rule or subscription is downloaded, its provider receives the configured URL, including any token, username or password already in that URL.</li>
   <li>Connection history and diagnostics, which may contain exit IP addresses, stay on your device. You can export or share them with a recipient you select. Remove passwords, subscription URLs and information identifying you or your network before posting in a public issue.</li>
 </ul>
+
+<h2>Wi-Fi permission and line exit addresses on Mac</h2>
+<p>If you want to switch scenarios by Wi-Fi name, the Mac app can request macOS location permission while in use when you choose the relevant setting. This lets it read the current Wi-Fi name and match it against your scenarios on the Mac. You can also choose a scenario manually.</p>
+<p>When checking a connected line’s public IPv4 address, the Mac app may contact Cloudflare or Tencent (r.inews.qq.com/api/ip2city) through that line. The service sees the line’s exit IP address. XDial reads the IP address from Tencent’s response. This probe does not send the Wi-Fi name or device coordinates. It does not read the city from the response.</p>
 
 <h2>Children</h2>
 <p>XDial is not directed at children and does not knowingly collect personal information from anyone.</p>
