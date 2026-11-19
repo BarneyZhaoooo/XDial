@@ -1664,6 +1664,18 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             resetDegradedRecheck()
             engine?.applySystemStatus("reconnecting", connectedAt: connection.connectedDate)
         case .disconnected, .invalid:
+            #if os(iOS)
+            if connection.status == .disconnected,
+               previousStatus == .connected || previousStatus == .reasserting || previousStatus == .disconnecting {
+                // A killed provider cannot run either of its notification paths.
+                // iOS distinguishes this case from a manual stop and provider-reported errors.
+                connection.fetchLastDisconnectError { error in
+                    guard let error = error as NSError?, error.domain == NEVPNConnectionErrorDomain,
+                          error.code == NEVPNConnectionError.pluginFailed.rawValue else { return }
+                    ConnectionNotice.disconnect.post()
+                }
+            }
+            #endif
             dataPathProbeTask?.cancel()
             dataPathProbeTask = nil
             dataPathProbeID = nil

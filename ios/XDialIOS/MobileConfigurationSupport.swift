@@ -385,6 +385,7 @@ enum MobileDiagnosticsService {
         lastError: String?,
         dataPathSummary: String?,
         autoScenarioSummary: String? = nil,
+        onDemandStatus: String? = nil,
         environment: String? = nil,
         scenarioName: String? = nil,
         timeline: ConnectionTimeline.File? = nil,
@@ -395,6 +396,10 @@ enum MobileDiagnosticsService {
             profile: profile, lastError: lastError, dataPathSummary: dataPathSummary,
             autoScenarioSummary: autoScenarioSummary, isChinese: isChinese)
         var sections = [base]
+        if let onDemandStatus {
+            let safe = redacted(onDemandStatus, using: profile) ?? ""
+            sections.append((isChinese ? "系统按需重连：" : "System on-demand reconnect: ") + safe)
+        }
         if let timeline, let summary = ConnectionTimelineReport.reconnectSummary(timeline, isChinese: isChinese) {
             sections.append(redactedKeepingAddresses(summary, using: profile))
         }

@@ -276,6 +276,7 @@ struct MobileSettingsView: View {
                 ? app.tr("正在重新检测出口与分流", "Rechecking connectivity and routing")
                 : app.engine.dataPathSummary,
             autoScenarioSummary: autoScenarioSummary,
+            onDemandStatus: systemOnDemandStatusText,
             environment: MobileDiagnosticsService.environmentSummary(version: version),
             scenarioName: app.activeScenario?.name,
             timeline: timelineSnapshot,

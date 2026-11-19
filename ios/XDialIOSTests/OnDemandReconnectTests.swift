@@ -115,6 +115,10 @@ final class OnDemandReconnectTests: XCTestCase {
             startedFromSecureEnvelope: true,
             startupStage: "underlay_interface_failed"
         ))
+        XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true,
+            startupStage: "remote_address_resolution_failed"
+        ))
     }
 
     func testNonemptySystemOptionsDoNotMasqueradeAsManualStart() {
