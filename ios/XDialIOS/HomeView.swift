@@ -41,7 +41,7 @@ struct HomeView: View {
                 ? min(240, max(170, proxy.size.height * 0.36))
                 : min(216, max(160, proxy.size.height * 0.26))
             ScrollView {
-                VStack(spacing: 22) {
+                VStack(spacing: 12) {
                     header
                     columns {
                         VStack(spacing: 22) {
@@ -379,13 +379,15 @@ struct HomeView: View {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(XDialTheme.accent)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                     .xdialGlass(interactive: true, in: Circle(), fallback: XDialTheme.surface)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel(app.tr("设置", "Settings"))
             .accessibilityIdentifier("home-settings")
         }
-        .padding(.top, 8)
+        .padding(.top, 24)
     }
 
     private func hero(dialDiameter: CGFloat) -> some View {
