@@ -1226,13 +1226,8 @@ final class AppState: ObservableObject {
         }
         self.autoReconnectEnabled = persistence.defaults.object(forKey: persistence.autoReconnectKey) as? Bool ?? true
         let connectOnOpen = persistence.defaults.object(forKey: persistence.connectOnOpenKey) as? Bool ?? false
-        #if os(tvOS)
-        // Apple TV 还没有说明页和确认入口，不受这道确认限制；tvOS 公开上架前要补上说明页。
-        self.dataUseNoticeAccepted = true
-        #else
         self.dataUseNoticeAccepted =
             persistence.defaults.integer(forKey: persistence.dataUseNoticeKey) >= Self.dataUseNoticeVersion
-        #endif
         self.connectOnOpenEnabled = connectOnOpen
         self.openConnectPending = connectOnOpen
         self.systemOnDemandEnabled = persistence.defaults.object(
