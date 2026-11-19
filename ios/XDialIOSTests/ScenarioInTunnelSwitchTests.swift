@@ -240,6 +240,7 @@ final class ScenarioInTunnelSwitchTests: XCTestCase {
         let persistence = AppPersistenceContext.testing(identifier: "switch-" + UUID().uuidString)
         XCTAssertTrue(persistence.clearForTesting())
         addTeardownBlock { _ = persistence.clearForTesting() }
+        persistence.defaults.set(AppState.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
         let engine = SwitchSpyEngine()
         let manager = SwitchSpyManager(engine: engine)
         let app = AppState(engine: engine, tunnelManager: manager, persistence: persistence)
