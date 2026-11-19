@@ -3163,13 +3163,14 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         var expiration: (@MainActor () -> Void)?
     }
 
-    private func makeGuard(_ app: AppState, grace: Duration) -> (TailscaleSetupBackgroundGuard, TaskLog) {
+    private func makeGuard(_ app: AppState, grace: Duration,
+                           identifier: UIBackgroundTaskIdentifier = UIBackgroundTaskIdentifier(rawValue: 42)) -> (TailscaleSetupBackgroundGuard, TaskLog) {
         let log = TaskLog()
         let tasks = TailscaleSetupBackgroundGuard.BackgroundTasks(
             begin: { expiration in
                 log.begun += 1
                 log.expiration = expiration
-                return UIBackgroundTaskIdentifier(rawValue: 42)
+                return identifier
             },
             end: { log.ended.append($0) }
         )
@@ -3215,6 +3216,40 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         XCTAssertEqual(runtime.stopCallCount, 1)
         XCTAssertEqual(log.ended.count, 1)
         _ = guardian
+    }
+
+    func testDeniedBackgroundTimeStopsImmediatelyAndWaitsForLockRelease() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        runtime.deferStopCompletion = true
+        let (guardian, log) = makeGuard(app, grace: .seconds(60), identifier: .invalid)
+        guardian.enteredBackground()
+        XCTAssertEqual(runtime.stopCallCount, 1)
+        XCTAssertTrue(log.ended.isEmpty)
+        guardian.becameActive()
+        XCTAssertEqual(runtime.startCalls.count, 1)
+        runtime.completeStop()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 2)
+        XCTAssertTrue(log.ended.isEmpty, "never end an invalid background task")
+    }
+
+    func testBackgroundProtectionJoinsAnExplicitStopWithoutResumingIt() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        runtime.deferStopCompletion = true
+        app.finishTailscaleSetup()
+        let (guardian, log) = makeGuard(app, grace: .seconds(60))
+        guardian.enteredBackground()
+        log.expiration?()
+        log.expiration?() // duplicate expiration must not finish protection early
+        XCTAssertEqual(runtime.stopCallCount, 1)
+        XCTAssertTrue(log.ended.isEmpty)
+        guardian.becameActive()
+        runtime.completeStop()
+        await settle()
+        XCTAssertEqual(log.ended.count, 1)
+        XCTAssertEqual(runtime.startCalls.count, 1, "an explicit finish must stay finished")
     }
 
     func testNoBackgroundTaskWithoutSetup() {

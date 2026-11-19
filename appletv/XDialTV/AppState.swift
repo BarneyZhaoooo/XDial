@@ -2666,7 +2666,13 @@ final class AppState: ObservableObject {
     /// 挂起时仍持有会被 RunningBoard 以 0xdead10cc 结束进程。先停掉设置（释放锁），记下线路，
     /// 回到前台再由 resumeTailscaleSetupAfterBackground 接着做。没有设置在跑时直接完成。
     func pauseTailscaleSetupForBackground(completion: @escaping () -> Void) {
-        guard let lineID = tailscaleSetupLineID, !isStoppingTailscaleSetup else {
+        // An explicit finish may already be releasing the lock. Join that stop
+        // without marking the user-finished setup for automatic resumption.
+        if isStoppingTailscaleSetup {
+            finishTailscaleSetup(completion: completion)
+            return
+        }
+        guard let lineID = tailscaleSetupLineID else {
             completion()
             return
         }

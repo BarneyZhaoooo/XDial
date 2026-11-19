@@ -50,6 +50,11 @@ final class TailscaleSetupBackgroundGuard {
     func enteredBackground() {
         guard app.tailscaleSetupLineID != nil, pendingPause == nil, !pausing else { return }
         task = tasks.begin { [weak self] in self?.pause() }
+        guard task != .invalid else {
+            // No execution time was granted, so there is no protected grace period.
+            pause()
+            return
+        }
         pendingPause = Task { [weak self, grace] in
             try? await Task.sleep(for: grace)
             guard !Task.isCancelled else { return }
