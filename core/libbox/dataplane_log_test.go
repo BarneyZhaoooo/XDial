@@ -59,6 +59,13 @@ func TestDataPlaneLogRedaction(t *testing.T) {
 			summary: "[77 1.52s] connection: connection download interrupted by upstream: reason=reset: raw read: connection reset by peer",
 		},
 		{
+			// The device showed this one with its reason taken for a token.
+			name:    "long errno reason",
+			message: "WARN[0001] [7 22m53s] connection: connection upload interrupted by upstream: reason=errno-socket-is-not-connected: close tcp 192.0.2.7:51234->198.51.100.9:443: shutdown: socket is not connected",
+			detail:  "[7 22m53s] connection: connection upload interrupted by upstream: reason=errno-socket-is-not-connected: close tcp 192.0.2.7:51234->198.51.100.9:443: shutdown: socket is not connected",
+			summary: "[7 22m53s] connection: connection upload interrupted by upstream: reason=errno-socket-is-not-connected: close tcp <redacted> shutdown: socket is not connected",
+		},
+		{
 			name:    "socket addresses",
 			message: "ERROR[0001] connection: connection upload closed: write tcp 192.0.2.7:51234->198.51.100.9:443: write: network is down",
 			detail:  "connection: connection upload closed: write tcp 192.0.2.7:51234->198.51.100.9:443: write: network is down",

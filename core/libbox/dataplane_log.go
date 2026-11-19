@@ -126,6 +126,7 @@ var (
 		`(?i)\b(user(name)?|pass(word)?|passwd|token|secret|auth(orization)?|key|uuid)\s*[=:]`,
 	)
 	dataPlaneLogDuration = regexp.MustCompile(`^\d+(\.\d+)?(ns|µs|us|ms|s|m|h)+$`)
+	dataPlaneLogReason   = regexp.MustCompile(`^reason=[a-z0-9-]+$`)
 	dataPlaneLogOpaque   = regexp.MustCompile(`^[A-Za-z0-9+/_=-]{32,}$`)
 )
 
@@ -162,6 +163,11 @@ func dataPlaneLogWordIsIdentifier(word string) bool {
 	core := strings.Trim(word, "[]()<>\"',;")
 	core = strings.TrimRight(core, ":.")
 	if core == "" || dataPlaneLogDuration.MatchString(core) {
+		return false
+	}
+	// The relay's own failure reason, built from fixed codes and errno names.
+	// A long errno name must not read as an opaque token.
+	if dataPlaneLogReason.MatchString(core) {
 		return false
 	}
 	return strings.ContainsAny(core, ":@.") ||
