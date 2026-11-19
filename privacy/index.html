@@ -49,7 +49,13 @@
   <li>连接记录和诊断可包含出口 IP 等信息，保存在设备上。你可以主动导出或分享给自己选定的接收方。向公开问题区反馈时，请先移除密码、订阅地址和能识别你或所在网络的内容。</li>
 </ul>
 
-<h2>Mac 的 Wi-Fi 权限和线路出口地址</h2>
+<h2>Mac 商店版的网络请求和权限</h2>
+<ul>
+  <li>连接期间，直连域名交给 Mac 的本地 DNS。走代理的域名通过该代理向 Cloudflare（1.1.1.1）发起加密 DNS 查询。查找代理服务器自身的域名时使用阿里公共加密 DNS（223.5.5.5）。AnyConnect 使用 VPN 提供的 DNS，Tailscale 名称在本机解析。</li>
+  <li>每次连接会与 Cloudflare 和 Google 公共 DNS 做 TLS 握手，以检查连通性。当前场景的线路会通过 www.gstatic.com 或线路组指定的地址测延迟，断开状态下也可能测一次。订阅和 Tailscale 线路还可能访问 checkip.amazonaws.com 取得出口 IP。</li>
+  <li>订阅按你设定的间隔刷新，默认每天一次。连接时缺少规则缓存或缓存已超过一天，会重新下载规则。提供方能看到请求的完整地址，包括地址中携带的访问令牌等凭据。</li>
+  <li>使用 AnyConnect 时，你配置的 VPN 服务器会收到电脑名称、系统名称及版本、硬件标识和网卡 MAC 地址。使用 Tailscale 时，其控制服务器会收到随机生成的设备名和节点注册信息。Mac 商店版由 App Store 提供更新。</li>
+</ul>
 <p>如果你要按 Wi-Fi 名称自动切换场景，Mac 版可在你点击相关设置时请求 macOS 的「使用期间」定位权限，以读取当前 Wi-Fi 名称。名称只在本机与场景设置比对。你也可以手动选择场景。</p>
 <p>查询一条已连接线路的公网 IPv4 地址时，Mac 版可经该线路访问 Cloudflare 或腾讯（r.inews.qq.com/api/ip2city）。被访问的服务能看到这条线路的出口 IP。XDial 从腾讯的响应中读取 IP 地址；这项探测不会发送 Wi-Fi 名称或设备定位坐标，也不会读取响应中的城市。</p>
 
@@ -97,7 +103,13 @@
   <li>Connection history and diagnostics, which may contain exit IP addresses, stay on your device. You can export or share them with a recipient you select. Remove passwords, subscription URLs and information identifying you or your network before posting in a public issue.</li>
 </ul>
 
-<h2>Wi-Fi permission and line exit addresses on Mac</h2>
+<h2>Network requests and permissions in the Mac App Store version</h2>
+<ul>
+  <li>While connected, the Mac uses its local DNS resolver for direct connections. For proxied connections it sends encrypted DNS queries through the proxy to Cloudflare (1.1.1.1). It uses Alibaba encrypted DNS (223.5.5.5) to look up the proxy server itself. AnyConnect uses the DNS provided by the VPN. Tailscale names are resolved locally.</li>
+  <li>On each connection the app performs TLS handshakes with Cloudflare and Google Public DNS to check connectivity. Lines in the active scenario may contact www.gstatic.com or the line group's test address to measure latency, including once while disconnected. Subscription and Tailscale lines may also contact checkip.amazonaws.com to look up their exit IP.</li>
+  <li>Subscriptions refresh at the interval you set, daily by default. On connection the app downloads rule files if the cached copy is missing or more than a day old. The provider receives the full URL, including any credentials such as access tokens embedded in it.</li>
+  <li>When you use AnyConnect, your VPN server receives your computer name, OS name and version, hardware identifier and network adapter's MAC address. With Tailscale, the control server receives a randomly generated device name and node registration details. Updates to this edition are delivered by the Mac App Store.</li>
+</ul>
 <p>If you want to switch scenarios by Wi-Fi name, the Mac app can request macOS location permission while in use when you choose the relevant setting. This lets it read the current Wi-Fi name and match it against your scenarios on the Mac. You can also choose a scenario manually.</p>
 <p>When checking a connected line’s public IPv4 address, the Mac app may contact Cloudflare or Tencent (r.inews.qq.com/api/ip2city) through that line. The service sees the line’s exit IP address. XDial reads the IP address from Tencent’s response. This probe does not send the Wi-Fi name or device coordinates. It does not read the city from the response.</p>
 
