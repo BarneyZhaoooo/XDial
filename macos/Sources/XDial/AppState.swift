@@ -852,8 +852,10 @@ final class AppState: ObservableObject {
     #endif
 
     private func synchronizeLineLatencies() {
+        // Measurements go online, through the running session or a temporary one.
+        guard dataUseNoticeAccepted else { return }
         defer {
-            if dataUseNoticeAccepted, !engine.isBusy, let scenario = activeScenario {
+            if !engine.isBusy, let scenario = activeScenario {
                 lineLatencies.ensureScenarioMeasurements(scenario, profileID: profileLibrary.activeProfileID)
             }
         }
@@ -891,7 +893,9 @@ final class AppState: ObservableObject {
             clearLineObservations()
             return
         }
-        guard lineObservationTransactionID != runtime.transactionID else { return }
+        // Exit address lookups go online; an adopted session waits for the data use notice.
+        guard dataUseNoticeAccepted,
+              lineObservationTransactionID != runtime.transactionID else { return }
         lineObservationTransactionID = runtime.transactionID
         startLineObservationWorker(report: report)
     }
@@ -1506,8 +1510,10 @@ final class AppState: ObservableObject {
         if installation.shouldPrepareAtLaunch { installation.start() }
         refreshRegionSelection()
         synchronizeLineLatencies()
+        synchronizeLineObservations(status: engine.status, report: engine.connectionReport)
         refreshDueProfiles()
         runLaunchAutoConnectIfNeeded()
+        driveScenarioSwitchIfPossible()
         if connectionAwaitsDataUseNotice {
             connectionAwaitsDataUseNotice = false
             if connectionDesired.wantsConnection, engine.status == "disconnected" { beginConnection() }
@@ -1623,6 +1629,7 @@ final class AppState: ObservableObject {
 
     /// 一键重连：把当前配置重新下发给引擎。
     func reconnect() {
+        if !dataUseNoticeAccepted { presentDataUseNotice() }
         ssidScenarioSelection.noteManualSelection()
         guard let activeScenario else { return }
         // 改变连接方式会改变系统接管，不能用保留旧连接的 Switch 完成。
@@ -1658,6 +1665,7 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func connectScenario(_ id: String, profileID: String? = nil) -> Bool {
+        if !dataUseNoticeAccepted { presentDataUseNotice() }
         ssidScenarioSelection.noteManualSelection()
         cancelNetworkEpochQuietWindow()
         return enqueueScenarioSwitch(
@@ -1671,6 +1679,7 @@ final class AppState: ObservableObject {
     /// 覆盖待切目标，控制面始终 single-flight。
     @discardableResult
     func switchScenario(to id: String) -> Bool {
+        if !dataUseNoticeAccepted { presentDataUseNotice() }
         ssidScenarioSelection.noteManualSelection()
         // 手动选择在当前稳定网络上拥有优先级；若 quiet window 中还有
         // 旧 SSID/Underlay 样本，本次 Switch 自己会重新捕获最终 Underlay。
@@ -1783,6 +1792,10 @@ final class AppState: ObservableObject {
             connect()
             return
         }
+
+        // A staged switch prepares a new candidate and goes online. Before the data use
+        // notice is confirmed it stays queued; the running session is left as it is.
+        guard dataUseNoticeAccepted else { return }
 
         guard
             engine.status == "connected",
