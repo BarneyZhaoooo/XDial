@@ -45,7 +45,7 @@
   <li>通过本地 VPN 解析域名时，默认使用 Cloudflare 公共 DNS（1.1.1.1，未加密的 UDP）。通过 AnyConnect 解析的名称可发往 VPN 提供的 DNS，Tailscale 名称由其解析服务处理。相应的 DNS 提供方可以看到交给它的域名查询。</li>
   <li>连接时，XDial 可以访问 Amazon（checkip.amazonaws.com）或 Cloudflare 来查看线路的出口 IP。连接自检使用 Cloudflare 和 Apple 的测试地址，必要时使用阿里云的公共地址（223.5.5.5）。启用自动节点测速的线路还会定期访问 Google（www.gstatic.com）或配置指定的测速地址。</li>
   <li>按出口地区选择场景需要预置地区映射。无此映射的公众版不会为该功能向 Apple 或 Cloudflare 查询地区。</li>
-  <li>这些服务会看到连接的来源 IP，可能是代理线路的出口。XDial 的连通性探测不会附带线路凭据。下载订阅时，订阅服务会收到你配置的订阅地址及其中的访问令牌。</li>
+  <li>这些服务会看到连接的来源 IP，可能是代理线路的出口。XDial 的连通性探测不会附带线路凭据。下载规则或订阅时，提供方会收到你配置的完整地址，包括地址中已有的访问令牌、用户名或密码。</li>
   <li>连接记录和诊断可包含出口 IP 等信息，保存在设备上。你可以主动导出或分享给自己选定的接收方。向公开问题区反馈时，请先移除密码、订阅地址和能识别你或所在网络的内容。</li>
 </ul>
 
@@ -89,7 +89,7 @@
   <li>For name resolution through the local VPN, the default is Cloudflare public DNS (1.1.1.1, unencrypted UDP). Names resolved through AnyConnect may go to the DNS server supplied by that VPN. Tailscale names use its resolver. The respective DNS provider can see the names sent to it.</li>
   <li>When connecting, XDial may check a line’s public IP address with Amazon (checkip.amazonaws.com) or Cloudflare. Connectivity tests use Cloudflare and Apple test addresses and may fall back to an Alibaba Cloud public address (223.5.5.5). Lines that automatically measure node latency periodically reach Google (www.gstatic.com) or the test address in your configuration.</li>
   <li>Exit-region selection requires a preset with region mappings. A public build without those mappings does not query Apple or Cloudflare for that feature.</li>
-  <li>These services can see the source IP of the connection, which may be your proxy’s exit address. Connectivity tests do not include line credentials. When a subscription is downloaded, its provider receives the subscription URL and any access token in that URL.</li>
+  <li>These services can see the source IP of the connection, which may be your proxy’s exit address. Connectivity tests do not include line credentials. When a rule or subscription is downloaded, its provider receives the configured URL, including any token, username or password already in that URL.</li>
   <li>Connection history and diagnostics, which may contain exit IP addresses, stay on your device. You can export or share them with a recipient you select. Remove passwords, subscription URLs and information identifying you or your network before posting in a public issue.</li>
 </ul>
 
