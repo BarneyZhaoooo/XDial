@@ -116,8 +116,8 @@ enum DataUseNotice {
               "Connectivity checks: on each connection XDial requests test addresses at Cloudflare (1.0.0.1, 1.1.1.1) and www.apple.com, and tries Alibaba public DNS (223.5.5.5) if the first one does not answer; while connected it requests www.gstatic.com through proxy nodes every few minutes to find working and fast nodes."),
             t("出口地址：每次连接时，经各条线路访问 checkip.amazonaws.com 和 Cloudflare，查出这条线路对外的 IP 地址，显示在 App 和诊断信息里。",
               "Exit address: on each connection XDial asks checkip.amazonaws.com and Cloudflare, through each line, for that line's public IP address, which it shows in the app and in diagnostics."),
-            t("规则和订阅：配置引用的规则文件（例如托管在 GitHub 上的地区规则）在缺少缓存时下载；订阅地址只在你添加或刷新订阅时访问。",
-              "Rules and subscriptions: rule files your configuration refers to (for example region rules hosted on GitHub) are downloaded when no cached copy exists; subscription addresses are fetched only when you add or refresh a subscription."),
+            t("规则和订阅：配置引用的规则文件（例如托管在 GitHub 上的地区规则）在缺少缓存时下载；订阅地址只在你添加或刷新订阅时访问。这些地址由你或你的服务提供方给出，地址里带的令牌、账号或密码会随请求发给该地址的服务方。",
+              "Rules and subscriptions: rule files your configuration refers to (for example region rules hosted on GitHub) are downloaded when no cached copy exists; subscription addresses are fetched only when you add or refresh a subscription. These addresses come from you or your provider; any token, account or password in an address is sent to the service at that address."),
         ]
         if companyPreset {
             services.append(t(
@@ -126,8 +126,8 @@ enum DataUseNotice {
             ))
         }
         services.append(t(
-            "这些服务会看到你的 IP 地址；请求里不含你的账号、密码或配置内容。",
-            "These services see your IP address; the requests carry no account, password or configuration content."
+            "这些服务都会看到你的 IP 地址。发给 DNS 和各项检测、查询服务的请求不含你的账号、密码或配置内容。",
+            "All of these services see your IP address. Requests to the DNS and the check and lookup services carry no account, password or configuration content."
         ))
         return [
             Section(title: t("开发者不收集你的数据", "We do not collect your data"), symbol: "hand.raised", points: [

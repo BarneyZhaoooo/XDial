@@ -654,6 +654,9 @@ final class AppState: ObservableObject {
     }
 
     func directExitCountry() async -> ExitCountryProbeResult {
+        guard dataUseNoticeAccepted else {
+            return ExitCountryProbeResult(code: nil, failure: "未确认数据使用说明")
+        }
         guard isConnected, let tunnelManager else {
             return ExitCountryProbeResult(code: nil, failure: "未连接")
         }
@@ -1219,8 +1222,13 @@ final class AppState: ObservableObject {
         }
         self.autoReconnectEnabled = persistence.defaults.object(forKey: persistence.autoReconnectKey) as? Bool ?? true
         let connectOnOpen = persistence.defaults.object(forKey: persistence.connectOnOpenKey) as? Bool ?? false
+        #if os(tvOS)
+        // Apple TV 还没有说明页和确认入口，不受这道确认限制；tvOS 公开上架前要补上说明页。
+        self.dataUseNoticeAccepted = true
+        #else
         self.dataUseNoticeAccepted =
             persistence.defaults.integer(forKey: persistence.dataUseNoticeKey) >= Self.dataUseNoticeVersion
+        #endif
         self.connectOnOpenEnabled = connectOnOpen
         self.openConnectPending = connectOnOpen
         self.systemOnDemandEnabled = persistence.defaults.object(
@@ -3155,8 +3163,9 @@ extension AppState {
     }
 
     /// App 回到前台、打开「自动」或网络变化时：请扩展按当前网络判断一次。
+    /// 用户确认数据使用说明之前不请扩展判断：判断可能查询出口地区。确认后首页会重新判断一次。
     func requestTunnelScenarioEvaluation() async -> TunnelScenarioEvaluationResult {
-        guard isConnected, let tunnelManager else { return .unavailable }
+        guard dataUseNoticeAccepted, isConnected, let tunnelManager else { return .unavailable }
         switch await tunnelManager.requestScenarioEvaluation() {
         case .evaluated(let state):
             adoptTunnelScenario(state, base: nil)

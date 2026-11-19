@@ -236,11 +236,13 @@ private final class SwitchSpyManager: TunnelManaging {
 final class ScenarioInTunnelSwitchTests: XCTestCase {
     private var autoEnabled = true
 
-    private func makeApp() -> (AppState, SwitchSpyEngine, SwitchSpyManager) {
+    private func makeApp(noticeAccepted: Bool = true) -> (AppState, SwitchSpyEngine, SwitchSpyManager) {
         let persistence = AppPersistenceContext.testing(identifier: "switch-" + UUID().uuidString)
         XCTAssertTrue(persistence.clearForTesting())
         addTeardownBlock { _ = persistence.clearForTesting() }
-        persistence.defaults.set(AppState.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
+        if noticeAccepted {
+            persistence.defaults.set(AppState.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
+        }
         let engine = SwitchSpyEngine()
         let manager = SwitchSpyManager(engine: engine)
         let app = AppState(engine: engine, tunnelManager: manager, persistence: persistence)
@@ -399,6 +401,27 @@ final class ScenarioInTunnelSwitchTests: XCTestCase {
         let handled = await app.requestTunnelScenarioEvaluation()
         XCTAssertEqual(handled, .unavailable)
         XCTAssertEqual(app.profile.activeScenarioID, "office")
+    }
+
+    func testRunningTunnelIsNotAskedToJudgeBeforeTheNoticeIsConfirmed() async {
+        // 升级后打开 App 时隧道可能已经在运行：确认说明之前，不请扩展判断（可能查询出口地区）。
+        let (app, engine, manager) = makeApp(noticeAccepted: false)
+        manager.evaluationState = state(running: "outside")
+        engine.setStatus("connected")
+        await settle()
+
+        XCTAssertTrue(app.isConnected)
+        let handled = await app.requestTunnelScenarioEvaluation()
+        XCTAssertEqual(handled, .unavailable)
+        let probe = await app.directExitCountry()
+        XCTAssertNil(probe.code)
+        XCTAssertEqual(manager.evaluationRequestCount, 0)
+        XCTAssertEqual(app.profile.activeScenarioID, "office")
+
+        app.acceptDataUseNotice()
+        let afterAccept = await app.requestTunnelScenarioEvaluation()
+        XCTAssertEqual(afterAccept, .handled)
+        XCTAssertEqual(manager.evaluationRequestCount, 1)
     }
 
     func testSlowExtensionIsNotMistakenForAnOldOne() async {
