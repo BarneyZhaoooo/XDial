@@ -3,7 +3,7 @@ import SwiftUI
 /// AnyConnect 凭据输入。host/username 用 TextField，password 用 SecureField，
 /// tvOS 上聚焦文本框并按中键会自动弹出屏幕键盘。
 ///
-/// 配置优先从 Mac 端同步，这里是「遥控器手动输入」兜底。绑定到 profile 里
+/// 遥控器输入保存在当前配置。绑定到 profile 里
 /// VPN 类型的 Line（`vpnServer/vpnUsername/vpnPassword`），通过 index binding
 /// 直接写回 @Published profile，避免操作 Line 值拷贝导致丢改动。
 struct CredentialsView: View {
@@ -60,8 +60,8 @@ struct CredentialsView: View {
                 Text(app.tr("凭据（\(app.profile.lines[idx].name)）",
                             "Credentials (\(app.profile.lines[idx].name))"))
             } footer: {
-                Text(app.tr("在电视上打字较慢，建议从 Mac 端同步。",
-                            "Typing on TV is slow — prefer syncing from your Mac."))
+                Text(app.tr("填写你自己的 AnyConnect 服务器和账号。",
+                            "Enter the server and account for your AnyConnect service."))
             }
 
             Section {
@@ -80,8 +80,8 @@ struct CredentialsView: View {
                 .foregroundStyle(.secondary)
             Text(app.tr("没有可编辑的 AnyConnect 线路", "No AnyConnect line to edit"))
                 .font(.title2)
-            Text(app.tr("请先从 Mac 端同步包含 AnyConnect 线路的配置",
-                        "Sync a configuration that includes an AnyConnect line from your Mac"))
+            Text(app.tr("当前配置还没有 AnyConnect 线路",
+                        "The current configuration has no AnyConnect line"))
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

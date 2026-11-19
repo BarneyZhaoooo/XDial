@@ -2,7 +2,7 @@
 
 ## Apple 平台的 TestFlight 身份
 
-iOS、原生 macOS 和未来的 tvOS 等平台使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
+iOS、原生 macOS 和 tvOS使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
 各平台商店构建的宿主 bundle ID 均为 `com.xd.xdial.ios`。扩展保留各自的子标识。
 macOS Developer ID 独立分发版沿用 `com.xd.xdial.app`，Debug 使用 `com.xd.xdial.debug`。
 
@@ -19,6 +19,14 @@ Tailscale 登录会话，设置窗口由菜单栏主程序显示。Developer ID 
 `macos/scripts/embed-private-seed.sh` 嵌入，归档后用 `cmd/xdial-seed check` 核对，见 [Mac 预置说明](../../macos/Examples/README.md#与手机共用一份预置)。宿主、扩展分别使用
 Mac App Store 描述文件及 Apple Distribution 签名，上传包使用 Mac Installer Distribution 签名。
 
+
+公开 Apple TV 包从 `appletv/project.yml` 生成。先用 `make libbox-xcframework` 构建 tvOS 引擎，将与实际链接版本核对过的许可文本放入
+`appletv/StoreResources/ThirdPartyNotices.txt`，再运行 `xcodegen generate --spec appletv/project.yml`。使用
+`XDialTV` scheme、Release、`generic/platform=tvOS` 和专用 tvOS 商店签名配置归档。
+公开包使用空白配置，由用户创建场景并配置自己的服务器。模拟器 Debug 支持演示引擎，Release 使用与电视相同的引擎入口。
+
+分发前分别对归档和解开的 IPA 运行 `python3 scripts/verify-tvos-store-app.py <XDialTV.app>`。
+它核对宿主与扩展签名、身份、真引擎及私有资源。真机需另验 VPN 授权、连接和断开，第三方许可也须独立核对。
 
 Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI 见
 [Android 构建与测试分发](android-release.md)。两端构建入口不互相安装或重启。

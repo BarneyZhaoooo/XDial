@@ -4,6 +4,19 @@ import UIKit
 import XCTest
 @testable import XDial
 
+@MainActor
+private final class NoopTunnelEngine: TunnelEngine, ObservableObject {
+    @Published private(set) var status = "disconnected"
+    @Published var lastError: String?
+    @Published var dataPathSummary: String?
+    var statusPublisher: AnyPublisher<String, Never> { $status.eraseToAnyPublisher() }
+    var isConnected: Bool { false }
+    var isBusy: Bool { false }
+    func start(profileJSON: String) {}
+    func stop() {}
+    func syncStatus() {}
+}
+
 private final class StartCompletionRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var results: [Result<Void, Error>] = []
@@ -1045,7 +1058,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testLineConfigurationIssuesNameEveryMissingField() {
-        let app = AppState(persistence: makePersistence())
+        let app = AppState(engine: NoopTunnelEngine(), persistence: makePersistence())
         let line = Line(id: "vpn", name: "Test Line", type: "vpn")
 
         let issues = app.routeLineConfigurationIssues(line)
@@ -1056,7 +1069,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testEveryConfigurableLineTypeReportsItsRequiredSetupBeforeConnection() {
-        let app = AppState(persistence: makePersistence())
+        let app = AppState(engine: NoopTunnelEngine(), persistence: makePersistence())
         app.language = .en
         let incompleteLines: [(Line, [String])] = [
             (
@@ -2307,7 +2320,7 @@ final class AppStateTests: XCTestCase {
     }
 
     func testLegacyVerifiedTailscalePreservesLoginWhenExitNodeChanges() {
-        let app = AppState(persistence: makePersistence())
+        let app = AppState(engine: NoopTunnelEngine(), persistence: makePersistence())
         var profile = Profile.bootstrap()
         profile.lines.append(Line(
             id: "tail",
@@ -2330,7 +2343,7 @@ final class AppStateTests: XCTestCase {
 
     func testLegacyVerifiedTailscaleMigratesToDedicatedLoginStateOnReload() {
         let persistence = makePersistence()
-        let original = AppState(persistence: persistence)
+        let original = AppState(engine: NoopTunnelEngine(), persistence: persistence)
         var profile = Profile.bootstrap()
         profile.lines.append(Line(
             id: "tail",
@@ -2342,7 +2355,7 @@ final class AppStateTests: XCTestCase {
         original.profile = profile
         XCTAssertTrue(original.save())
 
-        let restored = AppState(persistence: persistence)
+        let restored = AppState(engine: NoopTunnelEngine(), persistence: persistence)
         let line = restored.profile.lines.first(where: { $0.id == "tail" })
         XCTAssertEqual(line?.tailscaleAuthenticated, true)
         XCTAssertFalse(

@@ -1200,7 +1200,7 @@ final class AppState: ObservableObject {
     }
 
     init(
-        engine: TunnelEngine = NoopTunnelEngine(),
+        engine: TunnelEngine,
         tunnelManager: TunnelManaging? = nil,
         tailscaleSetupRuntime: TailscaleSetupRuntime? = nil,
         persistence: AppPersistenceContext = .production,
@@ -3079,35 +3079,6 @@ final class AppState: ObservableObject {
     func buildProfileJSON() -> String {
         guard let data = try? JSONEncoder().encode(profile) else { return "{}" }
         return String(data: data, encoding: .utf8) ?? "{}"
-    }
-}
-
-// MARK: - Noop engine (占位默认引擎)
-//
-// 在真实引擎层注入之前，AppState 需要一个满足 TunnelEngine 的默认引擎，
-// 保证状态机语义完整（能读 status、start/stop 只切状态、不做真实拨号）。
-// 并行引擎任务写好后，用 AppState(engine:) 注入真实引擎替换它。
-@MainActor
-final class NoopTunnelEngine: TunnelEngine, ObservableObject {
-    @Published private(set) var status: String = "disconnected"
-    @Published var lastError: String?
-    @Published var dataPathSummary: String?
-    var statusPublisher: AnyPublisher<String, Never> { $status.eraseToAnyPublisher() }
-
-    var isConnected: Bool { status == "connected" }
-    var isBusy: Bool { status == "connecting" || status == "disconnecting" || status == "reconnecting" }
-
-    func start(profileJSON: String) {
-        // TODO: 真实引擎接入后由具体实现完成拨号；占位仅记录调用点。
-        appLog("NoopTunnelEngine.start called (\(profileJSON.count) bytes) — no real engine bound")
-    }
-
-    func stop() {
-        appLog("NoopTunnelEngine.stop called — no real engine bound")
-    }
-
-    func syncStatus() {
-        // 占位：真实引擎会查询扩展/NEVPNManager 的当前状态并回填 status。
     }
 }
 
