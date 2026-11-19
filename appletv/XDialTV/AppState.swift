@@ -2674,13 +2674,13 @@ final class AppState: ObservableObject {
                             )]
                         )
                         self.engine.lastError = error.localizedDescription
-                        self.finishTailscaleSetup {
+                        self.stopTailscaleSetup {
                             completion(.failure(error))
                         }
                     }
                 case .failure(let error):
                     self.engine.lastError = error.localizedDescription
-                    self.finishTailscaleSetup {
+                    self.stopTailscaleSetup {
                         completion(.failure(error))
                     }
                 }
@@ -2712,7 +2712,7 @@ final class AppState: ObservableObject {
         // An explicit finish may already be releasing the lock. Join that stop
         // without marking the user-finished setup for automatic resumption.
         if isStoppingTailscaleSetup {
-            finishTailscaleSetup(completion: completion)
+            stopTailscaleSetup(completion: completion)
             return
         }
         guard let lineID = tailscaleSetupLineID else {
@@ -2721,7 +2721,7 @@ final class AppState: ObservableObject {
         }
         backgroundPausedTailscaleSetupLineID = lineID
         appLog("tailscale setup paused before suspension; releasing its state lock")
-        finishTailscaleSetup(completion: completion)
+        stopTailscaleSetup(completion: completion)
     }
 
     /// 回到前台：接着做被后台打断的设置。用户已开始别的设置、线路已删除或正式连接接管时不恢复。
@@ -2748,7 +2748,14 @@ final class AppState: ObservableObject {
         resumedTailscaleSetupLineID = nil
     }
 
+    /// 用户明确结束或取消设置。后台暂停期间的停止尚未完成时也算数：回到前台不再自动恢复。
     func finishTailscaleSetup(completion: (() -> Void)? = nil) {
+        backgroundPausedTailscaleSetupLineID = nil
+        stopTailscaleSetup(completion: completion)
+    }
+
+    /// 停下设置并释放状态锁，不改变是否在回到前台后恢复。
+    private func stopTailscaleSetup(completion: (() -> Void)? = nil) {
         if let completion {
             tailscaleSetupFinishCompletions.append(completion)
         }

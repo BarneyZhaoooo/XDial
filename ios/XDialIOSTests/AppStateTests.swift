@@ -3132,6 +3132,23 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         XCTAssertEqual(app.tailscaleSetupLineID, "tail")
     }
 
+    func testCancellingWhileTheBackgroundStopIsPendingIsNotUndone() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        runtime.deferStopCompletion = true
+        let (guardian, log) = makeGuard(app, grace: .seconds(60))
+        guardian.enteredBackground()
+        log.expiration?()
+        guardian.becameActive() // 回到前台时锁还没放完
+        app.finishTailscaleSetup() // 用户点拨盘取消设置
+        await settle()
+        runtime.completeStop()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 1, "an explicitly cancelled setup must not restart")
+        XCTAssertNil(app.tailscaleSetupLineID)
+        XCTAssertNil(app.resumedTailscaleSetupLineID)
+    }
+
     func testResumeIsSkippedWhenTheLineIsGone() async {
         let (app, _, runtime) = makeApp()
         startSetup(app)
