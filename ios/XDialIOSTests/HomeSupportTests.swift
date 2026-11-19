@@ -49,6 +49,43 @@ final class HomeSupportTests: XCTestCase {
         XCTAssertThrowsError(try MobileSeed.decode(Data("not json".utf8)))
     }
 
+    func testSeedUpdatesAReworkedRuleOnlyWhileTheUserLeftItAsShipped() throws {
+        var root = try JSONSerialization.jsonObject(with: Data(SeedFixture.json.utf8)) as! [String: Any]
+        // 新一版把一个公共站点从公司内网拿掉，并记下上一版发的内容。
+        root["rule_set_history"] = ["intranet": [["domains": ["corp.example.com", "Shop.Example.com"], "cidrs": ["10.0.0.0/8"]]]]
+        let seed = try MobileSeed.decode(JSONSerialization.data(withJSONObject: root)).profileSeed
+        XCTAssertEqual(seed.ruleSetHistory["intranet"],
+                       [ShippedRuleContent(domains: ["shop.example.com", "corp.example.com"], cidrs: ["10.0.0.0/8"])])
+
+        var untouched = Profile()
+        untouched.ruleSets = [RuleSet(id: "intranet", name: "公司内网", type: "manual",
+                                      domains: ["shop.example.com", "corp.example.com"], cidrs: ["10.0.0.0/8"])]
+        XCTAssertTrue(untouched.adding(seed: seed.profile, ruleSetHistory: seed.ruleSetHistory))
+        XCTAssertEqual(untouched.ruleSets.first { $0.id == "intranet" }?.domains, ["corp.example.com"])
+        XCTAssertEqual(untouched.ruleSets.first { $0.id == "intranet" }?.cidrs, ["10.0.0.0/8"])
+        // 再启动一次不再变化。
+        XCTAssertFalse(untouched.adding(seed: seed.profile, ruleSetHistory: seed.ruleSetHistory))
+
+        var edited = Profile()
+        edited.ruleSets = [RuleSet(id: "intranet", name: "公司内网", type: "manual",
+                                   domains: ["shop.example.com", "corp.example.com", "mine.example"], cidrs: ["10.0.0.0/8"])]
+        _ = edited.adding(seed: seed.profile, ruleSetHistory: seed.ruleSetHistory)
+        XCTAssertEqual(edited.ruleSets.first { $0.id == "intranet" }?.domains,
+                       ["shop.example.com", "corp.example.com", "mine.example"])
+    }
+
+    func testSeedRejectsRuleHistoryThatDoesNotDescribeAManualRule() throws {
+        func decode(_ history: Any) throws -> MobileSeed {
+            var root = try JSONSerialization.jsonObject(with: Data(SeedFixture.json.utf8)) as! [String: Any]
+            root["rule_set_history"] = history
+            return try MobileSeed.decode(JSONSerialization.data(withJSONObject: root))
+        }
+        XCTAssertThrowsError(try decode(["region-domains": [["domains": ["a.example"]]]]))
+        XCTAssertThrowsError(try decode(["missing": [["domains": ["a.example"]]]]))
+        XCTAssertThrowsError(try decode(["intranet": [["domains": ["a.example"], "invert": true]]]))
+        XCTAssertThrowsError(try decode(["intranet": "not a list"]))
+    }
+
     func testAddingSeedKeepsUserDataAndIsIdempotent() {
         let seed = SeedFixture.profile()
         // 用户已经在用的配置：自己改过预置里的同名规则，另外建了一个场景。
