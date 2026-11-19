@@ -8,6 +8,7 @@ case "${1:-}" in
   *) echo "Usage: sh rebuild.sh ios-62 | ios-66 | ios-71 | mac-72" >&2; exit 2 ;;
 esac
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/xdial-build.XXXXXXXX")
+workspace=$(CDPATH='' cd -P -- "$workspace" && pwd -P)
 echo "Build workspace: $workspace"
 cd "$workspace"
 srcfile=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["builds"][sys.argv[2]]["source"])' "$kit/inputs.json" "$1")
