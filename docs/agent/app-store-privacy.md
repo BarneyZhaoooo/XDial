@@ -69,3 +69,16 @@ Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `ma
 - Wi-Fi 名称只在本机匹配场景。读取它需要定位权限：只在 App 位于前台、用户点「设置…」或为场景登记 Wi-Fi 时申请「使用期间」定位权限，不读取位置；导出配置时 Wi-Fi 名称随场景导出。
 - 确认说明之前，手动更新或添加订阅、手动测速和自动恢复连接也都不会联网。升级时接管的已运行会话保持不变，但不切换场景、不查出口地址、不测速，确认后再补做。被说明拦下的连接在点「继续使用」后接着发起，选「稍后」则不再继续。
 - 系统提示：首次连接时添加代理配置；通知和登录时启动只在用户打开后请求。
+
+# App Store 隐私对账（Apple TV）
+
+Apple TV 与 iPhone 共用 `appletv/XDialTV` 的 `AppState`、`TunnelManager` 和隧道扩展，自动访问的服务与上面 iPhone 的表格相同，以下几点除外：
+- 不设置 `scenarioAutoPolicyProvider`，不按 Wi-Fi 或地区自动选场景，所以没有出口地区查询，也不读取 Wi-Fi 名称、不请求定位权限。
+- 没有快捷指令、控制中心和通知。
+- AnyConnect 走 `sslcon/auth/hostinfo_ios.go`：发送设备名（取不到时为 `xdial-appletv`）、设备类型 `Apple TV`、由它们算出的标识，以及网卡地址。
+
+数据使用说明在 `appletv/XDialTV/TVDataUseNotice.swift`，首次打开时全屏显示，确认前不能连接（与 iPhone 共用 `AppState.dataUseNoticeAccepted`）。
+Apple TV 没有浏览器，隐私政策地址以文字显示在说明页和设置 › 隐私里。
+
+隐私清单：`appletv/XDialTV/PrivacyInfo.xcprivacy` 声明 UserDefaults CA92.1（`.standard`）与 1C8F.1（App Group）、SystemBootTime 35F9.1（`ProcessInfo.systemUptime` 计时、Go 运行时的 `mach_absolute_time`）、FileTimestamp C617.1（Go 的 `stat` 系列、`BundledRuleSets` 改写容器内规则文件的修改时间）；`appletv/XDialTVTunnel/PrivacyInfo.xcprivacy` 声明 UserDefaults 1C8F.1（只用 App Group）、SystemBootTime、FileTimestamp。
+从 main 构建的 Release 二进制只引用 `fstat`、`fstatat`、`lstat`、`stat`、`mach_absolute_time` 与 `NSUserDefaults`；`statfs` 已随 #41 的 `xdial_omit_tailssh` 一起去掉（build 48 仍有，它早于 #41）。

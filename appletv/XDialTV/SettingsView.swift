@@ -19,6 +19,7 @@ struct SettingsView: View {
         Form {
             languageSection
             statusSection
+            privacySection
             debugSection
         }
         .navigationTitle(app.tr("设置", "Settings"))
@@ -76,6 +77,22 @@ struct SettingsView: View {
             Spacer()
             Text(value)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - 数据使用说明
+
+    private var privacySection: some View {
+        Section {
+            NavigationLink {
+                TVDataUseNoticeView(mode: .review)
+            } label: {
+                Text(app.tr("数据使用说明", "Data Use Notice"))
+            }
+            .accessibilityIdentifier("settings-data-use")
+            infoRow(label: app.tr("隐私政策", "Privacy Policy"), value: TVDataUseNoticeView.privacyPolicyAddress)
+        } header: {
+            Text(app.tr("隐私", "Privacy"))
         }
     }
 

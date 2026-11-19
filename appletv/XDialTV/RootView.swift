@@ -47,6 +47,9 @@ struct RootView: View {
                     }
                 }
         }
+        .fullScreenCover(isPresented: Binding(get: { !app.dataUseNoticeAccepted }, set: { _ in })) {
+            TVDataUseNoticeView(mode: .firstUse).environmentObject(app)
+        }
         .environmentObject(app)
         #if targetEnvironment(simulator)
         .onAppear { app.seedDemoDataForSimulator() }
