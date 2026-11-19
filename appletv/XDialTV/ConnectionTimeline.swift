@@ -15,7 +15,7 @@ enum ConnectionTimeline {
     static let fileName = "connection-timeline.json"
 
     enum StartOrigin: String {
-        case user, appIntent, autoRetry, configurationChange, scenarioChange, system
+        case user, appIntent, autoRetry, configurationChange, scenarioChange, system, launch
     }
 
     enum Source: String, Codable, Sendable {
@@ -469,6 +469,7 @@ enum ConnectionTimelineReport {
         case .configurationChange: origin = isChinese ? "应用配置后重连" : "Reconnect after configuration change"
         case .scenarioChange: origin = isChinese ? "切换场景后重连" : "Reconnect after scenario change"
         case .system: origin = isChinese ? "系统启动" : "System start"
+        case .launch: origin = isChinese ? "打开 App 时自动连接" : "Connect on open"
         case nil: origin = isChinese ? "来源未知" : "Unknown origin"
         }
         lines.append((isChinese ? "本次启动" : "Latest start") + " · \(time(latest.startedAt)) · \(origin)")

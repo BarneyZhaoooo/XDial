@@ -434,6 +434,8 @@ struct AppPersistenceContext {
     let tailscaleSetupLineKey: String
     /// 已经应用到哪一版预置配置；用来在升级后给老配置补一次新内容。
     var seedRevisionKey: String { "xdial.preset-scenario-version" }
+    /// 「打开 XDial 后自动连接」，默认关闭。
+    var connectOnOpenKey: String { "xdial.connect-on-open" }
 
     static let production = AppPersistenceContext(
         defaults: .standard,
@@ -534,6 +536,17 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    /// 「打开 XDial 后自动连接」。只决定启动后是否发起一次普通连接，不接管系统层的按需连接。
+    @Published var connectOnOpenEnabled: Bool {
+        didSet {
+            persistence.defaults.set(connectOnOpenEnabled, forKey: persistence.connectOnOpenKey)
+            if !connectOnOpenEnabled { openConnectPending = false }
+        }
+    }
+    /// 本次启动还没处理过「打开后自动连接」。每次启动只用一次；用户先点了连接或断开就作废，
+    /// 之后切换前后台、重新渲染首页都不会再发起连接。
+    private var openConnectPending = false
 
     @Published var systemOnDemandEnabled: Bool {
         didSet {
@@ -1191,6 +1204,9 @@ final class AppState: ObservableObject {
             self.language = .system
         }
         self.autoReconnectEnabled = persistence.defaults.object(forKey: persistence.autoReconnectKey) as? Bool ?? true
+        let connectOnOpen = persistence.defaults.object(forKey: persistence.connectOnOpenKey) as? Bool ?? false
+        self.connectOnOpenEnabled = connectOnOpen
+        self.openConnectPending = connectOnOpen
         self.systemOnDemandEnabled = persistence.defaults.object(
             forKey: persistence.systemOnDemandKey
         ) as? Bool ?? false
@@ -1329,7 +1345,33 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 打开 XDial 后自动连接一次。首页在 App 回到前台、读完系统里的连接状态并按网络选好场景后调用。
+    /// 已连接、正在连接、配置或账号不完整时不发起；不重试，失败交给已有的掉线重连规则（它不重试首次连接失败）。
+    @discardableResult
+    func connectAfterOpeningIfWanted() async -> Bool {
+        guard openConnectPending else { return false }
+        await refreshTunnelProfileStatusAndWait()
+        // 等待期间用户可能已经点了连接或断开，那就以用户为准。
+        guard openConnectPending else { return false }
+        openConnectPending = false
+        guard AutomaticConnectionPolicy.shouldConnectOnLaunch(
+            enabled: connectOnOpenEnabled,
+            initialStatusSynchronized: true,
+            installationReady: !persistenceRequiresRecovery,
+            runtimeStatus: engine.status,
+            canConnect: canConnect
+        ) else {
+            appLog("connect on open skipped: status=\(engine.status) configured=\(isConnectionConfigured) "
+                   + "activeTunnel=\(hasActiveTunnel) recovery=\(persistenceRequiresRecovery)")
+            return false
+        }
+        appLog("connect on open started")
+        connect(origin: .launch)
+        return true
+    }
+
     func connect(origin: ConnectionTimeline.StartOrigin = .user) {
+        if origin != .launch { openConnectPending = false }
         if origin != .autoRetry {
             autoReconnectAttempt = 0
             autoReconnectTask?.cancel()
@@ -1405,6 +1447,7 @@ final class AppState: ObservableObject {
     // MARK: - Connect
 
     func disconnect() {
+        openConnectPending = false
         if !persistenceRequiresRecovery { engine.lastError = nil }
         disconnectRequested = engine.status != "disconnected"
         autoReconnectTask?.cancel()

@@ -121,9 +121,16 @@ struct HomeView: View {
             autoPilot.onNetworkChange = { Task { await refreshAutoScenario(afterNetworkChange: true) } }
             autoPilot.start()
             await refreshAutoScenario()
+            // 「打开 XDial 后自动连接」排在读完系统状态、选好场景之后；后台启动时等回到前台。
+            if scenePhase == .active { await app.connectAfterOpeningIfWanted() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refreshAutoScenario() } }
+            guard phase == .active else { return }
+            Task {
+                await refreshAutoScenario()
+                // 每次启动只用一次，这里只接住在后台启动、之后第一次回到前台的情况。
+                await app.connectAfterOpeningIfWanted()
+            }
         }
         .onChange(of: autoScenario) { _, isOn in
             showingAutoScenarios = false

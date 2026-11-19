@@ -155,6 +155,7 @@ targets:
       - path: ../appletv/XDialTV/Models.swift
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
       - path: ../appletv/XDialTV/TunnelManager.swift
+      - path: ../macos/Shared/AutomaticConnectionPolicy.swift
     info:
       path: XDialIOS/Info.plist
       properties:
