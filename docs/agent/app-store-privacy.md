@@ -40,3 +40,31 @@ App 与 Packet Tunnel 扩展声明：UserDefaults（App：CA92.1、1C8F.1；扩�
 补丁 `patches/sing-box/0018`），不链接 Tailscale SSH 服务端，因此不含 SFTP 的磁盘空间 API（`statfs`）；
 `make check-mobile-libbox-deps` 发现 `github.com/pkg/sftp` 时失败。核对方法：对 Release 真机包的
 `XDial` 与 `XDialIOSTunnel` 运行 `xcrun nm -u`，只应出现已声明类别的符号。
+
+# App Store 隐私对账（Mac）
+
+Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `macos/Sources/XDial/DataUseNotice.swift`。
+它在启动时打开，确认前不准备系统组件、不连接、不做自动测速、订阅刷新和出口地区判断（`AppState.dataUseNoticeAccepted`）。
+其他 Mac 版本不需要这道确认。代码改变对外请求时，同步更新这里、说明文案与 `DataUseNoticeAcceptance.version`。
+
+## 自动访问的第三方服务
+
+| 用途 | 目标 | 进程 | 何时 | 代码 |
+|---|---|---|---|---|
+| 域名解析 | 直连域名与出站默认：本机系统 DNS（未加密）；走代理的域名：经该代理 DoH `1.1.1.1`；代理服务器域名：直连 DoH `223.5.5.5`；AnyConnect 规则用其下发的 DNS；Tailscale 用内存 MagicDNS | 扩展 | 连接期间 | `core/config/generator.go`（`1366-1437`、`538-546`） |
+| 连通性检测 | 仅 TLS 握手：`[2606:4700:4700::1111]:443`、`[2001:4860:4860::8888]:443`（IPv6）；经各线路 `1.1.1.1:443`、`[2606:4700:4700::1111]:443` | 扩展 | 每次连接 | `macos/TransparentProxyExtension/UnderlayIPv6TLSProbe.swift`、`core/libbox/outbound_tls_probe.go` |
+| 出口地址 | IPv4：`1.1.1.1/cdn-cgi/trace` 与 `r.inews.qq.com/api/ip2city`；IPv6：Cloudflare trace；订阅、Tailscale、规则下载线路另用 `checkip.amazonaws.com` | 扩展 | 每次连接，按线路（含直连） | `core/libbox/libbox.go`（`outboundAddressProbeEndpoints*`）、`AppState.synchronizeLineObservations` |
+| 线路测速 | `www.gstatic.com/generate_204`（或线路组指定） | App（未连接时临时实例）/ 扩展 | 当前场景的线路未连接时测一次；连接后自动组每 3–5 分钟 | `LineLatencyStore.ensureScenarioMeasurements`、`StandaloneLineLatencyService.swift`、`core/config/generator.go` |
+| 出口地区 | `gspe1-ssl.ls.apple.com/pep/gcc`，其次 Cloudflare trace | App / 扩展 | 仅当预置带地区场景（公开版没有） | `UnderlayCountryLookup.swift`、`core/libbox/exit_country_probe.go` |
+| 规则文件 | 规则集写明的地址 | 扩展 | 连接时缺少缓存，或缓存超过 24 小时 | `core/libbox/configgen.go` |
+| 订阅 | 用户填写的地址 | App | 按订阅间隔自动刷新（默认 24 小时） | `ProfileDocumentService.refreshDueProfiles` |
+| 更新 | 无 | — | 商店版不检查更新（`allowsAutomaticUpdates = false`） | `macos/Shared/XDialBuildIdentity.swift` |
+
+对方都能看到 Mac 的 IP 地址。固定服务的请求不带账号、密码或配置内容；规则和订阅地址里的令牌、URL 账号密码会发给该地址的服务方。
+
+## 与 iPhone 的差别
+
+- AnyConnect 走桌面路径（`sslcon/auth/hostinfo_other.go`）：发送电脑名、系统名称与版本、硬件 UUID 和网卡 MAC 地址。
+- Tailscale 设备名是随机的 `xdial-xxxxxxxx`；不上传日志。
+- 读取 Wi-Fi 名称需要定位权限：只在用户点「设置…」或为场景登记 Wi-Fi 时请求，不读取位置；Wi-Fi 名称只在本机比对，导出配置时随场景导出。
+- 系统提示：首次连接时添加代理配置；通知和登录时启动只在用户打开后请求。

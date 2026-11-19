@@ -36,6 +36,8 @@
 	<string>XDial uses Wi-Fi names for automatic scenario selection.</string>
 	<key>XDialBuildFlavor</key>
 	<string>store</string>
+	<key>XDialPrivacyPolicyURL</key>
+	<string>https://xindong.github.io/XDial/privacy/</string>
 	<key>XDialSourceRevision</key>
 	<string>$(XDIAL_SOURCE_REVISION)</string>
 	<key>XDialTransparentProxyBundleIdentifier</key>

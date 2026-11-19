@@ -185,6 +185,17 @@ struct GeneralSettingsView: View {
                 .font(.system(size: 18, weight: .semibold))
             Text(appVersionText).foregroundStyle(.secondary).textSelection(.enabled)
             Divider()
+            if DataUseNoticeAcceptance.requiredByBuild {
+                HStack(spacing: 12) {
+                    Button(state.tr("数据使用说明…", "Data Use Notice…")) { state.presentDataUseNotice() }
+                        .accessibilityIdentifier("settings-data-use")
+                    if let url = DataUseNoticeView.privacyPolicyURL {
+                        Link(state.tr("隐私政策", "Privacy Policy"), destination: url)
+                            .accessibilityIdentifier("settings-privacy-policy")
+                    }
+                }
+                Divider()
+            }
             if XDialBuildIdentity.allowsAutomaticUpdates {
                 Button(state.tr("检查更新…", "Check for Updates…")) {
                     ApplicationWindowLifecycleController.shared.prepareToPresentUpdateWindow()
@@ -197,7 +208,7 @@ struct GeneralSettingsView: View {
                 }
             } else {
                 #if XDIAL_STORE
-                Text(state.tr("通过 TestFlight 更新", "Updates are available in TestFlight"))
+                Text(state.tr("通过 App Store 或 TestFlight 更新", "Updates come from the App Store or TestFlight"))
                 #else
                 Text(state.tr("独立开发版 · 手动更新", "Independent build · Manual updates"))
                 note(state.tr(

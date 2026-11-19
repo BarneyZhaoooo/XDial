@@ -353,6 +353,7 @@ targets:
       - Sources/XDial/AppIcon.swift
       - ../ios/XDialShared/DialGlyph.swift
       - Sources/XDial/AppDefaults.swift
+      - Sources/XDial/DataUseNotice.swift
       - Sources/XDial/ApplicationLaunchPolicy.swift
       - Sources/XDial/AppVersion.swift
       - Sources/XDial/AppUpdateStager.swift

@@ -1301,9 +1301,12 @@ struct LineRow: View {
 
     private func requireInstallation() -> Bool {
         guard state.requireInstallationReady() else {
-            state.setTailscaleConfigurationError(state.tr(
+            state.setTailscaleConfigurationError(state.dataUseNoticeAccepted ? state.tr(
                 "XDial 的首次安装尚未完成；安装窗口会自动继续。",
                 "XDial first-run setup is not complete. The installation window will continue automatically."
+            ) : state.tr(
+                "请先阅读并确认数据使用说明。",
+                "Review and confirm the data use notice first."
             ), for: line.id)
             return false
         }

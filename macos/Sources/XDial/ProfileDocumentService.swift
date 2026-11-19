@@ -187,7 +187,7 @@ extension AppState {
     }
 
     func refreshDueProfiles() {
-        guard profileLibraryLoaded else { return }
+        guard profileLibraryLoaded, dataUseNoticeAccepted else { return }
         let now = Date()
         for record in profileLibrary.profiles {
             guard let source = record.source, source.refreshInterval > 0,

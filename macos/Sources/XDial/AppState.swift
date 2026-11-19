@@ -35,6 +35,12 @@ final class AppState: ObservableObject {
         WiFiSSIDAccessState = .checking
 
     var regionScenarioTargets: [String: String] = [:]
+    /// The App Store build shows what it contacts before it first goes online (App Review 5.4).
+    /// Until the notice is confirmed it starts no connection, prepares no system component and
+    /// runs no automatic network check; other builds do not require it.
+    @Published private(set) var dataUseNoticeAccepted = DataUseNoticeAcceptance.isAccepted(
+        defaults: xdialDefaults, required: DataUseNoticeAcceptance.requiredByBuild
+    )
     @Published private(set) var exitCountry: String?
     @Published private(set) var surveyingRegion = false
     private let scenarioPathMonitor = NWPathMonitor()
@@ -79,7 +85,7 @@ final class AppState: ObservableObject {
         regionSurvey?.cancel()
         exitCountry = nil
         surveyingRegion = false
-        guard automaticScenario, !regionScenarioTargets.isEmpty,
+        guard dataUseNoticeAccepted, automaticScenario, !regionScenarioTargets.isEmpty,
               currentSSID.flatMap({ profile.scenario(matchingSSID: $0) }) == nil else { return }
         surveyingRegion = true
         regionSurvey = Task { @MainActor [weak self] in
@@ -784,7 +790,7 @@ final class AppState: ObservableObject {
         // Fresh installations can edit Profiles before opting into system
         // components. An upgrade must resume even though its outgoing helper
         // was deliberately unregistered before the bundle replacement.
-        if installation.shouldPrepareAtLaunch { installation.start() }
+        if dataUseNoticeAccepted, installation.shouldPrepareAtLaunch { installation.start() }
         switch updateRelaunchDecision {
         case .reconnect:
             launchAutoConnectPending = true
@@ -841,7 +847,7 @@ final class AppState: ObservableObject {
 
     private func synchronizeLineLatencies() {
         defer {
-            if !engine.isBusy, let scenario = activeScenario {
+            if dataUseNoticeAccepted, !engine.isBusy, let scenario = activeScenario {
                 lineLatencies.ensureScenarioMeasurements(scenario, profileID: profileLibrary.activeProfileID)
             }
         }
@@ -1056,6 +1062,8 @@ final class AppState: ObservableObject {
             runtimeStatus: engine.status,
             report: engine.connectionReport
         )
+        // The pending launch connection waits for the data use notice instead of being dropped.
+        guard dataUseNoticeAccepted else { return }
         guard launchAutoConnectPending, !surveyingRegion || updateRelaunchDecision != nil else { return }
 
         if AutomaticConnectionPolicy.holdsConnectionIntent(
@@ -1477,6 +1485,25 @@ final class AppState: ObservableObject {
 
     // MARK: - Connect
 
+    func presentDataUseNotice() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .xdialOpenDataUseNotice, object: nil)
+        }
+    }
+
+    /// Resumes what launch held back: system component preparation, the automatic
+    /// scenario check, line measurements and the launch connection.
+    func acceptDataUseNotice() {
+        DataUseNoticeAcceptance.accept(defaults: xdialDefaults)
+        guard !dataUseNoticeAccepted else { return }
+        dataUseNoticeAccepted = true
+        if installation.shouldPrepareAtLaunch { installation.start() }
+        refreshRegionSelection()
+        synchronizeLineLatencies()
+        refreshDueProfiles()
+        runLaunchAutoConnectIfNeeded()
+    }
+
     func connect() {
         guard let activeScenario else { return }
         connectionDesired.userRequestedConnection(scenarioID: activeScenario.id)
@@ -1509,6 +1536,10 @@ final class AppState: ObservableObject {
     private func beginConnection(
         automaticRetryTrigger: AutomaticReconnectTrigger? = nil
     ) {
+        guard dataUseNoticeAccepted else {
+            presentDataUseNotice()
+            return
+        }
         guard installation.isReady else {
             installation.start()
             installation.present()
@@ -2825,6 +2856,10 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func requireInstallationReady() -> Bool {
+        guard dataUseNoticeAccepted else {
+            presentDataUseNotice()
+            return false
+        }
         guard installation.isReady else {
             installation.start()
             installation.present()
