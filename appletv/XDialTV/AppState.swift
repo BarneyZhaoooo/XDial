@@ -2683,12 +2683,10 @@ final class AppState: ObservableObject {
 
     /// 回到前台：接着做被后台打断的设置。用户已开始别的设置、线路已删除或正式连接接管时不恢复。
     func resumeTailscaleSetupAfterBackground() {
-        guard let lineID = backgroundPausedTailscaleSetupLineID else { return }
-        if isStoppingTailscaleSetup {
-            // 停止还没完成：等它完成再恢复，不能和正在释放的锁抢同一个状态目录。
-            finishTailscaleSetup { [weak self] in self?.resumeTailscaleSetupAfterBackground() }
-            return
-        }
+        // The lifecycle guard retries after stop only if the app is still active.
+        // Do not enqueue a resume here: another background transition can invalidate it.
+        guard !isStoppingTailscaleSetup,
+              let lineID = backgroundPausedTailscaleSetupLineID else { return }
         backgroundPausedTailscaleSetupLineID = nil
         guard canStartTailscaleSetup(lineID: lineID) else {
             appLog("tailscale setup not resumed after background: setup no longer applies")

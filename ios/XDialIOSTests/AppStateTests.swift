@@ -3119,15 +3119,15 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         let (app, _, runtime) = makeApp()
         startSetup(app)
         runtime.deferStopCompletion = true
-        var paused = false
-        app.pauseTailscaleSetupForBackground { paused = true }
-        XCTAssertFalse(paused)
-        app.resumeTailscaleSetupAfterBackground() // 回到前台时锁还没放完
+        let (guardian, log) = makeGuard(app, grace: .seconds(60))
+        guardian.enteredBackground()
+        log.expiration?()
+        guardian.becameActive() // 回到前台时锁还没放完
         await settle()
         XCTAssertEqual(runtime.startCalls.count, 1, "must not start while the previous runtime still holds the lock")
         runtime.completeStop()
         await settle()
-        XCTAssertTrue(paused)
+        XCTAssertEqual(log.ended.count, 1)
         XCTAssertEqual(runtime.startCalls.count, 2)
         XCTAssertEqual(app.tailscaleSetupLineID, "tail")
     }
@@ -3250,6 +3250,66 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         await settle()
         XCTAssertEqual(log.ended.count, 1)
         XCTAssertEqual(runtime.startCalls.count, 1, "an explicit finish must stay finished")
+    }
+
+    func testStopCompletionUsesTheLatestForegroundState() async {
+        // Exercise both protected expiration and denied execution time, with
+        // repeated foreground/background transitions before the stop completes.
+        for denied in [false, true] {
+            for transitions in 0...5 {
+                let (app, _, runtime) = makeApp()
+                startSetup(app)
+                runtime.deferStopCompletion = true
+                let identifier = denied ? UIBackgroundTaskIdentifier.invalid
+                    : UIBackgroundTaskIdentifier(rawValue: 42)
+                let (guardian, log) = makeGuard(app, grace: .seconds(60), identifier: identifier)
+                guardian.enteredBackground()
+                if !denied { log.expiration?() }
+                for step in 0..<transitions {
+                    if step.isMultiple(of: 2) {
+                        guardian.becameActive()
+                    } else {
+                        guardian.enteredBackground()
+                    }
+                }
+                XCTAssertEqual(runtime.startCalls.count, 1)
+                XCTAssertEqual(runtime.stopCallCount, 1)
+                XCTAssertTrue(log.ended.isEmpty)
+                runtime.completeStop()
+                await settle()
+                let active = !transitions.isMultiple(of: 2)
+                XCTAssertEqual(runtime.startCalls.count, active ? 2 : 1,
+                               "denied=\(denied), transitions=\(transitions)")
+                XCTAssertEqual(log.ended.count, denied ? 0 : 1)
+                if !active {
+                    XCTAssertNil(app.tailscaleSetupLineID)
+                    guardian.becameActive()
+                    await settle()
+                    XCTAssertEqual(runtime.startCalls.count, 2, "keep the paused line for next foreground")
+                }
+                guardian.becameActive()
+                await settle()
+                XCTAssertEqual(runtime.startCalls.count, 2, "duplicate foreground must not restart twice")
+            }
+        }
+    }
+
+    func testInactiveBeforeStopCompletionDefersResumeUntilActive() async {
+        let (app, _, runtime) = makeApp()
+        startSetup(app)
+        runtime.deferStopCompletion = true
+        let (guardian, log) = makeGuard(app, grace: .seconds(60))
+        guardian.enteredBackground()
+        log.expiration?()
+        guardian.becameActive()
+        guardian.becameInactive()
+        runtime.completeStop()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 1)
+        XCTAssertEqual(log.ended.count, 1)
+        guardian.becameActive()
+        await settle()
+        XCTAssertEqual(runtime.startCalls.count, 2)
     }
 
     func testNoBackgroundTaskWithoutSetup() {

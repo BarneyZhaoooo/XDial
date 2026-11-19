@@ -33,7 +33,8 @@ struct MobileRootView: View {
                 switch phase {
                 case .background: MobileAppRuntime.tailscaleSetupBackgroundGuard.enteredBackground()
                 case .active: MobileAppRuntime.tailscaleSetupBackgroundGuard.becameActive()
-                default: break
+                case .inactive: MobileAppRuntime.tailscaleSetupBackgroundGuard.becameInactive()
+                @unknown default: break
                 }
             }
             #if targetEnvironment(simulator)

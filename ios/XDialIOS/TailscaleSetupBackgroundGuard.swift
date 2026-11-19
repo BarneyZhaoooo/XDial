@@ -36,6 +36,7 @@ final class TailscaleSetupBackgroundGuard {
     private var task: UIBackgroundTaskIdentifier = .invalid
     private var pendingPause: Task<Void, Never>?
     private var pausing = false
+    private var isActive = false
 
     init(app: AppState, grace: Duration, tasks: BackgroundTasks) {
         self.app = app
@@ -48,6 +49,7 @@ final class TailscaleSetupBackgroundGuard {
     }
 
     func enteredBackground() {
+        isActive = false
         guard app.tailscaleSetupLineID != nil, pendingPause == nil, !pausing else { return }
         task = tasks.begin { [weak self] in self?.pause() }
         guard task != .invalid else {
@@ -63,21 +65,30 @@ final class TailscaleSetupBackgroundGuard {
     }
 
     func becameActive() {
+        isActive = true
         pendingPause?.cancel()
         pendingPause = nil
-        if !pausing { endTask() }
+        guard !pausing else { return }
+        endTask()
         app.resumeTailscaleSetupAfterBackground()
+    }
+
+    func becameInactive() {
+        isActive = false
     }
 
     private func pause() {
         pendingPause?.cancel()
         pendingPause = nil
-        guard !pausing else { return }
+        guard !pausing, !isActive else { return }
         pausing = true
         app.pauseTailscaleSetupForBackground { [weak self] in
             guard let self else { return }
             self.pausing = false
             self.endTask()
+            // A foreground transition during stop does not promise that the
+            // app is still active now. Keep the paused line until it really is.
+            if self.isActive { self.app.resumeTailscaleSetupAfterBackground() }
         }
     }
 
