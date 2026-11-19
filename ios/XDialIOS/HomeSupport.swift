@@ -20,7 +20,7 @@ struct ConnectionProblem: Equatable {
     /// 原始报错，放在「查看详情」里。
     let detail: String
 
-    static func classify(_ rawError: String?, isChinese: Bool) -> ConnectionProblem? {
+    static func classify(_ rawError: String?, isChinese: Bool, companyPreset: Bool = true) -> ConnectionProblem? {
         guard let detail = rawError?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty else {
             return nil
         }
@@ -52,7 +52,9 @@ struct ConnectionProblem: Equatable {
                "connection refused", "dial tcp") {
             return ConnectionProblem(
                 kind: .server,
-                title: isChinese ? "连不上公司 VPN 服务器" : "Can't reach the company VPN server",
+                title: companyPreset
+                    ? (isChinese ? "连不上公司 VPN 服务器" : "Can't reach the company VPN server")
+                    : (isChinese ? "连不上 VPN 服务器" : "Can't reach the VPN server"),
                 advice: isChinese
                     ? "多半是当前网络拦住了。换个网络再试，或者在账号里核对服务器地址。"
                     : "The current network is probably blocking it. Try another network, or check the server address in Account.",
