@@ -3319,3 +3319,182 @@ final class TailscaleSetupBackgroundTests: XCTestCase {
         XCTAssertEqual(log.begun, 0)
     }
 }
+
+/// 启动失败：先报连接中，再回到未连接。
+@MainActor
+private final class FailingStartManager: TunnelManaging {
+    let isProfileInstalled = true
+    private(set) var startCallCount = 0
+    private weak var engine: RuntimeSpyEngine?
+
+    init(engine: RuntimeSpyEngine) { self.engine = engine }
+
+    func refreshProfileStatus(completion: @escaping @Sendable (Bool) -> Void) { completion(true) }
+
+    func startTunnel(
+        profile: Profile,
+        anyConnect: AnyConnectCredentials?,
+        allowSystemOnDemand: Bool,
+        origin: ConnectionTimeline.StartOrigin,
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) {
+        startCallCount += 1
+        engine?.setStatus("connecting")
+        engine?.setStatus("disconnected")
+        completion(.failure(NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "gateway unreachable"])))
+    }
+
+    func stopTunnel() {}
+}
+
+/// 「打开 XDial 后自动连接」的启动生命周期。
+@MainActor
+final class ConnectOnOpenTests: XCTestCase {
+    private func makePersistence(connectOnOpen: Bool? = nil) -> AppPersistenceContext {
+        let context = AppPersistenceContext.testing(identifier: "open-" + UUID().uuidString)
+        XCTAssertTrue(context.clearForTesting())
+        addTeardownBlock { XCTAssertTrue(context.clearForTesting()) }
+        if let connectOnOpen { context.defaults.set(connectOnOpen, forKey: context.connectOnOpenKey) }
+        return context
+    }
+
+    private func configuredProfile() -> Profile {
+        var profile = Profile.bootstrap()
+        profile.lines[1].vpnServer = "gateway.example.com"
+        profile.lines[1].vpnUsername = "tester"
+        profile.lines[1].vpnPassword = "secret"
+        profile.scenarios = [Scenario(id: "test-scenario", name: "Test", defaultLineID: "vpn")]
+        profile.activeScenarioID = "test-scenario"
+        profile.ensureConnectivityTestConfiguration()
+        return profile
+    }
+
+    private func launch(_ persistence: AppPersistenceContext) -> (AppState, RuntimeSpyEngine, RuntimeSpyManager) {
+        let engine = RuntimeSpyEngine()
+        let manager = RuntimeSpyManager(engine: engine)
+        let app = AppState(engine: engine, tunnelManager: manager, persistence: persistence)
+        app.profile = configuredProfile()
+        return (app, engine, manager)
+    }
+
+    func testOffByDefaultAndDoesNothing() async {
+        let (app, _, manager) = launch(makePersistence())
+        XCTAssertFalse(app.connectOnOpenEnabled)
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(started)
+        XCTAssertEqual(manager.startCallCount, 0)
+    }
+
+    func testPreferenceIsSavedForTheNextLaunch() {
+        let persistence = makePersistence()
+        let (first, _, _) = launch(persistence)
+        first.connectOnOpenEnabled = true
+        let (next, _, _) = launch(persistence)
+        XCTAssertTrue(next.connectOnOpenEnabled)
+        next.connectOnOpenEnabled = false
+        let (last, _, _) = launch(persistence)
+        XCTAssertFalse(last.connectOnOpenEnabled)
+    }
+
+    func testConnectsOnceAfterOpeningAndNotOnLaterForegrounds() async {
+        let (app, engine, manager) = launch(makePersistence(connectOnOpen: true))
+        XCTAssertTrue(app.canConnect, app.activeConfigurationIssues.joined(separator: "\n"))
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertTrue(started)
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(manager.lastOrigin, .launch)
+        // 掉线后回到前台、首页重新渲染：都不再由这里发起连接。
+        engine.setStatus("disconnected")
+        let again = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(again)
+        XCTAssertEqual(manager.startCallCount, 1)
+    }
+
+    func testStaleNetworkDoesNotConsumeLaunchConnection() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        let pilot = ScenarioAutoPilot()
+        let generation = pilot.networkGeneration
+        pilot.noteNetworkChanged()
+        let stale = await app.connectAfterOpeningIfWanted {
+            generation == pilot.networkGeneration
+        }
+        XCTAssertFalse(stale)
+        XCTAssertEqual(manager.startCallCount, 0)
+
+        // 新网络判断完毕后仍保留启动机会；没有匹配场景也可以继续。
+        let currentGeneration = pilot.networkGeneration
+        let current = await app.connectAfterOpeningIfWanted {
+            currentGeneration == pilot.networkGeneration
+        }
+        XCTAssertTrue(current)
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(manager.lastOrigin, .launch)
+    }
+
+    func testManualDisconnectIsNotUndoneByReturningToTheApp() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        await app.connectAfterOpeningIfWanted()
+        app.disconnect()
+        XCTAssertEqual(manager.stopCallCount, 1)
+        let afterForeground = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(afterForeground)
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertFalse(app.isConnected)
+    }
+
+    func testUserActionBeforeTheDecisionWins() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        app.disconnect() // 首页还没来得及判断，用户先点了断开
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(started)
+        XCTAssertEqual(manager.startCallCount, 0)
+    }
+
+    func testDoesNotStartAgainWhenAlreadyConnectedOrConnecting() async {
+        for status in ["connected", "connecting", "reconnecting"] {
+            let (app, engine, manager) = launch(makePersistence(connectOnOpen: true))
+            engine.setStatus(status) // 系统里的 VPN 已经在跑，或别的入口正在连
+            let started = await app.connectAfterOpeningIfWanted()
+            XCTAssertFalse(started, status)
+            XCTAssertEqual(manager.startCallCount, 0, status)
+        }
+    }
+
+    func testIncompleteAccountIsSkippedWithoutRetrying() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        app.profile.lines[1].vpnPassword = ""
+        XCTAssertFalse(app.isConnectionConfigured)
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(started)
+        // 补好账号后也不会自己连：本次启动的机会已经用掉，由用户决定。
+        app.profile = configuredProfile()
+        let later = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(later)
+        XCTAssertEqual(manager.startCallCount, 0)
+    }
+
+    func testTurningTheSwitchOffBeforeTheDecisionCancelsIt() async {
+        let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
+        app.connectOnOpenEnabled = false
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(started)
+        XCTAssertEqual(manager.startCallCount, 0)
+    }
+
+    func testFailedStartIsNotRetried() async throws {
+        let persistence = makePersistence(connectOnOpen: true)
+        let engine = RuntimeSpyEngine()
+        let manager = FailingStartManager(engine: engine)
+        let app = AppState(engine: engine, tunnelManager: manager, persistence: persistence)
+        app.profile = configuredProfile()
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertTrue(started)
+        // 掉线重连最短 1 秒后重试；等过这个时间也不应再发起。
+        try await Task.sleep(for: .seconds(2.5))
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(engine.lastError, "gateway unreachable")
+        let afterForeground = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(afterForeground)
+        XCTAssertEqual(manager.startCallCount, 1)
+    }
+}

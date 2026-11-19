@@ -48,6 +48,11 @@ struct MobileSettingsView: View {
 
                 Section {
                     Toggle(
+                        app.tr("打开 XDial 后自动连接", "Connect when XDial opens"),
+                        isOn: $app.connectOnOpenEnabled
+                    )
+                    .accessibilityIdentifier("settings-connect-on-open")
+                    Toggle(
                         app.tr("掉线后自动重连", "Reconnect after a drop"),
                         isOn: $app.autoReconnectEnabled
                     )
@@ -75,8 +80,8 @@ struct MobileSettingsView: View {
                     Text(app.tr("连接", "Connection"))
                 } footer: {
                     Text(app.tr(
-                        "掉线后最多自动重试 3 次。「换网络后自动连回」由系统接管，手动断开后会暂停，下次连上再恢复。",
-                        "Drops are retried up to 3 times. Network-change reconnect is handled by iOS; it pauses after a manual disconnect and resumes on the next connection."
+                        "打开 XDial 时连接一次；手动断开后，切到后台再回来不会重新连接。掉线后最多自动重试 3 次。「换网络后自动连回」由系统接管，手动断开后会暂停，下次连上再恢复。",
+                        "XDial connects once when it opens; after a manual disconnect, returning to it does not reconnect. Drops are retried up to 3 times. Network-change reconnect is handled by iOS; it pauses after a manual disconnect and resumes on the next connection."
                     ))
                 }
 

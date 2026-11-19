@@ -118,12 +118,15 @@ struct HomeView: View {
         .sensoryFeedback(.error, trigger: problem?.detail) { _, new in new != nil }
         .tint(XDialTheme.accent)
         .task {
-            autoPilot.onNetworkChange = { Task { await refreshAutoScenario(afterNetworkChange: true) } }
+            autoPilot.onNetworkChange = { Task { await refreshScenarioAndConnectAfterOpening(afterNetworkChange: true) } }
             autoPilot.start()
-            await refreshAutoScenario()
+            await refreshScenarioAndConnectAfterOpening()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refreshAutoScenario() } }
+            guard phase == .active else { return }
+            Task {
+                await refreshScenarioAndConnectAfterOpening()
+            }
         }
         .onChange(of: autoScenario) { _, isOn in
             showingAutoScenarios = false
@@ -137,6 +140,16 @@ struct HomeView: View {
     }
 
     // MARK: - 自动选场景
+
+    /// 首次显示、回前台和换网络共用入口。作废的查询不能消费本次启动的连接机会；
+    /// 换网络后的回调会在新场景判断完成后接住它，后台启动则等回到前台。
+    private func refreshScenarioAndConnectAfterOpening(afterNetworkChange: Bool = false) async {
+        let generation = autoPilot.networkGeneration
+        await refreshAutoScenario(afterNetworkChange: afterNetworkChange)
+        await app.connectAfterOpeningIfWanted {
+            scenePhase == .active && generation == autoPilot.networkGeneration
+        }
+    }
 
     /// 看一眼当前网络，换到对应的场景。没连着就直接换；已经连着就交给 VPN 扩展判断，
     /// 由它在不断开 VPN 的情况下切换（App 被挂起时它也照样判断）。
@@ -169,12 +182,14 @@ struct HomeView: View {
             let app = app
             exitCountryViaTunnel = { await app.directExitCountry() }
         }
+        let generation = autoPilot.networkGeneration
         let pick = await autoPilot.survey(
             scenarios: app.profile.scenarios,
             regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:],
             exitCountryViaTunnel: exitCountryViaTunnel
         )
-        guard let pick, autoScenario else { return }
+        guard !Task.isCancelled, generation == autoPilot.networkGeneration,
+              let pick, autoScenario else { return }
         let current = app.profile.activeScenarioID
         guard pick.scenarioID != current else {
             dismissedSuggestionID = nil

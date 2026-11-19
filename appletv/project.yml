@@ -46,6 +46,7 @@ targets:
     platform: tvOS
     sources:
       - XDialTV
+      - path: ../macos/Shared/AutomaticConnectionPolicy.swift
     entitlements:
       path: XDialTV/XDialTV.entitlements
       properties:
