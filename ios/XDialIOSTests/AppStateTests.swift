@@ -413,6 +413,8 @@ final class AppStateTests: XCTestCase {
         addTeardownBlock {
             XCTAssertTrue(context.clearForTesting())
         }
+        // 数据使用说明的确认是用户操作；这些测试从已确认之后开始。
+        context.defaults.set(AppState.dataUseNoticeVersion, forKey: context.dataUseNoticeKey)
         return context
     }
 
@@ -3074,6 +3076,7 @@ final class ConnectOnOpenTests: XCTestCase {
         let context = AppPersistenceContext.testing(identifier: "open-" + UUID().uuidString)
         XCTAssertTrue(context.clearForTesting())
         addTeardownBlock { XCTAssertTrue(context.clearForTesting()) }
+        context.defaults.set(AppState.dataUseNoticeVersion, forKey: context.dataUseNoticeKey)
         if let connectOnOpen { context.defaults.set(connectOnOpen, forKey: context.connectOnOpenKey) }
         return context
     }
@@ -3216,5 +3219,105 @@ final class ConnectOnOpenTests: XCTestCase {
         let afterForeground = await app.connectAfterOpeningIfWanted()
         XCTAssertFalse(afterForeground)
         XCTAssertEqual(manager.startCallCount, 1)
+    }
+}
+
+/// 公开版的「数据使用说明」：确认之前不使用服务。
+@MainActor
+final class DataUseNoticeTests: XCTestCase {
+    private func makePersistence(accepted: Bool) -> AppPersistenceContext {
+        let context = AppPersistenceContext.testing(identifier: "notice-" + UUID().uuidString)
+        XCTAssertTrue(context.clearForTesting())
+        addTeardownBlock { XCTAssertTrue(context.clearForTesting()) }
+        if accepted { context.defaults.set(AppState.dataUseNoticeVersion, forKey: context.dataUseNoticeKey) }
+        return context
+    }
+
+    private func configuredProfile() -> Profile {
+        var profile = Profile.bootstrap()
+        profile.lines[1].vpnServer = "gateway.example.com"
+        profile.lines[1].vpnUsername = "tester"
+        profile.lines[1].vpnPassword = "secret"
+        profile.scenarios = [Scenario(id: "test-scenario", name: "Test", defaultLineID: "vpn")]
+        profile.activeScenarioID = "test-scenario"
+        profile.ensureConnectivityTestConfiguration()
+        return profile
+    }
+
+    private func makeApp(_ persistence: AppPersistenceContext) -> (AppState, RuntimeSpyEngine, RuntimeSpyManager) {
+        let engine = RuntimeSpyEngine()
+        let manager = RuntimeSpyManager(engine: engine)
+        let app = AppState(engine: engine, tunnelManager: manager, persistence: persistence)
+        app.profile = configuredProfile()
+        return (app, engine, manager)
+    }
+
+    func testNoConnectionBeforeTheNoticeIsConfirmed() async {
+        let (app, engine, manager) = makeApp(makePersistence(accepted: false))
+        XCTAssertFalse(app.dataUseNoticeAccepted)
+        app.connect()
+        await Task.yield()
+        XCTAssertEqual(manager.startCallCount, 0)
+        XCTAssertNotNil(engine.lastError)
+
+        app.acceptDataUseNotice()
+        app.connect()
+        await Task.yield()
+        XCTAssertEqual(manager.startCallCount, 1)
+    }
+
+    func testConfirmationIsRememberedForTheCurrentVersion() {
+        let persistence = makePersistence(accepted: false)
+        let (first, _, _) = makeApp(persistence)
+        first.acceptDataUseNotice()
+        let (next, _, _) = makeApp(persistence)
+        XCTAssertTrue(next.dataUseNoticeAccepted)
+        // 说明内容升级后需要重新确认。
+        persistence.defaults.set(AppState.dataUseNoticeVersion - 1, forKey: persistence.dataUseNoticeKey)
+        let (older, _, _) = makeApp(persistence)
+        XCTAssertFalse(older.dataUseNoticeAccepted)
+    }
+
+    func testConnectOnOpenWaitsForTheConfirmation() async {
+        let persistence = makePersistence(accepted: false)
+        persistence.defaults.set(true, forKey: persistence.connectOnOpenKey)
+        let (app, engine, manager) = makeApp(persistence)
+        let early = await app.connectAfterOpeningIfWanted()
+        XCTAssertFalse(early)
+        XCTAssertEqual(manager.startCallCount, 0)
+        XCTAssertNil(engine.lastError, "no error is shown for a launch connection that is still waiting")
+
+        app.acceptDataUseNotice()
+        let started = await app.connectAfterOpeningIfWanted()
+        XCTAssertTrue(started)
+        XCTAssertEqual(manager.startCallCount, 1)
+    }
+
+    func testPublicBuildHasNoCompanyPresetAndNoRegionLookupClaim() {
+        let (app, _, _) = makeApp(makePersistence(accepted: true))
+        XCTAssertFalse(app.hasCompanyPreset)
+        let publicText = DataUseNotice.sections(isChinese: false, companyPreset: false).flatMap(\.points).joined()
+        let companyText = DataUseNotice.sections(isChinese: false, companyPreset: true).flatMap(\.points).joined()
+        XCTAssertFalse(publicText.contains("gspe1-ssl.ls.apple.com"), "the public build never looks up the exit region")
+        XCTAssertTrue(companyText.contains("gspe1-ssl.ls.apple.com"))
+        // Every third-party service the code contacts automatically is named.
+        for service in ["1.1.1.1", "1.0.0.1", "www.apple.com", "223.5.5.5", "www.gstatic.com", "checkip.amazonaws.com", "GitHub"] {
+            XCTAssertTrue(publicText.contains(service), service)
+        }
+        for zh in [true, false] {
+            XCTAssertEqual(DataUseNotice.sections(isChinese: zh, companyPreset: false).count, 5)
+        }
+    }
+
+    func testPrivacyPolicyLinkMatchesTheStoreRecord() {
+        // 与 App Store Connect 里填写的隐私政策地址一致；说明页和设置都链接到它。
+        XCTAssertEqual(DataUseNoticeView.privacyPolicyURL?.absoluteString, "https://xindong.github.io/XDial/privacy/")
+    }
+
+    func testPublicBuildWordingDoesNotAssumeACompanyAccount() {
+        let problem = ConnectionProblem.classify("dial tcp: connection refused", isChinese: false, companyPreset: false)
+        XCTAssertEqual(problem?.title, "Can't reach the VPN server")
+        let company = ConnectionProblem.classify("dial tcp: connection refused", isChinese: false)
+        XCTAssertEqual(company?.title, "Can't reach the company VPN server")
     }
 }

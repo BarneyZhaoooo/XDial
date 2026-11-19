@@ -43,7 +43,7 @@ GO_LDFLAGS := -X main.version=$(VERSION)
 # Unix 时间戳，确保 host 与 extension 配套且每次本地构建都能被系统识别为升级。
 DEBUG_BUILD_VERSION ?= $(shell date +%s)
 DESKTOP_GO_TAGS := with_gvisor,with_utls
-MOBILE_LIBBOX_TAGS := with_gvisor,with_utls
+MOBILE_LIBBOX_TAGS := with_gvisor,with_utls,xdial_omit_tailssh
 MACOS_LIBBOX_FRAMEWORK := $(BUILD_DIR)/frameworks/macos/Libbox.xcframework
 MACOS_LIBBOX_BINARY := $(MACOS_LIBBOX_FRAMEWORK)/macos-arm64_x86_64/Libbox.framework/Libbox
 LIBBOX_GO_SOURCES := $(shell find core -type f -name '*.go' ! -name '*_test.go')
@@ -455,6 +455,9 @@ check-mobile-libbox-deps: $(PATCHED_WORKFILE)
 	fi; \
 	if ! printf '%s\n' "$$deps" | grep -Eq '^github\.com/metacubex/utls$$'; then \
 		echo 'error: mobile Libbox is missing uTLS client fingerprint support'; exit 1; \
+	fi; \
+	if printf '%s\n' "$$deps" | grep -Eq '^github\.com/pkg/sftp$$'; then \
+		echo 'error: mobile Libbox links the Tailscale SSH server (SFTP disk-space API needs a privacy-manifest reason); build with xdial_omit_tailssh'; exit 1; \
 	fi
 
 libbox-xcframework: check-mobile-libbox-deps

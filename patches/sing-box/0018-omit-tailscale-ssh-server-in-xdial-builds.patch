@@ -1,0 +1,183 @@
+diff --git a/protocol/tailscale/tailssh/recording.go b/protocol/tailscale/tailssh/recording.go
+index 9077eaa..0d5f2f6 100644
+--- a/protocol/tailscale/tailssh/recording.go
++++ b/protocol/tailscale/tailssh/recording.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor
++//go:build with_gvisor && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/server.go b/protocol/tailscale/tailssh/server.go
+index 7fa93ae..9c0e6fa 100644
+--- a/protocol/tailscale/tailssh/server.go
++++ b/protocol/tailscale/tailssh/server.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor
++//go:build with_gvisor && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/server_helper_unix.go b/protocol/tailscale/tailssh/server_helper_unix.go
+index 880759b..23221d1 100644
+--- a/protocol/tailscale/tailssh/server_helper_unix.go
++++ b/protocol/tailscale/tailssh/server_helper_unix.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && !windows
++//go:build with_gvisor && !windows && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/server_helper_windows.go b/protocol/tailscale/tailssh/server_helper_windows.go
+index 4792fc7..e7d12aa 100644
+--- a/protocol/tailscale/tailssh/server_helper_windows.go
++++ b/protocol/tailscale/tailssh/server_helper_windows.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && windows
++//go:build with_gvisor && windows && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/server_omitted.go b/protocol/tailscale/tailssh/server_omitted.go
+new file mode 100644
+index 0000000..249a0fb
+--- /dev/null
++++ b/protocol/tailscale/tailssh/server_omitted.go
+@@ -0,0 +1,37 @@
++//go:build with_gvisor && xdial_omit_tailssh
++
++// XDial builds without the Tailscale SSH server (xdial_omit_tailssh): it never
++// enables it, and leaving it out keeps the SFTP server's disk-space API out of
++// the Apple binaries, which would otherwise need a privacy-manifest reason.
++package tailssh
++
++import (
++	"context"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/option"
++	E "github.com/sagernet/sing/common/exceptions"
++	"github.com/sagernet/sing/common/logger"
++	tsDNS "github.com/sagernet/tailscale/net/dns"
++	"github.com/sagernet/tailscale/tsnet"
++	"github.com/sagernet/tailscale/wgengine/router"
++	"github.com/sagernet/tailscale/wgengine/wgcfg"
++)
++
++var errOmitted = E.New("Tailscale SSH server is not included in this build")
++
++type Server struct{}
++
++func CheckServerSupport(platformInterface adapter.PlatformInterface) (string, error) {
++	return "", errOmitted
++}
++
++func New(ctx context.Context, tsnetServer *tsnet.Server, platformInterface adapter.PlatformInterface, options *option.TailscaleSSHServerOptions, logger logger.ContextLogger) (*Server, error) {
++	return nil, errOmitted
++}
++
++func (s *Server) Start() error { return errOmitted }
++
++func (s *Server) Close() error { return nil }
++
++func (s *Server) OnReconfig(cfg *wgcfg.Config, routerCfg *router.Config, dnsCfg *tsDNS.Config) {}
+diff --git a/protocol/tailscale/tailssh/session.go b/protocol/tailscale/tailssh/session.go
+index c57d846..d03ea3a 100644
+--- a/protocol/tailscale/tailssh/session.go
++++ b/protocol/tailscale/tailssh/session.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor
++//go:build with_gvisor && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/session_android.go b/protocol/tailscale/tailssh/session_android.go
+index e2c7355..a1971eb 100644
+--- a/protocol/tailscale/tailssh/session_android.go
++++ b/protocol/tailscale/tailssh/session_android.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && android
++//go:build with_gvisor && android && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/session_ios.go b/protocol/tailscale/tailssh/session_ios.go
+index 522ad2b..9684e3a 100644
+--- a/protocol/tailscale/tailssh/session_ios.go
++++ b/protocol/tailscale/tailssh/session_ios.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && ios
++//go:build with_gvisor && ios && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/session_platform.go b/protocol/tailscale/tailssh/session_platform.go
+index 5d5c5b7..578cd17 100644
+--- a/protocol/tailscale/tailssh/session_platform.go
++++ b/protocol/tailscale/tailssh/session_platform.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && !windows
++//go:build with_gvisor && !windows && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/session_unix.go b/protocol/tailscale/tailssh/session_unix.go
+index 7b98f58..766ce68 100644
+--- a/protocol/tailscale/tailssh/session_unix.go
++++ b/protocol/tailscale/tailssh/session_unix.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && unix && !android && !ios
++//go:build with_gvisor && unix && !android && !ios && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/session_windows.go b/protocol/tailscale/tailssh/session_windows.go
+index 0b6db19..48bf4ba 100644
+--- a/protocol/tailscale/tailssh/session_windows.go
++++ b/protocol/tailscale/tailssh/session_windows.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && windows
++//go:build with_gvisor && windows && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/user.go b/protocol/tailscale/tailssh/user.go
+index a9a9b21..7c3918d 100644
+--- a/protocol/tailscale/tailssh/user.go
++++ b/protocol/tailscale/tailssh/user.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor
++//go:build with_gvisor && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/user_android.go b/protocol/tailscale/tailssh/user_android.go
+index 47dfd7e..6384c08 100644
+--- a/protocol/tailscale/tailssh/user_android.go
++++ b/protocol/tailscale/tailssh/user_android.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && android
++//go:build with_gvisor && android && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/user_unix.go b/protocol/tailscale/tailssh/user_unix.go
+index b53cdf4..3e1e814 100644
+--- a/protocol/tailscale/tailssh/user_unix.go
++++ b/protocol/tailscale/tailssh/user_unix.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && !windows && !android
++//go:build with_gvisor && !windows && !android && !xdial_omit_tailssh
+ 
+ package tailssh
+ 
+diff --git a/protocol/tailscale/tailssh/user_windows.go b/protocol/tailscale/tailssh/user_windows.go
+index 31eb6ac..46be904 100644
+--- a/protocol/tailscale/tailssh/user_windows.go
++++ b/protocol/tailscale/tailssh/user_windows.go
+@@ -1,4 +1,4 @@
+-//go:build with_gvisor && windows
++//go:build with_gvisor && windows && !xdial_omit_tailssh
+ 
+ package tailssh
+ 

@@ -24,7 +24,9 @@ struct SignInSheet: View {
     private var isLocked: Bool { !app.canMutateConfiguration }
     private var lineName: String {
         let name = line?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? app.tr("公司 VPN", "Company VPN") : name
+        return name.isEmpty
+            ? (app.hasCompanyPreset ? app.tr("公司 VPN", "Company VPN") : app.tr("VPN 账号", "VPN Account"))
+            : name
     }
     private var canSubmit: Bool {
         !isLocked
@@ -101,9 +103,12 @@ struct SignInSheet: View {
             Text(app.tr("登录\(lineName)", "Sign in to \(lineName)"))
                 .font(.largeTitle.bold())
                 .foregroundStyle(XDialTheme.ink)
-            Text(app.tr(
+            Text(app.hasCompanyPreset ? app.tr(
                 "用你的公司账号登录，只需要填这一次。",
                 "Use your company account. You only need to do this once."
+            ) : app.tr(
+                "填写这条线路的账号，只需要填这一次。",
+                "Enter the account for this line. You only need to do this once."
             ))
             .font(.body)
             .foregroundStyle(XDialTheme.inkSecondary)
