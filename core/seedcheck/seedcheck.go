@@ -8,6 +8,7 @@
 package seedcheck
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -31,6 +32,34 @@ type Seed struct {
 	Regions  map[string]string // region code or "*" -> imported Scenario ID
 	Revision int
 	Mobile   bool
+	// RuleHistory: imported rule ID -> matching content earlier revisions
+	// shipped (rule_set_history). Apps update such a rule to the current
+	// content only while it still equals one of these.
+	RuleHistory map[string][]RuleContent
+}
+
+// RuleContent is a manual rule's matching content; order and case do not count.
+type RuleContent struct {
+	Domains []string `json:"domains"`
+	CIDRs   []string `json:"cidrs"`
+}
+
+func (c RuleContent) key() string {
+	normalize := func(values []string) []string {
+		out := make([]string, 0, len(values))
+		seen := map[string]bool{}
+		for _, value := range values {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if !seen[value] {
+				seen[value] = true
+				out = append(out, value)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	data, _ := json.Marshal([][]string{normalize(c.Domains), normalize(c.CIDRs)})
+	return string(data)
 }
 
 // Load accepts the mobile seed envelope ("xdial-mobile-seed") or a plain
@@ -50,10 +79,11 @@ func Load(data []byte) (*Seed, error) {
 		return &Seed{Profile: profile}, nil
 	}
 	var envelope struct {
-		SchemaVersion int               `json:"schema_version"`
-		Revision      int               `json:"revision"`
-		Regions       map[string]string `json:"region_scenarios"`
-		Profile       json.RawMessage   `json:"profile"`
+		SchemaVersion int                                     `json:"schema_version"`
+		Revision      int                                     `json:"revision"`
+		Regions       map[string]string                       `json:"region_scenarios"`
+		Profile       json.RawMessage                         `json:"profile"`
+		RuleHistory   map[string][]map[string]json.RawMessage `json:"rule_set_history"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope.SchemaVersion != 1 || envelope.Revision <= 0 {
 		return nil, fmt.Errorf("invalid mobile seed envelope")
@@ -62,6 +92,10 @@ func Load(data []byte) (*Seed, error) {
 		Scenarios []struct {
 			ID string `json:"id"`
 		} `json:"scenarios"`
+		RuleSets []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"rule_sets"`
 	}
 	if err := json.Unmarshal(envelope.Profile, &source); err != nil {
 		return nil, fmt.Errorf("invalid seed profile")
@@ -95,7 +129,53 @@ func Load(data []byte) (*Seed, error) {
 		}
 		regions[code] = target
 	}
-	return &Seed{Profile: profile, Regions: regions, Revision: envelope.Revision, Mobile: true}, nil
+	if raw, present := root["rule_set_history"]; present && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, fmt.Errorf("rule_set_history must be an object")
+	}
+	history := map[string][]RuleContent{}
+	if len(envelope.RuleHistory) > 0 && len(source.RuleSets) != len(profile.RuleSets) {
+		return nil, fmt.Errorf("seed rule sets changed during import")
+	}
+	for ruleID, versions := range envelope.RuleHistory {
+		index := -1
+		for i, rule := range source.RuleSets {
+			if rule.ID == ruleID && rule.Type == "manual" {
+				index = i
+			}
+		}
+		if index < 0 {
+			return nil, fmt.Errorf("rule_set_history names %s, which is not a manual rule of the preset", ruleID)
+		}
+		if versions == nil {
+			return nil, fmt.Errorf("rule_set_history for %s must be an array", ruleID)
+		}
+		for _, version := range versions {
+			if version == nil {
+				return nil, fmt.Errorf("rule_set_history for %s must contain objects", ruleID)
+			}
+			var content RuleContent
+			for key, value := range version {
+				target := map[string]*[]string{"domains": &content.Domains, "cidrs": &content.CIDRs}[key]
+				if target == nil {
+					return nil, fmt.Errorf("rule_set_history for %s may only list domains and cidrs", ruleID)
+				}
+				// Unlike Go's []string decoder, the Apps reject null arrays
+				// and null elements rather than treating them as empty values.
+				var values []*string
+				if json.Unmarshal(value, &values) != nil || values == nil {
+					return nil, fmt.Errorf("rule_set_history for %s requires string arrays", ruleID)
+				}
+				for _, item := range values {
+					if item == nil {
+						return nil, fmt.Errorf("rule_set_history for %s requires strings", ruleID)
+					}
+					*target = append(*target, *item)
+				}
+			}
+			history[profile.RuleSets[index].ID] = append(history[profile.RuleSets[index].ID], content)
+		}
+	}
+	return &Seed{Profile: profile, Regions: regions, Revision: envelope.Revision, Mobile: true, RuleHistory: history}, nil
 }
 
 // A shared preset may only use what the phone's importer reads the same way
@@ -364,7 +444,7 @@ func withoutSecrets(line config.Line) config.Line {
 
 // Fingerprint is the routing meaning of a seed. Map keys name the parts a
 // platform may declare as unsupported: "lines", "rule_sets", "scenarios",
-// "active_scenario", "regions", "offline_rules".
+// "active_scenario", "regions", "offline_rules", "rule_set_history".
 func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	p := seed.Profile
 	var lines []map[string]any
@@ -407,8 +487,17 @@ func Fingerprint(seed *Seed, offline map[string]string) map[string]any {
 	for key, value := range offline {
 		offlineRules[key] = value
 	}
+	ruleHistory := map[string]any{}
+	for id, versions := range seed.RuleHistory {
+		keys := []string{}
+		for _, version := range versions {
+			keys = append(keys, version.key())
+		}
+		ruleHistory[id] = sorted(keys)
+	}
 	return canonical(map[string]any{"lines": lines, "rule_sets": rules, "scenarios": scenarios,
-		"active_scenario": p.ActiveScenarioID, "regions": regions, "offline_rules": offlineRules})
+		"active_scenario": p.ActiveScenarioID, "regions": regions, "offline_rules": offlineRules,
+		"rule_set_history": ruleHistory})
 }
 
 // ruleFingerprint is everything a RuleSet matches on. Conditions keep their

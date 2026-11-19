@@ -64,8 +64,26 @@ struct MobileSeed: Equatable {
             }
             regions[key] = scenarioID
         }
+        // 预置改过内容的手动规则，记着之前各版发过的内容，只用来判断用户有没有改过。
+        var history: [String: [ShippedRuleContent]] = [:]
+        if let raw = root["rule_set_history"] {
+            guard let entries = raw as? [String: [[String: Any]]] else { throw MobileConfigurationError.unsupportedFormat }
+            for (ruleID, versions) in entries {
+                guard profile.ruleSets.contains(where: { $0.id == ruleID && $0.type == "manual" }) else {
+                    throw MobileConfigurationError.unsupportedFormat
+                }
+                history[ruleID] = try versions.map { version in
+                    guard Set(version.keys).isSubset(of: ["domains", "cidrs"]),
+                          let domains = (version["domains"] ?? [String]()) as? [String],
+                          let cidrs = (version["cidrs"] ?? [String]()) as? [String] else {
+                        throw MobileConfigurationError.unsupportedFormat
+                    }
+                    return ShippedRuleContent(domains: domains, cidrs: cidrs)
+                }
+            }
+        }
         return MobileSeed(
-            profileSeed: ProfileSeed(profile: profile, revision: revision.intValue),
+            profileSeed: ProfileSeed(profile: profile, revision: revision.intValue, ruleSetHistory: history),
             regionScenarios: regions
         )
     }
