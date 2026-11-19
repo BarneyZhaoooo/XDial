@@ -1057,7 +1057,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private var activeStartAllowsSystemOnDemand = true
     private var startWatchdogTask: Task<Void, Never>?
     /// Shared app/extension connection timeline (see ConnectionTimeline).
-    private let timeline = ConnectionTimelineStore.shared(appGroup: kAppGroupIdentifier)
+    private let timeline = ConnectionTimelineStore.shared(appGroup: kAppGroupIdentifier, writer: .app)
     /// Session the next timeline events belong to; equals the start attempt ID.
     private var timelineSessionID: String?
     private var checkStartedAt = ProcessInfo.processInfo.systemUptime

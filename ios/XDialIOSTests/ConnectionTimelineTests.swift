@@ -17,8 +17,8 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testAppAndTunnelWritersShareOneSessionAndActiveMarker() {
-        let app = ConnectionTimelineStore(directory: directory)
-        let tunnel = ConnectionTimelineStore(directory: directory)
+        let app = ConnectionTimelineStore(directory: directory, writer: .app)
+        let tunnel = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         app.beginSession("s1", markActive: false)
         app.append(session: "s1", source: .app, stage: "app.start_requested")
         app.flush()
@@ -38,8 +38,8 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testSystemReconnectReassociatesEventsButPendingManualStartKeepsItsID() {
-        let app = ConnectionTimelineStore(directory: directory)
-        let tunnel = ConnectionTimelineStore(directory: directory)
+        let app = ConnectionTimelineStore(directory: directory, writer: .app)
+        let tunnel = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         app.beginSession("manual", markActive: false)
         app.flush()
         tunnel.beginSession("old", markActive: true)
@@ -58,7 +58,7 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testStopCompletionFollowsFinalWriteAndActiveMarkerRemoval() async {
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         store.beginSession("s", markActive: true)
         store.append(session: "s", source: .tunnel, stage: "stopped")
         await withCheckedContinuation { continuation in
@@ -69,28 +69,37 @@ final class ConnectionTimelineTests: XCTestCase {
         XCTAssertEqual(file.sessions.first?.events.last?.stage, "stopped")
     }
 
-    func testBusyFileLockDropsDiagnosticsInsteadOfWaitingOrWritingUnlocked() async {
-        let store = ConnectionTimelineStore(directory: directory)
-        store.beginSession("s", markActive: true)
-        store.flush()
-        let fd = open(directory.appendingPathComponent(ConnectionTimeline.fileName + ".lock").path,
-                      O_RDWR, 0o600)
-        XCTAssertGreaterThanOrEqual(fd, 0)
-        defer { close(fd) }
-        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
-        store.append(session: "s", source: .app, stage: "must-drop")
-        let start = ProcessInfo.processInfo.systemUptime
-        let busy = await store.loadSnapshot()
-        XCTAssertTrue(busy.sessions.isEmpty)
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 1)
-        flock(fd, LOCK_UN)
-        let after = await store.loadSnapshot()
-        XCTAssertTrue(after.sessions.first?.events.isEmpty == true)
-        XCTAssertEqual(after.activeSessionID, "s")
+    func testAppLeavesLegacyTunnelHistoryUntouchedAndWritesWithoutSharedLock() async throws {
+        let legacy = #"{"version":1,"activeSessionID":"old","sessions":[{"id":"old","startedAt":10,"events":[{"t":11,"src":"tunnel","stage":"started"}],"droppedEvents":0}]}"#
+        let url = directory.appendingPathComponent(ConnectionTimeline.fileName)
+        try Data(legacy.utf8).write(to: url)
+        let app = ConnectionTimelineStore(directory: directory, writer: .app)
+        app.append(session: "", preferActiveSession: true, source: .app, stage: "resumed", at: 12)
+        let snapshot = await app.loadSnapshot()
+        XCTAssertEqual(snapshot.sessions.first?.events.map(\.stage), ["started", "resumed"])
+        XCTAssertEqual(snapshot.activeSessionID, "old")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), legacy)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".lock"))
+    }
+
+    func testMergedTimelinePreservesStartupAndLatestEventsWithinCombinedLimit() throws {
+        let app = ConnectionTimelineStore(directory: directory, writer: .app)
+        let tunnel = ConnectionTimelineStore(directory: directory, writer: .tunnel)
+        app.beginSession("s", markActive: false, origin: .user)
+        tunnel.beginSession("s", markActive: true)
+        for i in 0..<80 {
+            app.append(session: "s", source: .app, stage: "a", at: Int64(2 * i))
+            tunnel.append(session: "s", source: .tunnel, stage: "b", at: Int64(2 * i + 1))
+        }
+        tunnel.flush()
+        let session = try XCTUnwrap(app.snapshot().sessions.first)
+        XCTAssertEqual(session.startOrigin, ConnectionTimeline.StartOrigin.user.rawValue)
+        XCTAssertEqual(session.events.map(\.t), (Array(0..<30) + Array(70..<160)).map(Int64.init))
+        XCTAssertEqual(session.droppedEvents, 40)
     }
 
     func testRequestTimestampRetainsCompletionOrderDespiteDelayedAppend() {
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         let first = DataPathProbe.CheckRecord(result: .ok, ms: 1000, completedAt: 2000)
         let second = DataPathProbe.CheckRecord(result: .timeout, ms: 15000, completedAt: 16000)
         store.beginSession("s", markActive: false)
@@ -103,7 +112,7 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testSessionsAndEventsAreBounded() {
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         for index in 0..<(ConnectionTimeline.maxSessions + 3) {
             store.beginSession("s\(index)", markActive: index == 0)
         }
@@ -123,7 +132,7 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testLongConnectionCoalescesSurveysAndKeepsTheStopAcrossReconnect() throws {
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         let url = directory.appendingPathComponent(ConnectionTimeline.fileName)
         store.beginSession("old", markActive: true, origin: .user)
         store.append(session: "old", source: .tunnel, stage: "tunnel.start_begin")
@@ -172,7 +181,7 @@ final class ConnectionTimelineTests: XCTestCase {
     }
 
     func testBackgroundStartUsesSystemDateAndDisconnectedSnapshotClearsStaleMarker() throws {
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         store.beginSession("system", markActive: true, origin: .system)
         store.append(session: "system", source: .app, stage: "app.status.connected", at: 500_000)
         store.append(session: "system", source: .app, stage: "app.connection_established", at: 10_000)
@@ -209,7 +218,7 @@ final class ConnectionTimelineTests: XCTestCase {
 
     func testCorruptFileIsReplacedInsteadOfBlockingWrites() throws {
         try Data("not json".utf8).write(to: directory.appendingPathComponent(ConnectionTimeline.fileName))
-        let store = ConnectionTimelineStore(directory: directory)
+        let store = ConnectionTimelineStore(directory: directory, writer: .tunnel)
         store.append(session: "s1", source: .app, stage: "app.start_requested")
         store.flush()
         XCTAssertEqual(store.snapshot().sessions.first?.events.count, 1)

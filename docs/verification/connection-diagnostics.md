@@ -6,7 +6,7 @@
 ## 实现
 
 - `appletv/XDialTV/ConnectionTimeline.swift`：App 与扩展共用的会话时间线。
-  - 存放在 App Group 的 `Diagnostics/connection-timeline.json`；进程内用串行队列，跨进程用 `flock`。
+  - App 与扩展在 App Group 的 `Diagnostics` 下分别原子写入 `connection-timeline-app.json` 和 `connection-timeline.json`，读取时按会话合并。扩展沿用旧文件，保留升级前的时间线和活动会话标记。
   - 最多 6 次会话、每次 120 个事件、文件不超过 256 KiB，超出时丢弃最旧的会话。
   - 文件损坏时重建，写入失败不影响连接。
 - **关联 ID**：App 发起连接时生成，作为 `attemptID` 传给扩展。系统自行拉起隧道时由扩展生成，

@@ -1,7 +1,7 @@
 import Foundation
 
 /// One bounded, redacted record of what a connection did and how long each step
-/// took. The app and the tunnel extension append to the same App Group file so a
+/// took. The app and tunnel extension publish separate atomic snapshots so a
 /// single exported report shows both sides under one session ID.
 ///
 /// Never record passwords, tokens, cookies, private keys, server addresses, full
@@ -224,13 +224,12 @@ enum ConnectionTimeline {
     }
 }
 
-/// Process-safe store for `ConnectionTimeline.File`. Appends are serialised on a
-/// private queue within the process and a nonblocking `flock` across the app
-/// and extension. Busy/failed IO may drop diagnostic data; it never changes the connection.
+/// Each process owns one snapshot. A suspended app never holds a filesystem
+/// lock needed by the extension. Serialize all store instances in this process.
 final class ConnectionTimelineStore: @unchecked Sendable {
-    private let fileURL: URL
-    private let lockURL: URL
-    private let queue = DispatchQueue(label: "com.kafeifei.xdial.connection-timeline", qos: .utility)
+    private let directory: URL
+    private let writer: ConnectionTimeline.Source
+    private static let queue = DispatchQueue(label: "com.kafeifei.xdial.connection-timeline", qos: .utility)
 
     // Only the extension produces survey events. All state below belongs to queue.
     private var surveySession = ""
@@ -238,24 +237,30 @@ final class ConnectionTimelineStore: @unchecked Sendable {
     private var surveyDirty = false
     private var checkpoint: DispatchWorkItem?
 
-    init(directory: URL) {
-        fileURL = directory.appendingPathComponent(ConnectionTimeline.fileName)
-        lockURL = directory.appendingPathComponent(ConnectionTimeline.fileName + ".lock")
+    init(directory: URL, writer: ConnectionTimeline.Source) {
+        self.directory = directory
+        self.writer = writer
     }
 
-    static func shared(appGroup: String) -> ConnectionTimelineStore? {
+    private func url(for source: ConnectionTimeline.Source) -> URL {
+        // The extension inherits the original history and active-session marker.
+        // After upgrade the app only reads this atomically replaced snapshot.
+        directory.appendingPathComponent(source == .tunnel ? ConnectionTimeline.fileName : "connection-timeline-app.json")
+    }
+
+    static func shared(appGroup: String, writer: ConnectionTimeline.Source) -> ConnectionTimelineStore? {
         guard let directory = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
             .appendingPathComponent("Diagnostics", isDirectory: true) else { return nil }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return ConnectionTimelineStore(directory: directory)
+        return ConnectionTimelineStore(directory: directory, writer: writer)
     }
 
     /// Starts (or reuses) a session and makes it the active tunnel session when
     /// `markActive` is true.
     func beginSession(_ id: String, markActive: Bool, origin: ConnectionTimeline.StartOrigin? = nil) {
         let now = ConnectionTimeline.nowMilliseconds()
-        queue.async { [self] in
+        Self.queue.async { [self] in
             finishSurvey()
             mutate { file in
                 if !file.sessions.contains(where: { $0.id == id }) {
@@ -271,7 +276,7 @@ final class ConnectionTimelineStore: @unchecked Sendable {
     }
 
     func endActiveSession(_ id: String, completion: @escaping @Sendable () -> Void = {}) {
-        queue.async { [self] in
+        Self.queue.async { [self] in
             finishSurvey()
             mutate { file in
                 if file.activeSessionID == id { file.activeSessionID = nil }
@@ -293,7 +298,7 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         let event = ConnectionTimeline.Event(
             t: timestamp ?? ConnectionTimeline.nowMilliseconds(), src: source, stage: stage,
             result: result, ms: ms, detail: ConnectionTimeline.sanitized(detail))
-        queue.async { [self] in
+        Self.queue.async { [self] in
             if event.stage == "tunnel.scenario_decision", !preferActiveSession {
                 if var previous = survey, id == surveySession,
                    previous.detail == event.detail, previous.result == event.result {
@@ -305,7 +310,7 @@ final class ConnectionTimelineStore: @unchecked Sendable {
                     if checkpoint == nil {
                         let item = DispatchWorkItem { [weak self] in self?.persistSurvey() }
                         checkpoint = item
-                        queue.asyncAfter(deadline: .now() + 60, execute: item)
+                        Self.queue.asyncAfter(deadline: .now() + 60, execute: item)
                     }
                     return
                 }
@@ -335,7 +340,8 @@ final class ConnectionTimelineStore: @unchecked Sendable {
 
     private func persist(_ event: ConnectionTimeline.Event, session id: String, preferActiveSession: Bool = false) {
         mutate { file in
-            let id = preferActiveSession ? (file.activeSessionID ?? id) : id
+            let activeID = preferActiveSession ? (writer == .tunnel ? file.activeSessionID : read(.tunnel).activeSessionID) : nil
+            let id = activeID ?? id
             guard !id.isEmpty else { return }
             if let index = file.sessions.firstIndex(where: { $0.id == id }) {
                 file.sessions[index].record(event)
@@ -350,18 +356,18 @@ final class ConnectionTimelineStore: @unchecked Sendable {
     /// Test helper: waits until queued appends have been attempted.
     /// Production shutdown uses the asynchronous endActiveSession completion.
     func flush() {
-        queue.sync {}
+        Self.queue.sync {}
     }
 
     func snapshot() -> ConnectionTimeline.File {
-        queue.sync { withFileLock { read() } ?? ConnectionTimeline.File() }
+        Self.queue.sync { mergedSnapshot() }
     }
 
     /// UI callers suspend instead of blocking the main actor on disk IO.
     func loadSnapshot() async -> ConnectionTimeline.File {
         await withCheckedContinuation { continuation in
-            queue.async { [self] in
-                continuation.resume(returning: withFileLock { read() } ?? ConnectionTimeline.File())
+            Self.queue.async { [self] in
+                continuation.resume(returning: mergedSnapshot())
             }
         }
     }
@@ -369,12 +375,35 @@ final class ConnectionTimelineStore: @unchecked Sendable {
     // MARK: - File access (on `queue`)
 
     private func mutate(_ change: (inout ConnectionTimeline.File) -> Void) {
-        withFileLock {
-            var file = read()
-            change(&file)
-            Self.enforceLimits(&file)
-            write(file)
+        var file = read(writer)
+        change(&file)
+        Self.enforceLimits(&file)
+        guard let data = try? JSONEncoder().encode(file) else { return }
+        try? data.write(to: url(for: writer), options: .atomic)
+    }
+
+    private func mergedSnapshot() -> ConnectionTimeline.File {
+        var report = read(.tunnel)
+        for app in read(.app).sessions {
+            guard let index = report.sessions.firstIndex(where: { $0.id == app.id }) else {
+                report.sessions.append(app)
+                continue
+            }
+            var session = report.sessions[index]
+            session.startedAt = min(session.startedAt, app.startedAt)
+            session.startOrigin = app.startOrigin ?? session.startOrigin
+            session.systemConnectedAt = app.systemConnectedAt ?? session.systemConnectedAt
+            session.stopRequestedAt = app.stopRequestedAt ?? session.stopRequestedAt
+            session.events = app.events + session.events
+            session.events.sort { $0.t < $1.t }
+            let excess = max(0, session.events.count - ConnectionTimeline.maxEventsPerSession)
+            let keepStart = ConnectionTimeline.maxEventsPerSession / 4
+            if excess > 0 { session.events.removeSubrange(keepStart..<(keepStart + excess)) }
+            session.droppedEvents += app.droppedEvents + excess
+            report.sessions[index] = session
         }
+        Self.enforceLimits(&report)
+        return report
     }
 
     static func enforceLimits(_ file: inout ConnectionTimeline.File) {
@@ -390,30 +419,14 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         }
     }
 
-    private func read() -> ConnectionTimeline.File {
-        guard let data = try? Data(contentsOf: fileURL),
+    private func read(_ source: ConnectionTimeline.Source) -> ConnectionTimeline.File {
+        guard let data = try? Data(contentsOf: url(for: source)),
               data.count <= ConnectionTimeline.maxFileBytes * 2,
               let file = try? JSONDecoder().decode(ConnectionTimeline.File.self, from: data),
               file.version == 1 else {
             return ConnectionTimeline.File()
         }
         return file
-    }
-
-    private func write(_ file: ConnectionTimeline.File) {
-        guard let data = try? JSONEncoder().encode(file) else { return }
-        try? data.write(to: fileURL, options: [.atomic])
-    }
-
-    private func withFileLock<T>(_ body: () -> T) -> T? {
-        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { return nil }
-        defer { close(descriptor) }
-        // Diagnostics are disposable: contention must never delay a connection
-        // or shutdown, and failure must never write without mutual exclusion.
-        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return nil }
-        defer { flock(descriptor, LOCK_UN) }
-        return body()
     }
 }
 

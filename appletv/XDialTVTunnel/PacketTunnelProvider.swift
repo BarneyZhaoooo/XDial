@@ -134,7 +134,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var diagnosticStage = "idle"
     private var activeAttemptID = ""
     /// Shared app/extension timeline; see ConnectionTimeline. Guarded by diagnosticLock.
-    private let timeline = ConnectionTimelineStore.shared(appGroup: PacketTunnelProvider.appGroupID)
+    private let timeline = ConnectionTimelineStore.shared(appGroup: PacketTunnelProvider.appGroupID, writer: .tunnel)
     private var timelineSessionID = ""
     private var defaultInterfaceName = ""
     private var defaultInterfaceIndex = -1
