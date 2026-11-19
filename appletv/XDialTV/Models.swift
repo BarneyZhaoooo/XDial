@@ -367,6 +367,21 @@ struct ProfileSeed: Equatable {
     var profile: Profile
     /// 预置内容有增删时加一；老用户升级后据此补上新内容。
     var revision: Int
+    /// 预置改过内容的手动规则：规则 ID → 之前各版发过的匹配内容。
+    var ruleSetHistory: [String: [ShippedRuleContent]] = [:]
+}
+
+/// 预置某一版发出的手动规则匹配内容。比较时不计顺序和大小写。
+struct ShippedRuleContent: Hashable {
+    var domains: Set<String>
+    var cidrs: Set<String>
+
+    init(domains: [String], cidrs: [String]) {
+        self.domains = Set(domains.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+        self.cidrs = Set(cidrs.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+    }
+
+    init(_ rule: RuleSet) { self.init(domains: rule.domains, cidrs: rule.cidrs) }
 }
 
 struct Profile: Codable, Equatable {
@@ -599,7 +614,7 @@ extension Profile {
     /// 和当前选中的场景都不动。预置里的线路如果和已有线路是同一类型、同一个服务器，就沿用已有的
     /// 那条（账号密码还在上面），预置场景改绑到它。返回是否有改动。
     @discardableResult
-    mutating func adding(seed: Profile) -> Bool {
+    mutating func adding(seed: Profile, ruleSetHistory: [String: [ShippedRuleContent]] = [:]) -> Bool {
         let before = self
 
         // 预置线路 ID → 实际使用的线路 ID。
@@ -625,6 +640,19 @@ extension Profile {
         for ruleSet in seed.ruleSets
         where !ruleSet.isConnectivityTestRule && !ruleSets.contains(where: { $0.id == ruleSet.id }) {
             ruleSets.append(ruleSet)
+        }
+        // 预置改过内容的规则：用户没动过（仍是之前某一版发的内容）才换成新内容，改过的保留。
+        for ruleSet in seed.ruleSets {
+            guard let shipped = ruleSetHistory[ruleSet.id],
+                  let index = ruleSets.firstIndex(where: { $0.id == ruleSet.id }) else { continue }
+            let current = ShippedRuleContent(ruleSets[index])
+            guard current != ShippedRuleContent(ruleSet) else { continue }
+            if shipped.contains(current) {
+                ruleSets[index].domains = ruleSet.domains
+                ruleSets[index].cidrs = ruleSet.cidrs
+            } else {
+                appLog("seed: kept the user's edits to rule \(ruleSet.id)")
+            }
         }
 
         let seedScenarioIDs = seed.scenarios.map(\.id)

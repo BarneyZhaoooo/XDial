@@ -1747,7 +1747,7 @@ final class AppState: ObservableObject {
             normalizeLegacyProfile(&loaded)
             // 预置配置有新增时，给老配置补一次；每个 revision 只补一次，用户之后删掉的不会再回来。
             if let seed, persistence.defaults.integer(forKey: persistence.seedRevisionKey) < seed.revision {
-                loaded.adding(seed: seed.profile)
+                loaded.adding(seed: seed.profile, ruleSetHistory: seed.ruleSetHistory)
                 persistence.defaults.set(seed.revision, forKey: persistence.seedRevisionKey)
             }
             let normalizationChanged = loaded != profileBeforeNormalization
