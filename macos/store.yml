@@ -32,6 +32,7 @@ targets:
       - ../ios/XDialShared/DialGlyph.swift
       - ../ios/XDialIOS/LocalTailscaleSetupRuntime.swift
       - Store/StoreTailscale.swift
+      - Store/Host/PrivacyInfo.xcprivacy
       - AppIcon.icns
     info:
       path: Store/Host-Info.plist
@@ -77,6 +78,7 @@ targets:
           - Info.plist
           - "*.entitlements"
       - Shared
+      - Store/Provider/PrivacyInfo.xcprivacy
     info:
       path: Store/Provider-Info.plist
       properties:
