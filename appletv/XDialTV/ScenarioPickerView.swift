@@ -40,8 +40,9 @@ struct ScenarioPickerView: View {
     private var availableLines: [Line] {
         app.profile.lines.filter { line in
             line.enabled && (line.type == "direct" || line.type == "vpn") &&
-                !app.profile.scenarios.contains {
-                    $0.defaultLineID == line.id && $0.defaultSubscriptionID.isEmpty && $0.bindings.isEmpty
+                !app.profile.scenarios.contains { scenario in
+                    scenario.defaultLineID == line.id && scenario.defaultSubscriptionID.isEmpty &&
+                        scenario.bindings.allSatisfy { RuleSet.isConnectivityTestRuleID($0.ruleSetID) }
                 }
         }
     }
@@ -80,7 +81,7 @@ struct ScenarioPickerView: View {
 
     /// 场景的分流规则数量作为副标题，纯数据派生，不依赖连接结果。
     private func subtitle(for scenario: Scenario) -> String {
-        let count = scenario.bindings.count
+        let count = scenario.bindings.filter { !RuleSet.isConnectivityTestRuleID($0.ruleSetID) }.count
         return app.tr("\(count) 条分流绑定", "\(count) binding(s)")
     }
 
