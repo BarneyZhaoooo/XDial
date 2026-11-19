@@ -30,7 +30,7 @@ def verify_target(path, bundle_id, markers):
             f"{path.name}: incorrect runtime identity")
     require((path / "PrivacyInfo.xcprivacy").is_file(), f"{path.name}: privacy manifest missing")
     subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True)
-    signed = plistlib.loads(subprocess.check_output(["codesign", "-d", "--entitlements", "-", str(path)]))
+    signed = plistlib.loads(subprocess.check_output(["codesign", "-d", "--entitlements", "-", "--xml", str(path)]))
     require(signed.get("application-identifier") == TEAM + "." + bundle_id and
             signed.get("com.apple.developer.team-identifier") == TEAM and not signed.get("get-task-allow"),
             f"{path.name}: incorrect signing identity or development signing")
@@ -41,7 +41,7 @@ def verify_target(path, bundle_id, markers):
     binary = (path / metadata["CFBundleExecutable"]).read_bytes()
     for marker in markers:
         require(marker.encode() in binary, f"{path.name}: missing production engine symbol {marker}")
-    for marker in ("NoopTunnelEngine", "FakeTunnelEngine", "LANShareSettings", "AddLANShareInbound"):
+    for marker in ("NoopTunnelEngine", "FakeTunnelEngine", "LANShareSettings", "AddLANShareInbound", "core/macgateway."):
         require(marker.encode() not in binary, f"{path.name}: unexpected engine/experiment symbol {marker}")
     return metadata
 

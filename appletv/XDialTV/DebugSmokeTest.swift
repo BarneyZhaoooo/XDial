@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Libbox
 
@@ -59,3 +60,4 @@ enum DebugSmokeTest {
         }
     }
 }
+#endif
