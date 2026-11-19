@@ -80,6 +80,10 @@ struct MobileSettingsView: View {
                     ))
                 }
 
+                Section(app.tr("通知", "Notifications")) {
+                    ConnectionNoticeSettings(chinese: app.language == .zh)
+                }
+
                 Section {
                     NavigationLink {
                         ConfigurationView()
@@ -253,7 +257,7 @@ struct MobileSettingsView: View {
         case .disabled:
             return app.tr("未启用", "Disabled")
         case .pending:
-            return app.tr("待连接验收", "Pending connection check")
+            return app.tr("等待系统接管", "Waiting for system reconnect")
         case .active:
             return app.tr("系统已启用", "Enabled by system")
         case .failed(let message):
@@ -272,6 +276,7 @@ struct MobileSettingsView: View {
                 ? app.tr("正在重新检测出口与分流", "Rechecking connectivity and routing")
                 : app.engine.dataPathSummary,
             autoScenarioSummary: autoScenarioSummary,
+            onDemandStatus: systemOnDemandStatusText,
             environment: MobileDiagnosticsService.environmentSummary(version: version),
             scenarioName: app.activeScenario?.name,
             timeline: timelineSnapshot,

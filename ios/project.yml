@@ -49,6 +49,7 @@ targets:
       - path: ../appletv/XDialTVTunnel/PacketTunnelProvider.swift
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
       - path: ../appletv/XDialTV/ConnectionTimeline.swift
+      - path: ../apple/Notifications/ConnectionNotice.swift
       - path: XDialIOSTunnel/TunnelActivityUpdater.swift
       - path: XDialShared/XDialConnectionActivity.swift
       - path: XDialShared/XDialIdentity.swift
@@ -138,6 +139,7 @@ targets:
     platform: iOS
     sources:
       - path: ../apple/Home
+      - path: ../apple/Notifications
       - path: XDialIOS
         excludes:
           - Info.plist

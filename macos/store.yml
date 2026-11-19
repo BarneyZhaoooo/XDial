@@ -28,6 +28,7 @@ targets:
       - Sources/XDial
       - Shared
       - ../apple/Home
+      - ../apple/Notifications
       - ../ios/XDialShared/DialGlyph.swift
       - ../ios/XDialIOS/LocalTailscaleSetupRuntime.swift
       - Store/StoreTailscale.swift

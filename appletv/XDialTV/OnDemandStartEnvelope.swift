@@ -46,9 +46,11 @@ struct OnDemandStartEnvelope: Codable, Equatable, Sendable {
 enum OnDemandStartEnvelopeFailurePolicy {
     static func shouldClear(
         startedFromSecureEnvelope: Bool,
-        startOrRuntimeFailed: Bool
+        startupStage: String
     ) -> Bool {
-        startedFromSecureEnvelope && startOrRuntimeFailed
+        // No change to credentials or configuration can repair a missing underlay or DNS.
+        startedFromSecureEnvelope && startupStage != "underlay_interface_failed"
+            && startupStage != "remote_address_resolution_failed"
     }
 }
 

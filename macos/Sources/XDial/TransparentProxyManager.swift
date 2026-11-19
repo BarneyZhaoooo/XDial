@@ -2574,6 +2574,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 return
             }
             if lostCommittedSession {
+                ConnectionNotice.disconnect.post()
                 beginUnexpectedDisconnectRecovery(
                     manager: manager,
                     disconnectedAt: disconnectedAt,
