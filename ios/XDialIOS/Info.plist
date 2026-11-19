@@ -20,6 +20,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>XDialAppGroupIdentifier</key>
 	<string>$(XDIAL_APP_GROUP)</string>
+	<key>XDialPrivacyPolicyURL</key>
+	<string>https://xindong.github.io/XDial/privacy/</string>
 	<key>XDialSharedKeychainAccessGroup</key>
 	<string>$(XDIAL_SHARED_KEYCHAIN_GROUP)</string>
 	<key>XDialTunnelBundleIdentifier</key>

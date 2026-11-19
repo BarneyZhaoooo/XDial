@@ -3309,6 +3309,11 @@ final class DataUseNoticeTests: XCTestCase {
         }
     }
 
+    func testPrivacyPolicyLinkMatchesTheStoreRecord() {
+        // 与 App Store Connect 里填写的隐私政策地址一致；说明页和设置都链接到它。
+        XCTAssertEqual(DataUseNoticeView.privacyPolicyURL?.absoluteString, "https://xindong.github.io/XDial/privacy/")
+    }
+
     func testPublicBuildWordingDoesNotAssumeACompanyAccount() {
         let problem = ConnectionProblem.classify("dial tcp: connection refused", isChinese: false, companyPreset: false)
         XCTAssertEqual(problem?.title, "Can't reach the VPN server")
