@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-Hans"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>XDial · 源码与许可</title>
+<style>body{font:1rem/1.6 system-ui;max-width:48rem;margin:2rem auto;padding:0 1rem;overflow-wrap:anywhere}h2{margin-top:2rem}code{white-space:pre-wrap}</style>
+<main><h1>XDial 源码与许可</h1>
+<p>按构建号下载应用、网络扩展、Go 引擎和项目补丁的源代码。每个构建的声明文件保留项目原作者和第三方的版权与许可。下列编号是签名候选包的编号。</p>
+<h2>iPhone 1.0（71）</h2><p><a href="ios-71-source.tar.gz">应用源码（f30fef0）</a> · <a href="ios-71-notices.txt">包内许可与署名</a> · <a href="prepare-ios.py" download>iPhone 工程生成脚本</a></p>
+<h2>Mac 0.1.0（72）</h2><p><a href="mac-72-source.tar.gz">应用源码（cafa549）</a> · <a href="mac-72-notices.txt">包内许可与署名</a></p>
+<h2>早期 iPhone 构建 62 和 66</h2><p><a href="ios-62-66-source.tar.gz">两版对应源码（c1a3c70）</a> · <a href="ios-62-notices.txt">62 包内声明</a> · <a href="ios-66-notices.txt">66 包内声明</a>。这两版的完整 GPLv3 正文也可从下方下载。构建脚本支持 <code>ios-62</code> 和 <code>ios-66</code>；62 使用 Xcode 构建号 27A9269，66 使用 27B52。</p>
+<h2>引擎依赖与构建</h2>
+<p>下载 Go 模块源码的<a href="go-inputs-1.zip">第 1 包</a>、<a href="go-inputs-2.zip">第 2 包</a>和<a href="go-inputs-3.zip">第 3 包</a>。<a href="inputs.json">版本与校验清单</a>逐项列出对应平台、版本和 go.sum 值。应用源码还包含 sslcon 和本项目对上游的补丁。<a href="GPL-3.0.txt">GNU GPL 第 3 版全文</a>。</p>
+<p>将所选平台的源码包、声明文件、上述三个依赖包、<code>inputs.json</code>、<a href="rebuild.sh" download>rebuild.sh</a> 和 iPhone 工程脚本下载到同一目录。<a href="SHA256SUMS">SHA-256 下载校验值</a>可用于逐项核对。</p>
+<p>在 Mac 上准备 Xcode 27.2（27B52）、Go 1.26.5、XcodeGen 2.46.0、Python 3、Git 与仓库 Makefile 使用的工具。gomobile 和 gobind 使用 <code>github.com/sagernet/gomobile</code> 的 <code>v0.1.13</code>。运行 <code>sh rebuild.sh ios-71</code> 或 <code>sh rebuild.sh mac-72</code>。脚本从全新目录生成无签名归档，构建工具依赖可经公开 Go 模块源获取。自行安装到设备需要适用的 Apple 签名、网络扩展与 App Group 配置。</p>
+<p>客户端可以使用自己的配置。要嵌入自己的预置，可在运行前设置 <code>XDIAL_PRIVATE_CONFIG_DIR</code> 指向包含自己 <code>Seed.json</code> 和 <code>RuleSets</code> 的目录。组织接入信息由相应组织单独管理。</p>
+<p lang="en">Download the source and notices for your build, the three Go source archives, the manifest, and the build scripts above. Run the script on macOS to produce an unsigned archive. Each notice file identifies the applicable licenses and copyright holders.</p>
+<p><a href="../">支持</a> · <a href="../privacy/">隐私政策</a></p></main></html>

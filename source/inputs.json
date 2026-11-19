@@ -1,0 +1,761 @@
+{
+  "builds": {
+    "ios-71": {
+      "commit": "f30fef051b15492980b3c55e4c0cfecf699a67f1",
+      "version": "1.0",
+      "source": "ios-71-source.tar.gz",
+      "notices": "ios-71-notices.txt",
+      "sourceFiles": 942
+    },
+    "mac-72": {
+      "commit": "cafa5494f1654658271cafd98010cfed674c4e71",
+      "version": "0.1.0",
+      "source": "mac-72-source.tar.gz",
+      "notices": "mac-72-notices.txt",
+      "sourceFiles": 942
+    },
+    "ios-62": {
+      "version": "1.0",
+      "commit": "c1a3c700cfb8fd4e9956cfa62d6d94b8c57fd2a7",
+      "source": "ios-62-66-source.tar.gz",
+      "notices": "ios-62-notices.txt",
+      "sourceFiles": 935,
+      "xcode": "27A9269"
+    },
+    "ios-66": {
+      "version": "1.0",
+      "commit": "c1a3c700cfb8fd4e9956cfa62d6d94b8c57fd2a7",
+      "source": "ios-62-66-source.tar.gz",
+      "notices": "ios-66-notices.txt",
+      "sourceFiles": 935,
+      "xcode": "27B52"
+    }
+  },
+  "modules": {
+    "filippo.io/edwards25519": {
+      "version": "v1.1.1",
+      "goSum": "h1:YpjwWWlNmGIDyXOn8zLzqiD+9TyIlPhGFG96P39uBpw=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/andybalholm/brotli": {
+      "version": "v1.1.0",
+      "goSum": "h1:eLKJA0d02Lf0mVpIDgYnqXcUn0GqVmEFny3VuID1U3M=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/anytls/sing-anytls": {
+      "version": "v0.0.11",
+      "goSum": "h1:w8e9Uj1oP3m4zxkyZDewPk0EcQbvVxb7Nn+rapEx4fc=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/coder/websocket": {
+      "version": "v1.8.14",
+      "goSum": "h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/creack/pty": {
+      "version": "v1.1.24",
+      "goSum": "h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/database64128/netx-go": {
+      "version": "v0.1.1",
+      "goSum": "h1:dT5LG7Gs7zFZBthFBbzWE6K8wAHjSNAaK7wCYZT7NzM=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/database64128/tfo-go/v2": {
+      "version": "v2.3.2",
+      "goSum": "h1:UhZMKiMq3swZGUiETkLBDzQnZBPSAeBMClpJGlnJ5Fw=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/davecgh/go-spew": {
+      "version": "v1.1.2-0.20180830191138-d8f796af33cc",
+      "goSum": "h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/elastic/go-sysinfo": {
+      "version": "v1.15.4",
+      "goSum": "h1:A3zQcunCxik14MgXu39cXFXcIw2sFXZ0zL886eyiv1Q=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/fsnotify/fsnotify": {
+      "version": "v1.9.0",
+      "goSum": "h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/fxamacker/cbor/v2": {
+      "version": "v2.7.0",
+      "goSum": "h1:iM5WgngdRBanHcxugY4JySA0nk1wZorNOpTgCMedv5E=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gaissmai/bart": {
+      "version": "v0.18.0",
+      "goSum": "h1:jQLBT/RduJu0pv/tLwXE+xKPgtWJejbxuXAR+wLJafo=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/go-chi/chi/v5": {
+      "version": "v5.4.0",
+      "goSum": "h1:+ufzvFTGKyin26Or5DLrlIDq4ygIDBVcj7oVNeeaYFE=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/go-json-experiment/json": {
+      "version": "v0.0.0-20250813024750-ebf49471dced",
+      "goSum": "h1:Q311OHjMh/u5E2TITc++WlTP5We0xNseRMkHDyvhW7I=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gobwas/httphead": {
+      "version": "v0.1.0",
+      "goSum": "h1:exrUm0f4YX0L7EBwZHuCF4GDp8aJfVeBrlLQrs6NqWU=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gobwas/pool": {
+      "version": "v0.2.1",
+      "goSum": "h1:xfeeEhW7pwmX8nuLVlqbzVc7udMDrwetjEv+TZIz1og=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gofrs/uuid/v5": {
+      "version": "v5.4.0",
+      "goSum": "h1:EfbpCTjqMuGyq5ZJwxqzn3Cbr2d0rUZU7v5ycAk/e/0=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/golang/groupcache": {
+      "version": "v0.0.0-20241129210726-2c02b8208cf8",
+      "goSum": "h1:f+oWsMOmNPc8JmEHVZIycC7hBoQxHH9pNKQORJNozsQ=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/google/btree": {
+      "version": "v1.1.3",
+      "goSum": "h1:CVpQJjYgC4VbzxeGVHfvZrv1ctoYCAI8vbl07Fcxlyg=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/google/uuid": {
+      "version": "v1.6.0",
+      "goSum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gopacket/gopacket": {
+      "version": "v1.7.2",
+      "goSum": "h1:ttSVNW9A3eUFaSd9+D95aD03Knk2j7KfajhN5twYSHo=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/gorilla/websocket": {
+      "version": "v1.5.3",
+      "goSum": "h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/hashicorp/yamux": {
+      "version": "v0.1.2",
+      "goSum": "h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/hdevalence/ed25519consensus": {
+      "version": "v0.2.0",
+      "goSum": "h1:37ICyZqdyj0lAZ8P4D1d1id3HqbbG1N3iBb1Tb4rdcU=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/jackpal/gateway": {
+      "version": "v1.1.1",
+      "goSum": "h1:UXXXkJGIHFsStms9ZBgGpoaFEJP7oJtFn5vplIT68E8=",
+      "archive": "go-inputs-1.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/klauspost/compress": {
+      "version": "v1.18.7",
+      "goSum": "h1:aUyZsS4kH3QTKurYhAOwAHxllVPnOthb3vPfnF1Ehjw=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/klauspost/cpuid/v2": {
+      "version": "v2.3.0",
+      "goSum": "h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/logrusorgru/aurora": {
+      "version": "v2.0.3+incompatible",
+      "goSum": "h1:tOpm7WcpBTn4fjmVfgpQq0EfczGlG91VSDkswnjF5A8=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/metacubex/utls": {
+      "version": "v1.8.7",
+      "goSum": "h1:Cp+yWkNTFkSihETgGWq34hlVFds5HpYWVOR1xovUVTs=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/miekg/dns": {
+      "version": "v1.1.72",
+      "goSum": "h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/mitchellh/go-ps": {
+      "version": "v1.0.0",
+      "goSum": "h1:i6ampVEEF4wQFF+bkYfwYgY+F/uYJDktmvLPf7qIgjc=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/pion/dtls/v3": {
+      "version": "v3.1.5",
+      "goSum": "h1:9xJtVsHwMYeSjPp5Hh1FTis4DchnQWtnOa5o+6ygqfc=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/pion/logging": {
+      "version": "v0.2.4",
+      "goSum": "h1:tTew+7cmQ+Mc1pTBLKH2puKsOvhm32dROumOZ655zB8=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/pion/transport/v4": {
+      "version": "v4.0.2",
+      "goSum": "h1:ifYlPqNwsy6aKQ9y8yzxXlHae5431ZrH2avkD/Rn6Tk=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/pires/go-proxyproto": {
+      "version": "v0.8.1",
+      "goSum": "h1:9KEixbdJfhrbtjpz/ZwCdWDD2Xem0NZ38qMYaASJgp0=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/pmezard/go-difflib": {
+      "version": "v1.0.1-0.20181226105442-5d4384ee4fb2",
+      "goSum": "h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/prometheus-community/pro-bing": {
+      "version": "v0.4.0",
+      "goSum": "h1:YMbv+i08gQz97OZZBwLyvmmQEEzyfyrrjEaAchdy3R4=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/bbolt": {
+      "version": "v0.0.0-20231014093535-ea5cb2fe9f0a",
+      "goSum": "h1:+NkI2670SQpQWvkkD2QgdTuzQG263YZ+2emfpeyGqW0=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/fswatch": {
+      "version": "v0.1.2",
+      "goSum": "h1:/TT7k4mkce1qFPxamLO842WjqBgbTBiXP2mlUjp9PFk=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/gomobile": {
+      "version": "v0.1.13",
+      "goSum": "h1:foTOGKJetah9VwaJl1XJx5TswIAVg8NfYmHOhrOc95I=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/gvisor": {
+      "version": "v0.0.0-20250811.0-sing-box-mod.1",
+      "goSum": "h1:AzCE2RhBjLJ4WIWc/GejpNh+z30d5H1hwaB0nD9eY3o=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing": {
+      "version": "v0.8.12-0.20260721063414-596db5dd6ef4",
+      "goSum": "h1:dIHd4IiQs0mtptfe8SdwDascDwh1w2LqDI8exoDuKeQ=",
+      "archive": "go-inputs-2.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-box": {
+      "version": "v1.14.0-beta.2",
+      "goSum": "h1:aNJudYmHGWNGy+m5Tfdttnh5MWXBWYoBxTMZkhO62hI=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-mux": {
+      "version": "v0.3.5",
+      "goSum": "h1:RHnhVEc+SFqkrK4xMygYjDwwLhzp2Bj3lztSukONfhI=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-shadowsocks": {
+      "version": "v0.2.8",
+      "goSum": "h1:PURj5PRoAkqeHh2ZW205RWzN9E9RtKCVCzByXruQWfE=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-shadowsocks2": {
+      "version": "v0.2.1",
+      "goSum": "h1:dWV9OXCeFPuYGHb6IRqlSptVnSzOelnqqs2gQ2/Qioo=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-tun": {
+      "version": "v0.8.12-0.20260724023008-68aa7bdc2819",
+      "goSum": "h1:JxzMsy4EMUsAJqKtDbWKW79NIvWfuD4ARPl5RLoMPjE=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/sing-vmess": {
+      "version": "v0.2.8-0.20250909125414-3aed155119a1",
+      "goSum": "h1:aSwUNYUkVyVvdmBSufR8/nRFonwJeKSIROxHcm5br9o=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/smux": {
+      "version": "v1.5.50-sing-box-mod.1",
+      "goSum": "h1:XkJcivBC9V4wBjiGXIXZ229aZCU1hzcbp6kSkkyQ478=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/tailscale": {
+      "version": "v1.92.4-sing-box-1.13-mod.7.0.20260717155615-b353b93d194a",
+      "goSum": "h1:mORXldIuzgU8Bk6n9KpOmLv1rV7Ta8us+lZ9JSv2eBw=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/wireguard-go": {
+      "version": "v0.0.5-0.20260717024847-6f5e8b1947ae",
+      "goSum": "h1:GmxlXWnRmeNfPE1tWXRZIFgKJd5BH5okoDHKZkkI5bw=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sagernet/ws": {
+      "version": "v0.0.0-20231204124109-acfe8907c854",
+      "goSum": "h1:6uUiZcDRnZSAegryaUGwPC/Fj13JSHwiTftrXhMmYOc=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/sourcegraph/jsonrpc2": {
+      "version": "v0.2.1",
+      "goSum": "h1:2GtljixMQYUYCmIg7W9aF2dFmniq/mOr2T9tFRh6zSQ=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/stretchr/objx": {
+      "version": "v0.5.3",
+      "goSum": "h1:jmXUvGomnU1o3W/V5h2VEradbpJDwGrzugQQvL0POH4=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/stretchr/testify": {
+      "version": "v1.11.1",
+      "goSum": "h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/tailscale/goupnp": {
+      "version": "v1.0.1-0.20210804011211-c64d0f06ea05",
+      "goSum": "h1:4chzWmimtJPxRs2O36yuGRW3f9SYV+bMTTvMBI0EKio=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/tailscale/hujson": {
+      "version": "v0.0.0-20221223112325-20486734a56a",
+      "goSum": "h1:SJy1Pu0eH1C29XwJucQo73FrleVK6t4kYz4NVhp34Yw=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/tailscale/peercred": {
+      "version": "v0.0.0-20250107143737-35a0c7bd7edc",
+      "goSum": "h1:24heQPtnFR+yfntqhI3oAu9i27nEojcQ4NuBQOo5ZFA=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/tailscale/web-client-prebuilt": {
+      "version": "v0.0.0-20250124233751-d4cd19a26976",
+      "goSum": "h1:UBPHPtv8+nEAy2PD8RyAhOYvau1ek0HDJqLS/Pysi14=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "github.com/things-go/go-socks5": {
+      "version": "v0.1.1",
+      "goSum": "h1:48hy9cHEXPKeG91G/g4n8zW4uynzPUQy/FkcrJ7r5AY=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/vishvananda/netns": {
+      "version": "v0.0.5",
+      "goSum": "h1:DfiHV+j8bA32MFM7bfEunvT8IAqQ/NzSJHtcmW5zdEY=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "github.com/x448/float16": {
+      "version": "v0.8.4",
+      "goSum": "h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "go.uber.org/atomic": {
+      "version": "v1.11.0",
+      "goSum": "h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "go.uber.org/multierr": {
+      "version": "v1.11.0",
+      "goSum": "h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "go.uber.org/zap": {
+      "version": "v1.27.1",
+      "goSum": "h1:08RqriUEv8+ArZRYSTXy1LeBScaMpVSTBhCeaZYfMYc=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "go4.org/mem": {
+      "version": "v0.0.0-20240501181205-ae6ca9944745",
+      "goSum": "h1:Tl++JLUCe4sxGu8cTpDzRLd3tN7US4hOxG5YpKCzkek=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "go4.org/netipx": {
+      "version": "v0.0.0-20231129151722-fdeea329fbba",
+      "goSum": "h1:0b9z3AuHCjxk0x/opv64kcgZLBseWJUpBw5I82+2U4M=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/crypto": {
+      "version": "v0.55.0",
+      "goSum": "h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/exp": {
+      "version": "v0.0.0-20251219203646-944ab1f22d93",
+      "goSum": "h1:fQsdNF2N+/YewlRZiricy4P1iimyPKZ/xwniHj8Q2a0=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/mod": {
+      "version": "v0.38.0",
+      "goSum": "h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/net": {
+      "version": "v0.58.0",
+      "goSum": "h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/oauth2": {
+      "version": "v0.36.0",
+      "goSum": "h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/sync": {
+      "version": "v0.22.0",
+      "goSum": "h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/sys": {
+      "version": "v0.47.0",
+      "goSum": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/term": {
+      "version": "v0.45.0",
+      "goSum": "h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/text": {
+      "version": "v0.41.0",
+      "goSum": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "golang.org/x/time": {
+      "version": "v0.14.0",
+      "goSum": "h1:MRx4UaLrDotUKUdCIqzPC48t1Y9hANFKIRpNx+Te8PI=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "gopkg.in/yaml.v3": {
+      "version": "v3.0.1",
+      "goSum": "h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "gvisor.dev/gvisor": {
+      "version": "v0.0.0-20230916030846-1d82564559db",
+      "goSum": "h1:CO57Wj9fblWZhyk6rViybNDtdHr9AgiuAzVzD4aFMjE=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    },
+    "howett.net/plist": {
+      "version": "v1.0.1",
+      "goSum": "h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "macOS"
+      ]
+    },
+    "lukechampine.com/blake3": {
+      "version": "v1.3.0",
+      "goSum": "h1:sJ3XhFINmHSrYCgl958hscfIa3bw8x4DqMP3u1YvoYE=",
+      "archive": "go-inputs-3.zip",
+      "platforms": [
+        "iOS",
+        "macOS"
+      ]
+    }
+  },
+  "vendored": [
+    "third_party/sslcon"
+  ],
+  "go": "1.26.5",
+  "xcode": "27.2 (27B52)",
+  "xcodegen": "2.46.0",
+  "gomobile": "github.com/sagernet/gomobile v0.1.13"
+}

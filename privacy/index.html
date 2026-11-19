@@ -14,14 +14,14 @@
 </head>
 <body>
 <h1>XDial 隐私政策</h1>
-<p class="meta">更新于 2026 年 11 月 19 日 · 适用于 XDial iOS 版与 macOS 版</p>
+<p class="meta">更新于 2026 年 11 月 20 日 · 适用于 XDial iOS 版与 macOS 版</p>
 
 <p>XDial 是一款网络分流工具，由 XD Entertainment Pte Ltd 发布。它在本机按你设置的场景和规则转发网络流量。iPhone 版使用系统 VPN 扩展，Mac 商店版使用系统网络扩展。</p>
 
-<h2>我们不收集你的数据</h2>
+<h2>客户端与公司网关分别处理哪些信息</h2>
 <ul>
-  <li>XDial 没有账号系统，不含统计、广告或追踪 SDK，也不向我们的服务器上传任何信息。</li>
-  <li>我们看不到你访问了哪些网站，也看不到你的流量内容。</li>
+  <li>XDial 客户端不含统计、广告或追踪 SDK。企业版包括公司维护的场景和规则。公司 VPN 线路使用员工自己的凭据，网关负责验证账号和接入权限。</li>
+  <li>使用公司 VPN 时，公司网关会收到认证所需的信息、协议使用的设备信息和经该线路转发的流量。网关可以看到连接元数据，端到端加密会影响可见内容。若需了解所在单位的网关日志、保留期限或行使隐私权利，请通过单位既有的内部 IT 渠道联系。</li>
 </ul>
 
 <h2>保存在你设备上的信息</h2>
@@ -44,7 +44,7 @@
 <ul>
   <li>通过本地 VPN 解析域名时，默认使用 Cloudflare 公共 DNS（1.1.1.1，未加密的 UDP）。通过 AnyConnect 解析的名称可发往 VPN 提供的 DNS，Tailscale 名称由其解析服务处理。相应的 DNS 提供方可以看到交给它的域名查询。</li>
   <li>连接时，XDial 可以访问 Amazon（checkip.amazonaws.com）或 Cloudflare 来查看线路的出口 IP。连接自检使用 Cloudflare 和 Apple 的测试地址，必要时使用阿里云的公共地址（223.5.5.5）。启用自动节点测速的线路还会定期访问 Google（www.gstatic.com）或配置指定的测速地址。</li>
-  <li>按出口地区选择场景需要预置地区映射。无此映射的公众版不会为该功能向 Apple 或 Cloudflare 查询地区。</li>
+  <li>按出口地区选择场景需要预置地区映射。iPhone 企业预置含有地区映射。使用该功能时，Apple 或 Cloudflare 可收到查询。</li>
   <li>这些服务会看到连接的来源 IP，可能是代理线路的出口。XDial 的连通性探测不会附带线路凭据。下载规则或订阅时，提供方会收到你配置的完整地址，包括地址中已有的访问令牌、用户名或密码。</li>
   <li>连接记录和诊断可包含出口 IP 等信息，保存在设备上。你可以主动导出或分享给自己选定的接收方。向公开问题区反馈时，请先移除密码、订阅地址和能识别你或所在网络的内容。</li>
 </ul>
@@ -60,22 +60,22 @@
 <p>查询一条已连接线路的公网 IPv4 地址时，Mac 版可经该线路访问 Cloudflare 或腾讯（r.inews.qq.com/api/ip2city）。被访问的服务能看到这条线路的出口 IP。XDial 从腾讯的响应中读取 IP 地址；这项探测不会发送 Wi-Fi 名称或设备定位坐标，也不会读取响应中的城市。</p>
 
 <h2>儿童</h2>
-<p>XDial 不面向儿童，也不会有意收集任何人的个人信息。</p>
+<p>XDial 企业版供获授权的员工和设备使用。</p>
 
 <h2>变更与联系</h2>
-<p>本政策如有变更，会更新在本页面。如有问题，请在 <a href="https://github.com/xindong/XDial/issues">github.com/xindong/XDial/issues</a> 提交。</p>
+<p>本政策如有变更，会更新在本页面。一般技术问题可在 <a href="https://github.com/xindong/XDial/issues">github.com/xindong/XDial/issues</a> 提交。请勿公开账号信息、公司配置或未经脱敏的诊断。<a href="../source/">源码和第三方许可</a>。</p>
 
 <hr>
 
 <h1>XDial Privacy Policy</h1>
-<p class="meta">Updated November 19, 2026 · Applies to XDial for iOS and macOS</p>
+<p class="meta">Updated November 20, 2026 · Applies to XDial for iOS and macOS</p>
 
 <p>XDial is a network routing tool published by XD Entertainment Pte Ltd. It routes traffic on your device according to your scenarios and rules. The iPhone app uses the system VPN extension, and the Mac App Store app uses a system network extension.</p>
 
-<h2>We do not collect your data</h2>
+<h2>What the client and your company gateway process</h2>
 <ul>
-  <li>XDial has no accounts and contains no analytics, advertising or tracking SDKs. It uploads nothing to our servers.</li>
-  <li>We cannot see which sites you visit or the content of your traffic.</li>
+  <li>The XDial client contains no analytics, advertising or tracking SDKs. The enterprise edition includes company-managed routing rules and scenarios. Company VPN lines use the employee’s credentials. The gateway verifies the account and its access rights.</li>
+  <li>When you use a company VPN, its gateway receives authentication and device information required by the protocol and traffic routed through that gateway. It can see connection metadata. End-to-end encryption affects what content is visible. Contact your organization through its internal IT channel for gateway logging practices, retention periods or privacy requests.</li>
 </ul>
 
 <h2>Information kept on your device</h2>
@@ -98,7 +98,7 @@
 <ul>
   <li>For name resolution through the local VPN, the default is Cloudflare public DNS (1.1.1.1, unencrypted UDP). Names resolved through AnyConnect may go to the DNS server supplied by that VPN. Tailscale names use its resolver. The respective DNS provider can see the names sent to it.</li>
   <li>When connecting, XDial may check a line’s public IP address with Amazon (checkip.amazonaws.com) or Cloudflare. Connectivity tests use Cloudflare and Apple test addresses and may fall back to an Alibaba Cloud public address (223.5.5.5). Lines that automatically measure node latency periodically reach Google (www.gstatic.com) or the test address in your configuration.</li>
-  <li>Exit-region selection requires a preset with region mappings. A public build without those mappings does not query Apple or Cloudflare for that feature.</li>
+  <li>Exit-region selection requires a preset with region mappings. The iPhone enterprise preset includes these mappings. Apple or Cloudflare may receive region queries when this feature is in use.</li>
   <li>These services can see the source IP of the connection, which may be your proxy’s exit address. Connectivity tests do not include line credentials. When a rule or subscription is downloaded, its provider receives the configured URL, including any token, username or password already in that URL.</li>
   <li>Connection history and diagnostics, which may contain exit IP addresses, stay on your device. You can export or share them with a recipient you select. Remove passwords, subscription URLs and information identifying you or your network before posting in a public issue.</li>
 </ul>
@@ -114,9 +114,9 @@
 <p>When checking a connected line’s public IPv4 address, the Mac app may contact Cloudflare or Tencent (r.inews.qq.com/api/ip2city) through that line. The service sees the line’s exit IP address. XDial reads the IP address from Tencent’s response. This probe does not send the Wi-Fi name or device coordinates. It does not read the city from the response.</p>
 
 <h2>Children</h2>
-<p>XDial is not directed at children and does not knowingly collect personal information from anyone.</p>
+<p>XDial enterprise is intended for authorized employees and devices.</p>
 
 <h2>Changes and contact</h2>
-<p>Changes to this policy will be posted on this page. For questions, open an issue at <a href="https://github.com/xindong/XDial/issues">github.com/xindong/XDial/issues</a>.</p>
+<p>Changes to this policy will be posted on this page. For general technical questions, open an issue at <a href="https://github.com/xindong/XDial/issues">github.com/xindong/XDial/issues</a>. Remove credentials, company configuration and identifying diagnostics before posting. <a href="../source/">Source and licenses</a>.</p>
 </body>
 </html>
