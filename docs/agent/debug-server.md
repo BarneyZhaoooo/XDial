@@ -50,6 +50,11 @@ curl -sS -X POST 127.0.0.1:19877/action \
 
 - `installationReport` 表达平台安装事务；`ready` 只表示 App、helper、System Extension
   前置条件就绪。`connectionReport` 表达连接事务的计划、任务、事件、错误和回滚结果。
+- 已提交事务的 `connectionReport` 由 Provider 持续写入（线路局部恢复会改任务状态并追加
+  事件），Host 每 5 秒读取一次并只更新展示。`events` 保留到首次提交为止的全部事件，
+  加上最近 256 条；更早的提交后事件被丢弃，只留每个任务每种代码最新的一条带 `facts`
+  的事件。`events_dropped` 是已丢弃的条数，为 0 表示事件表完整；`sequence` 不复用，
+  序号出现缺口的位置就是被丢弃的位置。
 - `activeScenarioID` 是 Profile 的 active Scenario；`desiredConnectionScenarioID` 是连接
   意图。切换期间的来源、候选和实际提交身份在 `scenarioSwitchReport` 中。
 - `profile` 是运行选择的配置，`editingProfile` 是配置窗口正在编辑的配置；
@@ -66,6 +71,76 @@ curl -sS -X POST 127.0.0.1:19877/action \
   包括被另一份清单的候选盖过的。Debug 不自动更新，这些字段只反映注入的候选；Debug 也不显示
   beta 开关，已装标签恒为空，所以开关、“等待正式版”和已装 beta 的标签显示只能用正式身份的
   验收包验证，`fake-update` 只覆盖候选侧的标签与 Beta 标记。
+
+## 连接被断时怎么看原因
+
+应用报“连接被重置”“提前结束”时，先分清是谁结束了连接，再看原因。三处记录互相印证，
+时间对到毫秒即可关联同一条连接。
+
+1. 数据面自己的说法（默认级别，能留存几小时到几天）：
+
+   ```sh
+   /usr/bin/log show --last 1h --style compact \
+     --predicate 'process CONTAINS "transparent-proxy" AND category == "data-plane"'
+   ```
+
+   这里只有 sing-box 的 warn / error 行，info 及以下不进统一日志。每行的公开部分已去掉
+   地址、域名和凭据；`detail=` 带目的地址，按私有字段记录，默认显示为 `<private>`。
+   - `connection download interrupted by upstream: reason=reset`：上游一侧出了错，
+     数据面已把入站连接按重置关闭，应用拿到的是错误而不是正常结束。`reason`
+     取 `reset`、`timeout`、`broken-pipe`、`unreachable`、`truncated` 等。
+   - `connection upload interrupted by upstream`：同上，出错的是向上游写。
+   - `anyconnect session closed: code=…`：AnyConnect 会话结束的原因。`code` 为
+     `peer-terminate` / `peer-disconnect` 是服务器发帧结束，`tls-read-eof` 是服务器直接
+     关连接，`tls-dpd-timeout` 是本端判定对端失联；`peer_reason` 是服务器给的原因码和
+     归类（如 `idle-timeout`）；`negotiated(...)` 是服务器下发的 DPD、keepalive、空闲超时、
+     会话超时和重协商时间，`absent` 表示没有下发；`tls(...)` / `dtls(...)` 是两条通道各自
+     的 DPD 往来次数、数据帧数和最后一次收发数据距结束的时间。
+   - `suppressed N lines over the rate limit`：这一段时间行数超过了限速，N 行没有记。
+
+2. 内核对每条 TCP 连接的收尾记录。需要 `net.inet.tcp.log.enable` 已打开，记录只保留一两
+   分钟，所以要持续收：
+
+   ```sh
+   /usr/bin/log stream --info --debug --style compact \
+     --predicate 'processID == 0 AND eventMessage BEGINSWITH "tcp_connection_summary"'
+   ```
+
+   每条连接两行，按 `so_gencnt` 配对，`process:` 是持有这个套接字的进程（数据面的出站连接
+   属于 Transparent Proxy 扩展）。读法：
+   - 括号里的内核函数和 `t_state`：`tcp_close` 且 `ESTABLISHED` 是连接在传输中被杀掉；
+     `tcp_usrclosed` 是进程自己关的，此时 `FIN_WAIT_1` 表示本端先关，`LAST_ACK` 表示对端
+     的 FIN 先到。
+   - `so_error`：54 是 ECONNRESET，60 是 ETIMEDOUT，0 是没有错误。
+   - `FIN in/out`、`RST in/out`：收到和发出的 FIN / RST 个数。`RST in` 大于 0 而
+     `RST out`、`FIN in/out` 都是 0，就是被网络来的 RST 重置，不是任何一端的进程关的。
+   - `Duration`、`bytes in/out`、`pkts in/out`：存活时长和流量，用来区分空闲连接被回收
+     和传输中被打断。
+
+3. 扩展一侧谁先关（默认级别）：
+
+   ```sh
+   /usr/bin/log show --last 1h --style compact --predicate \
+     'process CONTAINS "transparent-proxy" AND subsystem == "com.apple.networkextension"
+      AND (eventMessage CONTAINS "New flow" OR eventMessage CONTAINS "Closing"
+           OR eventMessage CONTAINS "Destroying")'
+   ```
+
+   同一条流里，`Closing writes, sending SHUT_RD` 在前是数据面转来的上游关闭；
+   `Closing reads, not closed by plugin` 在前是应用先关。扩展自己的
+   `relay-closed` / `relay-error` 行带 `code=`，`posix-54` 即环回上收到了重置。
+
+判断顺序：内核记录说明上游连接是被 RST、超时还是正常 FIN 结束；数据面日志说明它因此对
+入站连接做了什么；扩展日志说明应用看到的先后。上游是正常 FIN 时数据面不记任何行，应用
+拿到的是正常结束。
+
+经系统接管的流有两点由 macOS 决定，XDial 改不了（macOS 27 上实测）：
+- 应用拿到的错误码不是 Provider 给的那个。Provider 以“对端重置”关闭 flow 时，扩展日志是
+  `closed by plugin (flow error: 50)`，应用读到的是 `ENETDOWN`（50）而不是 `ECONNRESET`；
+  Provider 归不了类的错误以“内部错误”关闭，对应 `flow error: 8`，应用读到 errno 8。
+  所以判断“是不是被重置”要看数据面日志的 `reason=`，不要看应用报的错误码。
+- 应用对套接字做 `shutdown(SHUT_WR)` 之后，自己的读方向立刻返回 EOF，Provider 还没来得及
+  处理。数据面会正确转发半关闭，但这类流的应答到不了应用；本机 SOCKS5 入口不受此限。
 
 ## Release 的安装记录
 

@@ -1,0 +1,731 @@
+--- a/route/conn.go
++++ b/route/conn.go
+@@ -272,12 +272,13 @@
+ 
+ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
+ 	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
++	var xdialUpstreamFailed bool
+ 	if err != nil {
+-		common.Close(source, destination)
++		xdialUpstreamFailed = xdialCloseFailedRelay(source, destination, direction, err)
+ 	} else if duplexDst, isDuplex := destination.(N.WriteCloser); isDuplex {
+ 		err = duplexDst.CloseWrite()
+ 		if err != nil {
+-			common.Close(source, destination)
++			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err)
+ 		}
+ 	} else {
+ 		destination.Close()
+@@ -287,6 +288,15 @@
+ 			onClose(err)
+ 		}
+ 		common.Close(source, destination)
++	}
++	// sing-box files resets and timeouts under "closed" and only traces them.
++	// When the upstream cut a connection the application was still using, say so.
++	if xdialUpstreamFailed && E.IsClosedOrCanceled(err) {
++		if !direction {
++			m.logger.WarnContext(ctx, "connection upload interrupted by upstream: reason=", xdialRelayErrorReason(err), ": ", err)
++		} else {
++			m.logger.WarnContext(ctx, "connection download interrupted by upstream: reason=", xdialRelayErrorReason(err), ": ", err)
++		}
+ 	}
+ 	if !direction {
+ 		if err == nil {
+@@ -356,7 +366,7 @@
+ 			onClose(err)
+ 		}
+ 	}
+-	common.Close(source, destination)
++	xdialCloseFailedRelay(source, destination, direction, err)
+ 	if !direction {
+ 		m.logger.ErrorContext(ctx, "connection upload handshake: ", err)
+ 	} else {
+--- /dev/null
++++ b/route/xdial_relay_close.go
+@@ -0,0 +1,205 @@
++package route
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"os"
++	"strings"
++	"syscall"
++
++	"github.com/sagernet/sing/common"
++)
++
++// A relayed TCP connection has two ways to end. A clean EOF is forwarded as a
++// half-close, so the application sees the end of the stream. Any other end
++// means the stream was cut, and a graceful close of the inbound connection
++// would tell the application that the peer finished normally. For those the
++// inbound connection is closed with SO_LINGER 0, which sends a reset.
++//
++// Errors raised by the inbound connection itself keep the ordinary close: the
++// application (or whatever sits in front of the inbound) already ended that
++// connection, so there is nobody left to inform.
++
++// xdialCloseFailedRelay closes both ends after one relay direction stopped
++// with err, resetting the inbound connection unless the inbound connection is
++// what failed. It reports whether the upstream failed, as opposed to this
++// process having closed it: both reset the application, only the first is news.
++func xdialCloseFailedRelay(source net.Conn, destination net.Conn, download bool, err error) bool {
++	inbound, upstream := source, destination
++	if download {
++		inbound, upstream = destination, source
++	}
++	if xdialRelayErrorFromInbound(err, inbound, download) {
++		common.Close(source, destination)
++		return false
++	}
++	xdialResetConn(inbound)
++	common.Close(upstream)
++	return !xdialRelayClosedLocally(err)
++}
++
++// xdialCloseAfterFailedHalfClose closes both ends after forwarding a clean EOF
++// to destination failed with err. sing's copy reports a failed first write as
++// a clean end, so a destination that was already dead surfaces here. The
++// failing connection is known: it is the upstream exactly when relaying the
++// upload direction, where the application is still waiting for an answer.
++func xdialCloseAfterFailedHalfClose(source net.Conn, destination net.Conn, download bool, err error) bool {
++	if download {
++		common.Close(source, destination)
++		return false
++	}
++	xdialResetConn(source)
++	common.Close(destination)
++	return !xdialRelayClosedLocally(err)
++}
++
++// xdialResetConn closes conn abortively when it is backed by a TCP socket.
++// Other connection types have no reset to send and are closed normally.
++func xdialResetConn(conn net.Conn) {
++	if lingerConn, loaded := common.Cast[interface {
++		SetLinger(sec int) error
++	}](conn); loaded {
++		// Fails on a socket the peer already reset; nothing is left to signal.
++		_ = lingerConn.SetLinger(0)
++	}
++	_ = conn.Close()
++}
++
++// xdialRelayErrorFromInbound reports whether err was raised by the inbound
++// connection. A relay direction is one copy with two halves, a read from its
++// source and a write to its destination, and the inbound connection is the
++// destination of the download direction and the source of the upload direction.
++// So the inbound connection failed exactly when the half that touches it did.
++//
++// A failure whose half is unknown counts as an upstream failure. Resetting an
++// inbound connection that already failed is harmless, so the uncertain cases
++// err on the side that keeps the application informed.
++func xdialRelayErrorFromInbound(err error, inbound net.Conn, download bool) bool {
++	half := xdialCopyHalf(err, inbound)
++	if download {
++		return half == xdialCopyWrite
++	}
++	return half == xdialCopyRead
++}
++
++type xdialCopyHalfKind int
++
++const (
++	xdialCopyUnknown xdialCopyHalfKind = iota
++	xdialCopyRead
++	xdialCopyWrite
++)
++
++// sing's syscall copy paths work on raw descriptors, out of reach of any
++// wrapper around the connections, and say themselves which half failed: the
++// raw read waiter on every platform, splice on Linux.
++var xdialCopyHalfLabels = []struct {
++	prefix string
++	half   xdialCopyHalfKind
++}{
++	{"raw read: ", xdialCopyRead},
++	{"splice read: ", xdialCopyRead},
++	{"splice write: ", xdialCopyWrite},
++}
++
++// xdialCopyHalf tells which half of a copy raised err. The standard library
++// paths name the operation and the socket; those count only when the socket is
++// the inbound connection's, so an upstream protocol that reads while it writes
++// is not mistaken for it.
++func xdialCopyHalf(err error, inbound net.Conn) xdialCopyHalfKind {
++	message := err.Error()
++	for _, label := range xdialCopyHalfLabels {
++		if strings.HasPrefix(message, label.prefix) {
++			return label.half
++		}
++	}
++	var opErr *net.OpError
++	if errors.As(err, &opErr) {
++		switch {
++		case !xdialOpErrorOnConn(opErr, inbound):
++			return xdialCopyUnknown
++		case strings.Contains(opErr.Op, "write"):
++			return xdialCopyWrite
++		case strings.Contains(opErr.Op, "read"):
++			return xdialCopyRead
++		}
++		return xdialCopyUnknown
++	}
++	// sing's vectorised writer reports a failed writev without addresses.
++	var syscallErr *os.SyscallError
++	if errors.As(err, &syscallErr) &&
++		strings.Contains(strings.ToLower(syscallErr.Syscall), "write") {
++		return xdialCopyWrite
++	}
++	return xdialCopyUnknown
++}
++
++// xdialOpErrorOnConn reports whether opErr names conn's socket. Inbound
++// wrappers may present other addresses than the socket they sit on, so every
++// layer down to the socket is compared.
++func xdialOpErrorOnConn(opErr *net.OpError, conn net.Conn) bool {
++	if opErr.Source == nil || opErr.Addr == nil {
++		return false
++	}
++	for layer := any(conn); layer != nil; {
++		if layerConn, isConn := layer.(net.Conn); isConn {
++			localAddr, remoteAddr := layerConn.LocalAddr(), layerConn.RemoteAddr()
++			if localAddr != nil && remoteAddr != nil &&
++				opErr.Source.String() == localAddr.String() &&
++				opErr.Addr.String() == remoteAddr.String() {
++				return true
++			}
++		}
++		withUpstream, hasUpstream := layer.(common.WithUpstream)
++		if !hasUpstream {
++			return false
++		}
++		layer = withUpstream.Upstream()
++	}
++	return false
++}
++
++// xdialRelayClosedLocally reports whether err only says that this process
++// closed the connection, as opposed to a failure reported by the network.
++//
++// EAGAIN belongs here. It is never the outcome of a transfer; it surfaces when
++// a wait for the descriptor was cut short by closing it, which is how sing's
++// splice loop reports a connection closed under it.
++func xdialRelayClosedLocally(err error) bool {
++	return errors.Is(err, net.ErrClosed) ||
++		errors.Is(err, os.ErrClosed) ||
++		errors.Is(err, io.ErrClosedPipe) ||
++		errors.Is(err, context.Canceled) ||
++		errors.Is(err, syscall.EAGAIN)
++}
++
++// xdialRelayErrorReason names the failure without addresses or host names, so
++// the line stays useful after a log sink redacts network identifiers.
++func xdialRelayErrorReason(err error) string {
++	var errno syscall.Errno
++	if errors.As(err, &errno) {
++		switch errno {
++		case syscall.ECONNRESET:
++			return "reset"
++		case syscall.ETIMEDOUT:
++			return "timeout"
++		case syscall.EPIPE:
++			return "broken-pipe"
++		case syscall.ECONNABORTED:
++			return "aborted"
++		case syscall.ENETDOWN, syscall.ENETUNREACH, syscall.EHOSTDOWN, syscall.EHOSTUNREACH:
++			return "unreachable"
++		}
++		return "errno-" + strings.ToLower(strings.ReplaceAll(errno.Error(), " ", "-"))
++	}
++	var netErr net.Error
++	if errors.As(err, &netErr) && netErr.Timeout() {
++		return "timeout"
++	}
++	if errors.Is(err, io.ErrUnexpectedEOF) {
++		return "truncated"
++	}
++	return "error"
++}
+--- /dev/null
++++ b/route/xdial_relay_close_test.go
+@@ -0,0 +1,477 @@
++package route
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing/common/bufio"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++
++	"github.com/stretchr/testify/require"
++)
++
++const xdialRelayTestTimeout = 5 * time.Second
++
++// xdialRelayFixture is one application connection relayed by the connection
++// manager to one origin server, all over loopback TCP.
++type xdialRelayFixture struct {
++	application *net.TCPConn
++	origin      *net.TCPConn
++	manager     *ConnectionManager
++	logs        *xdialRelayLogWriter
++}
++
++// xdialTrackingDialer registers its connections with the connection manager,
++// as sing-box's own dialer does, so CloseAll reaches them.
++type xdialTrackingDialer struct {
++	manager *ConnectionManager
++}
++
++func (d xdialTrackingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	conn, err := N.SystemDialer.DialContext(ctx, network, destination)
++	if err != nil {
++		return nil, err
++	}
++	return d.manager.TrackConn(conn), nil
++}
++
++func (d xdialTrackingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	return N.SystemDialer.ListenPacket(ctx, destination)
++}
++
++type xdialRelayLogWriter struct {
++	access   sync.Mutex
++	messages []string
++	levels   []log.Level
++}
++
++func (w *xdialRelayLogWriter) WriteMessage(level log.Level, message string) {
++	w.access.Lock()
++	defer w.access.Unlock()
++	w.levels = append(w.levels, level)
++	w.messages = append(w.messages, message)
++}
++
++func (w *xdialRelayLogWriter) warnings() []string {
++	w.access.Lock()
++	defer w.access.Unlock()
++	var warnings []string
++	for index, level := range w.levels {
++		if level <= log.LevelWarn {
++			warnings = append(warnings, w.messages[index])
++		}
++	}
++	return warnings
++}
++
++func xdialAcceptTCP(t *testing.T, listener net.Listener) *net.TCPConn {
++	t.Helper()
++	_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(xdialRelayTestTimeout))
++	conn, err := listener.Accept()
++	require.NoError(t, err)
++	return conn.(*net.TCPConn)
++}
++
++func newXDialRelayFixture(t *testing.T) *xdialRelayFixture {
++	return newXDialRelayFixtureWithDialer(t, false)
++}
++
++// newXDialTrackedRelayFixture dials the origin the way a running sing-box
++// does, through a connection the connection manager tracks.
++func newXDialTrackedRelayFixture(t *testing.T) *xdialRelayFixture {
++	return newXDialRelayFixtureWithDialer(t, true)
++}
++
++func newXDialRelayFixtureWithDialer(t *testing.T, tracked bool) *xdialRelayFixture {
++	t.Helper()
++	inboundListener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	t.Cleanup(func() { inboundListener.Close() })
++	originListener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	t.Cleanup(func() { originListener.Close() })
++
++	application, err := net.Dial("tcp", inboundListener.Addr().String())
++	require.NoError(t, err)
++	t.Cleanup(func() { application.Close() })
++	inbound := xdialAcceptTCP(t, inboundListener)
++	t.Cleanup(func() { inbound.Close() })
++
++	logs := &xdialRelayLogWriter{}
++	logFactory := log.NewDefaultFactory(
++		context.Background(),
++		log.Formatter{DisableColors: true, DisableTimestamp: true},
++		io.Discard,
++		"",
++		logs,
++		false,
++	)
++	logFactory.SetLevel(log.LevelInfo)
++	manager := NewConnectionManager(logFactory.NewLogger("connection"))
++	ctx := log.ContextWithNewID(context.Background())
++	var upstreamDialer N.Dialer = N.SystemDialer
++	if tracked {
++		upstreamDialer = xdialTrackingDialer{manager}
++	}
++	manager.NewConnection(
++		ctx,
++		upstreamDialer,
++		inbound,
++		adapter.InboundContext{
++			Destination: M.SocksaddrFromNet(originListener.Addr()),
++		},
++		nil,
++	)
++	origin := xdialAcceptTCP(t, originListener)
++	t.Cleanup(func() { origin.Close() })
++
++	fixture := &xdialRelayFixture{
++		application: application.(*net.TCPConn),
++		origin:      origin,
++		manager:     manager,
++		logs:        logs,
++	}
++	// Prove the relay is up in both directions before a test disturbs it.
++	fixture.roundTrip(t)
++	return fixture
++}
++
++func (f *xdialRelayFixture) roundTrip(t *testing.T) {
++	t.Helper()
++	deadline := time.Now().Add(xdialRelayTestTimeout)
++	_ = f.application.SetDeadline(deadline)
++	_ = f.origin.SetDeadline(deadline)
++	buffer := make([]byte, 4)
++	_, err := f.application.Write([]byte("ping"))
++	require.NoError(t, err)
++	_, err = io.ReadFull(f.origin, buffer)
++	require.NoError(t, err)
++	require.Equal(t, "ping", string(buffer))
++	_, err = f.origin.Write([]byte("pong"))
++	require.NoError(t, err)
++	_, err = io.ReadFull(f.application, buffer)
++	require.NoError(t, err)
++	require.Equal(t, "pong", string(buffer))
++}
++
++func TestXDialRelayForwardsUpstreamResetAsReset(t *testing.T) {
++	fixture := newXDialRelayFixture(t)
++
++	require.NoError(t, fixture.origin.SetLinger(0))
++	require.NoError(t, fixture.origin.Close())
++
++	_, err := fixture.application.Read(make([]byte, 1))
++	require.ErrorIs(t, err, syscall.ECONNRESET,
++		"an upstream reset must not reach the application as a clean end of stream")
++
++	require.Eventually(t, func() bool {
++		for _, message := range fixture.logs.warnings() {
++			if containsAll(message, "interrupted by upstream", "reason=reset") {
++				return true
++			}
++		}
++		return false
++	}, xdialRelayTestTimeout, 10*time.Millisecond,
++		"the reset must be reported at warn level")
++}
++
++func TestXDialRelayKeepsUpstreamFinAsCleanEOF(t *testing.T) {
++	fixture := newXDialRelayFixture(t)
++
++	_, err := fixture.origin.Write([]byte("bye"))
++	require.NoError(t, err)
++	require.NoError(t, fixture.origin.CloseWrite())
++
++	received, err := io.ReadAll(fixture.application)
++	require.NoError(t, err, "an upstream FIN must stay a clean end of stream")
++	require.Equal(t, "bye", string(received))
++
++	// The half-close leaves the upload direction usable.
++	_, err = fixture.application.Write([]byte("late"))
++	require.NoError(t, err)
++	buffer := make([]byte, 4)
++	_, err = io.ReadFull(fixture.origin, buffer)
++	require.NoError(t, err)
++	require.Equal(t, "late", string(buffer))
++
++	require.NoError(t, fixture.application.CloseWrite())
++	_, err = fixture.origin.Read(buffer)
++	require.ErrorIs(t, err, io.EOF)
++	require.Empty(t, fixture.logs.warnings())
++}
++
++func TestXDialRelayKeepsApplicationHalfCloseClean(t *testing.T) {
++	fixture := newXDialRelayFixture(t)
++
++	// The application finishes sending first and still waits for the reply.
++	require.NoError(t, fixture.application.CloseWrite())
++	buffer := make([]byte, 1)
++	_, err := fixture.origin.Read(buffer)
++	require.ErrorIs(t, err, io.EOF)
++
++	_, err = fixture.origin.Write([]byte("reply"))
++	require.NoError(t, err)
++	require.NoError(t, fixture.origin.Close())
++
++	received, err := io.ReadAll(fixture.application)
++	require.NoError(t, err)
++	require.Equal(t, "reply", string(received))
++	require.Empty(t, fixture.logs.warnings())
++}
++
++func TestXDialRelayApplicationResetIsNotAnUpstreamFailure(t *testing.T) {
++	fixture := newXDialRelayFixture(t)
++
++	require.NoError(t, fixture.application.SetLinger(0))
++	require.NoError(t, fixture.application.Close())
++
++	// The origin sees the relay close its side; the test only needs the relay
++	// to finish, whichever way the kernel reports it.
++	_, _ = io.Copy(io.Discard, fixture.origin)
++	time.Sleep(50 * time.Millisecond)
++	require.Empty(t, fixture.logs.warnings(),
++		"a connection the application ended is not an upstream failure")
++}
++
++// When this process closes the upstream, the application is still cut off and
++// must see a reset, but nothing failed upstream and nothing is reported.
++func TestXDialRelayResetsApplicationWhenUpstreamIsClosedLocally(t *testing.T) {
++	fixture := newXDialTrackedRelayFixture(t)
++
++	fixture.manager.CloseAll()
++
++	_, err := fixture.application.Read(make([]byte, 1))
++	require.ErrorIs(t, err, syscall.ECONNRESET)
++	time.Sleep(50 * time.Millisecond)
++	require.Empty(t, fixture.logs.warnings())
++}
++
++// sing's copy reports a failed first write as a clean end. When the upstream is
++// already dead as the application sends its first bytes, the failure only
++// shows when the relay forwards the supposed EOF.
++func TestXDialRelayResetsApplicationWhenFirstUploadWriteFails(t *testing.T) {
++	inboundListener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer inboundListener.Close()
++	originListener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer originListener.Close()
++
++	applicationConn, err := net.Dial("tcp", inboundListener.Addr().String())
++	require.NoError(t, err)
++	application := applicationConn.(*net.TCPConn)
++	defer application.Close()
++	inbound := xdialAcceptTCP(t, inboundListener)
++	defer inbound.Close()
++	upstream, err := net.Dial("tcp", originListener.Addr().String())
++	require.NoError(t, err)
++	defer upstream.Close()
++	origin := xdialAcceptTCP(t, originListener)
++
++	require.NoError(t, origin.SetLinger(0))
++	require.NoError(t, origin.Close())
++	// Consume the reset so only the upload direction can notice the dead upstream.
++	_ = upstream.SetReadDeadline(time.Now().Add(xdialRelayTestTimeout))
++	_, err = upstream.Read(make([]byte, 1))
++	require.ErrorIs(t, err, syscall.ECONNRESET)
++
++	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
++	var done atomic.Bool
++	go manager.connectionCopy(context.Background(), inbound, upstream, false, &done, nil)
++
++	_, err = application.Write([]byte("request"))
++	require.NoError(t, err)
++	_ = application.SetReadDeadline(time.Now().Add(xdialRelayTestTimeout))
++	_, err = application.Read(make([]byte, 1))
++	require.ErrorIs(t, err, syscall.ECONNRESET)
++}
++
++// The attribution reads error shapes produced by sing's copy paths. These cases
++// run the real copy over real sockets so a changed shape fails here first.
++func TestXDialRelayErrorAttribution(t *testing.T) {
++	newPair := func(t *testing.T) (dialed *net.TCPConn, accepted *net.TCPConn) {
++		t.Helper()
++		listener, err := net.Listen("tcp", "127.0.0.1:0")
++		require.NoError(t, err)
++		defer listener.Close()
++		conn, err := net.Dial("tcp", listener.Addr().String())
++		require.NoError(t, err)
++		t.Cleanup(func() { conn.Close() })
++		accepted = xdialAcceptTCP(t, listener)
++		t.Cleanup(func() { accepted.Close() })
++		return conn.(*net.TCPConn), accepted
++	}
++	reset := func(t *testing.T, conn *net.TCPConn) {
++		t.Helper()
++		require.NoError(t, conn.SetLinger(0))
++		require.NoError(t, conn.Close())
++	}
++	// Keeps data flowing so the copy is past its first write when the far end
++	// goes away: sing reports a failed first write as a clean end.
++	feed := func(conn *net.TCPConn) {
++		payload := make([]byte, 16*1024)
++		for {
++			if _, err := conn.Write(payload); err != nil {
++				return
++			}
++		}
++	}
++	drainThenReset := func(t *testing.T, conn *net.TCPConn) {
++		t.Helper()
++		_ = conn.SetReadDeadline(time.Now().Add(xdialRelayTestTimeout))
++		_, err := io.ReadFull(conn, make([]byte, 64*1024))
++		require.NoError(t, err)
++		reset(t, conn)
++	}
++	copyResult := func(destination net.Conn, source net.Conn) <-chan error {
++		result := make(chan error, 1)
++		go func() {
++			_, err := bufio.Copy(destination, source)
++			result <- err
++		}()
++		return result
++	}
++	await := func(t *testing.T, result <-chan error) error {
++		t.Helper()
++		select {
++		case err := <-result:
++			return err
++		case <-time.After(xdialRelayTestTimeout):
++			t.Fatal("copy did not finish")
++			return nil
++		}
++	}
++
++	t.Run("download/upstream-read", func(t *testing.T) {
++		_, inbound := newPair(t)
++		upstream, origin := newPair(t)
++		reset(t, origin)
++		err := await(t, copyResult(inbound, upstream))
++		require.Error(t, err)
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, true), "%v", err)
++		require.Equal(t, "reset", xdialRelayErrorReason(err))
++	})
++	t.Run("download/inbound-write", func(t *testing.T) {
++		application, inbound := newPair(t)
++		upstream, origin := newPair(t)
++		result := copyResult(inbound, upstream)
++		go feed(origin)
++		drainThenReset(t, application)
++		err := await(t, result)
++		require.Error(t, err)
++		require.True(t, xdialRelayErrorFromInbound(err, inbound, true), "%v", err)
++	})
++	t.Run("upload/inbound-read", func(t *testing.T) {
++		application, inbound := newPair(t)
++		upstream, _ := newPair(t)
++		reset(t, application)
++		err := await(t, copyResult(upstream, inbound))
++		require.Error(t, err)
++		require.True(t, xdialRelayErrorFromInbound(err, inbound, false), "%v", err)
++	})
++	t.Run("upload/upstream-write", func(t *testing.T) {
++		application, inbound := newPair(t)
++		upstream, origin := newPair(t)
++		result := copyResult(upstream, inbound)
++		go feed(application)
++		drainThenReset(t, origin)
++		err := await(t, result)
++		require.Error(t, err)
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, false), "%v", err)
++	})
++	t.Run("download/inbound-write-through-readdressed-wrapper", func(t *testing.T) {
++		application, inbound := newPair(t)
++		upstream, origin := newPair(t)
++		wrapped := &xdialReaddressedConn{Conn: inbound}
++		result := copyResult(wrapped, upstream)
++		go feed(origin)
++		drainThenReset(t, application)
++		err := await(t, result)
++		require.Error(t, err)
++		require.True(t, xdialRelayErrorFromInbound(err, wrapped, true), "%v", err)
++	})
++	t.Run("upstream-closed-locally", func(t *testing.T) {
++		_, inbound := newPair(t)
++		upstream, _ := newPair(t)
++		require.NoError(t, upstream.Close())
++		_, err := bufio.Copy(inbound, upstream)
++		require.Error(t, err)
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, true), "%v", err)
++		require.True(t, xdialRelayClosedLocally(err), "%v", err)
++	})
++	// sing's syscall paths differ by platform: splice on Linux, the raw read
++	// waiter elsewhere. Their labels are checked here by value so every
++	// platform's test run covers every platform's shape.
++	t.Run("labelled-by-sing", func(t *testing.T) {
++		_, inbound := newPair(t)
++		for _, test := range []struct {
++			label           string
++			download        bool
++			wantFromInbound bool
++		}{
++			{"raw read", true, false},
++			{"raw read", false, true},
++			{"splice read", true, false},
++			{"splice read", false, true},
++			{"splice write", true, true},
++			{"splice write", false, false},
++		} {
++			err := E.Cause(syscall.ECONNRESET, test.label)
++			require.Equal(t, test.wantFromInbound,
++				xdialRelayErrorFromInbound(err, inbound, test.download),
++				"%v download=%t", err, test.download)
++			require.False(t, xdialRelayClosedLocally(err), "%v", err)
++			require.Equal(t, "reset", xdialRelayErrorReason(err))
++		}
++	})
++	// sing's splice loop reports a descriptor closed under it as EAGAIN.
++	t.Run("closed-under-splice", func(t *testing.T) {
++		_, inbound := newPair(t)
++		err := E.Cause(syscall.EAGAIN, "splice read")
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, true))
++		require.True(t, xdialRelayClosedLocally(err))
++	})
++	t.Run("unattributed", func(t *testing.T) {
++		_, inbound := newPair(t)
++		err := errors.New("protocol stream reset")
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, true))
++		require.False(t, xdialRelayErrorFromInbound(err, inbound, false))
++		require.Equal(t, "error", xdialRelayErrorReason(err))
++		require.Equal(t, "truncated", xdialRelayErrorReason(io.ErrUnexpectedEOF))
++	})
++}
++
++// xdialReaddressedConn stands for an inbound wrapper that reports the
++// application's address instead of the loopback socket's.
++type xdialReaddressedConn struct {
++	net.Conn
++}
++
++func (c *xdialReaddressedConn) RemoteAddr() net.Addr {
++	return &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 1}
++}
++
++func (c *xdialReaddressedConn) Upstream() any {
++	return c.Conn
++}
++
++func containsAll(message string, parts ...string) bool {
++	for _, part := range parts {
++		if !strings.Contains(message, part) {
++			return false
++		}
++	}
++	return true
++}

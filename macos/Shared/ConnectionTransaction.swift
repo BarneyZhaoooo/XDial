@@ -629,6 +629,10 @@ struct ConnectionReport: Codable, Equatable {
     var tasks: [ConnectionTaskReport]
     let warnings: [ConnectionPlanWarning]
     var events: [ConnectionReportEvent]
+    /// How many events `events` no longer holds. A committed transaction keeps
+    /// recording for as long as it runs, so its event list is bounded: see
+    /// `trimEvents()`. Zero means the list is complete.
+    private(set) var droppedEventCount: Int
     var error: ConnectionReportError?
     var rollbackError: ConnectionReportError?
     var rollbackComplete: Bool
@@ -648,6 +652,7 @@ struct ConnectionReport: Codable, Equatable {
         case tasks
         case warnings
         case events
+        case droppedEventCount = "events_dropped"
         case error
         case rollbackError = "rollback_error"
         case rollbackComplete = "rollback_complete"
@@ -682,6 +687,7 @@ struct ConnectionReport: Codable, Equatable {
         }
         warnings = plan.warnings
         events = []
+        droppedEventCount = 0
         error = nil
         rollbackError = nil
         rollbackComplete = false
@@ -729,6 +735,10 @@ struct ConnectionReport: Codable, Equatable {
             [ConnectionReportEvent].self,
             forKey: .events
         ) ?? []
+        droppedEventCount = try values.decodeIfPresent(
+            Int.self,
+            forKey: .droppedEventCount
+        ) ?? 0
         error = try values.decodeIfPresent(
             ConnectionReportError.self,
             forKey: .error
@@ -1120,6 +1130,48 @@ struct ConnectionReport: Codable, Equatable {
             message: message,
             facts: facts
         ))
+        trimEvents()
+    }
+
+    /// How many of the newest events are kept once a transaction has committed.
+    static let recentEventLimit = 256
+
+    /// Bounds the event list of a long-running transaction.
+    ///
+    /// Everything up to the first commit stays: it is how this connection was
+    /// built, and it is bounded by the plan. After that a Line that recovers
+    /// every few minutes adds events for as long as the session lives, and the
+    /// whole report is rewritten and re-read on every change. Of those later
+    /// events only the newest `recentEventLimit` stay, together with the newest
+    /// fact-carrying event of each task and code, because the Line summary
+    /// reads current capability from those facts rather than from the wording.
+    /// Sequence numbers are never reused, so a gap marks where events left.
+    private mutating func trimEvents() {
+        guard events.count > Self.recentEventLimit else { return }
+        guard let commitIndex = events.firstIndex(where: {
+            $0.type == "transaction"
+                && $0.state == ConnectionTransactionState.committed.rawValue
+        }) else {
+            return
+        }
+        let historyStart = commitIndex + 1
+        let recentStart = events.count - Self.recentEventLimit
+        guard recentStart > historyStart else { return }
+
+        var seenFacts = Set<String>()
+        var keptFacts: [ConnectionReportEvent] = []
+        for event in events[historyStart..<recentStart].reversed()
+        where event.facts != nil {
+            if seenFacts.insert(event.taskID + "\u{0}" + event.code).inserted {
+                keptFacts.append(event)
+            }
+        }
+        let dropped = recentStart - historyStart - keptFacts.count
+        guard dropped > 0 else { return }
+        events = Array(events[..<historyStart])
+            + keptFacts.reversed()
+            + Array(events[recentStart...])
+        droppedEventCount += dropped
     }
 }
 

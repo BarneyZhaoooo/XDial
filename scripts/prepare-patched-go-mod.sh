@@ -269,6 +269,18 @@ grep -Fq 'func TestXDialOriginalUDPExchangePreservesWireRequestAndTarget(' \
 	"${patched_sing_box_dir}/dns/transport/local/local_darwin_test.go"
 grep -Fq 'options.DisableCache = true' \
 	"${patched_sing_box_dir}/dns/client.go"
+grep -Fq 'xdialUpstreamFailed = xdialCloseFailedRelay(source, destination, direction, err)' \
+	"${patched_sing_box_dir}/route/conn.go"
+grep -Fq 'duplexDst, isDuplex := xdialWriteCloser(destination); isDuplex' \
+	"${patched_sing_box_dir}/route/conn.go"
+grep -Fq 'func xdialWriteCloser(' \
+	"${patched_sing_box_dir}/route/xdial_half_close.go"
+grep -Fq 'func TestXDialRelayForwardsApplicationHalfCloseToTrackedUpstream(' \
+	"${patched_sing_box_dir}/route/xdial_half_close_test.go"
+grep -Fq 'func xdialCloseFailedRelay(' \
+	"${patched_sing_box_dir}/route/xdial_relay_close.go"
+grep -Fq 'func TestXDialRelayForwardsUpstreamResetAsReset(' \
+	"${patched_sing_box_dir}/route/xdial_relay_close_test.go"
 
 patched_module_dir="${staging_dir}/tailscale"
 cp -R "${source_dir}" "${patched_module_dir}"

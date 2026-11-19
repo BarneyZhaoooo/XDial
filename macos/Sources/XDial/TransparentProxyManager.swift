@@ -90,6 +90,10 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
     private var hostOwnedTransactionIDs = Set<String>()
     private var currentTransactionSeedJSON: String?
     private var reportPollTimer: Timer?
+    /// Follows the Provider's report of a committed session, see
+    /// `CommittedReportRefreshPolicy`.
+    private var committedReportRefreshTimer: Timer?
+    private var committedReportProbeInFlight = false
     private var recoveringTransactionID: String?
     private var requestedProfileJSON: String?
     private var activeUnderlay: HostUnderlaySnapshot?
@@ -259,6 +263,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             NotificationCenter.default.removeObserver(statusObserver)
         }
         reportPollTimer?.invalidate()
+        committedReportRefreshTimer?.invalidate()
         underlayMonitor?.cancel()
         parkedUnderlayMonitor?.cancel()
         parkedTailWorkItem?.cancel()
@@ -3062,6 +3067,72 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         return probedProviderReport
     }
 
+    private func startCommittedReportRefresh() {
+        guard committedReportRefreshTimer == nil else { return }
+        let timer = Timer(
+            timeInterval: CommittedReportRefreshPolicy.interval,
+            repeats: true
+        ) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            self.refreshCommittedReport()
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        committedReportRefreshTimer = timer
+    }
+
+    private func refreshCommittedReport() {
+        guard
+            let transactionID = connectedSessionTransactionID,
+            transactionID == currentTransactionID,
+            manager?.connection.status == .connected
+        else {
+            // The next committed, connected report starts it again.
+            committedReportRefreshTimer?.invalidate()
+            committedReportRefreshTimer = nil
+            return
+        }
+        guard !committedReportProbeInFlight else { return }
+        committedReportProbeInFlight = true
+        // The probe is a blocking round trip to the daemon; keep it off the
+        // main thread, which only decides what to do with the answer.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let probed = PrivilegeManager.probeProviderConnectionReport()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.committedReportProbeInFlight = false
+                guard let probed else { return }
+                self.adoptRefreshedCommittedReport(probed)
+            }
+        }
+    }
+
+    /// Updates what the Host shows and nothing else: no runtime status is
+    /// republished and no recovery bookkeeping runs, because the session this
+    /// report belongs to is already the proven, connected one.
+    private func adoptRefreshedCommittedReport(_ probed: ConnectionReport) {
+        guard CommittedReportRefreshPolicy.shouldAdopt(
+            probed: probed,
+            presented: ConnectionReportJournal.read(),
+            currentTransactionID: currentTransactionID,
+            connectedSessionTransactionID: connectedSessionTransactionID,
+            systemSessionConnected:
+                manager?.connection.status == .connected,
+            hostIsChangingConnection:
+                startAttempt != nil
+                    || automaticReconnectInProgress
+                    || activeScenarioSwitch != nil
+                    || recoveringTransactionID != nil
+        ) else {
+            return
+        }
+        try? ConnectionReportJournal.write(probed)
+        reportHandler?(probed)
+    }
+
     private func finishSystemDisconnectRollbackIfNeeded() {
         guard
             let report = ConnectionReportJournal.read(),
@@ -3107,6 +3178,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         let isNewSession =
             connectedSessionTransactionID != report.transactionID
         connectedSessionTransactionID = report.transactionID
+        startCommittedReportRefresh()
         if startAttempt?.transactionID == report.transactionID {
             startAttempt = nil
         }
