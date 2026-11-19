@@ -73,6 +73,9 @@ struct GeneralSettingsView: View {
                 ))
             }
             Divider()
+            ConnectionNoticeSettings(chinese: state.language == .zh)
+                .toggleStyle(.switch)
+            Divider()
             LocalSOCKSShareSettings(share: state.localSOCKSShare)
             Divider()
             note(state.tr(

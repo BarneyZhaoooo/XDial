@@ -42,25 +42,25 @@ final class OnDemandReconnectTests: XCTestCase {
         ).isValid)
     }
 
-    func testOnDemandArmsOnlyAfterAcceptanceAndSecureEnvelope() {
+    func testOnDemandArmsWhenTunnelIsReadyAndSecureEnvelopeIsAvailable() {
         XCTAssertTrue(SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: true,
-            dataPathVerified: true,
+            tunnelReady: true,
             hasStartEnvelope: true
         ))
         XCTAssertFalse(SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: false,
-            dataPathVerified: true,
+            tunnelReady: true,
             hasStartEnvelope: true
         ))
         XCTAssertFalse(SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: true,
-            dataPathVerified: false,
+            tunnelReady: false,
             hasStartEnvelope: true
         ))
         XCTAssertFalse(SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: true,
-            dataPathVerified: true,
+            tunnelReady: true,
             hasStartEnvelope: false
         ))
         XCTAssertTrue(SystemOnDemandReconnectPolicy.shouldSuspendActiveProfile(
@@ -102,18 +102,18 @@ final class OnDemandReconnectTests: XCTestCase {
         XCTAssertNil(persistedConfiguration["password"])
     }
 
-    func testSecureEnvelopeIsClearedOnlyWhenItsStartOrRuntimeFails() {
+    func testSecureEnvelopeSurvivesTransientNetworkStartupFailures() {
         XCTAssertTrue(OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: true,
-            startOrRuntimeFailed: true
+            startupStage: "engine_failed"
         ))
         XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: false,
-            startOrRuntimeFailed: true
+            startupStage: "engine_failed"
         ))
         XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: true,
-            startOrRuntimeFailed: false
+            startupStage: "underlay_interface_failed"
         ))
     }
 

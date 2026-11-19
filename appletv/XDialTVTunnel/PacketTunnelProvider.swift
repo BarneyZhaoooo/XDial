@@ -501,9 +501,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // 引擎队列仍保持阻塞，后续 start 不会越过旧会话创建第二个 Libbox。
         cancelActiveAttempt(
             startError: providerError(7, "连接启动已取消"),
-            afterCleanupQueued: { [weak self] in
+            afterCleanupQueued: { [weak self] wasRunning in
                 self?.stopActivityUpdates()
                 #if os(iOS)
+                if wasRunning {
+                    switch reason {
+                    case .providerFailed, .noNetworkAvailable, .unrecoverableNetworkChange,
+                         .connectionFailed, .internalError, .idleTimeout:
+                        ConnectionNotice.disconnect.post()
+                    default: break
+                    }
+                }
                 self?.clearRunningScenario()
                 #endif
                 self?.recordTimeline("stop_reason", detail: Self.stopDetail(reason))
@@ -699,7 +707,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         #if os(iOS)
         if OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: clearSecureEnvelope,
-            startOrRuntimeFailed: true
+            startupStage: diagnosticStage
         ) {
             _ = OnDemandStartEnvelopeStore.clear()
         }
@@ -712,11 +720,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private func cancelActiveAttempt(
         startError: Error,
-        afterCleanupQueued: (() -> Void)? = nil,
+        afterCleanupQueued: ((Bool) -> Void)? = nil,
         cleanupCompletion: (() -> Void)? = nil
     ) {
         networkSettingsSubmissionLock.lock()
         lifecycleLock.lock()
+        let wasRunning = attemptPhase == .running
         let engine = libbox
         let monitor = pathMonitor
         let completion = startCompletion
@@ -735,7 +744,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         lifecycleLock.unlock()
         networkSettingsSubmissionLock.unlock()
 
-        afterCleanupQueued?()
+        afterCleanupQueued?(wasRunning)
         monitor?.cancel()
         completion?.finish(startError)
     }
@@ -852,7 +861,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let engine = libbox
         let monitor = pathMonitor
         let completion = startCompletion
-        let clearSecureEnvelope = activeGenerationUsesSecureEnvelope
         libbox = nil
         pathMonitor = nil
         startCompletion = nil
@@ -866,12 +874,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         #if os(iOS)
         clearRunningScenario()
-        if OnDemandStartEnvelopeFailurePolicy.shouldClear(
-            startedFromSecureEnvelope: clearSecureEnvelope,
-            startOrRuntimeFailed: true
-        ) {
-            _ = OnDemandStartEnvelopeStore.clear()
-        }
+        // The same secure configuration already started this tunnel successfully.
+        // Keep it for the next system reconnect after a transport drop.
+        ConnectionNotice.disconnect.post()
         #endif
         setLastError(error.localizedDescription)
         recordDiagnostic("runtime_disconnected", detail: "code=\((error as NSError).code) " + ConnectionTimeline.failureKeywords(error.localizedDescription))
@@ -1958,6 +1963,9 @@ extension PacketTunnelProvider {
             if let envelope = switched.bundle.envelope,
                case .available = OnDemandStartEnvelopeStore.load() {
                 OnDemandStartEnvelopeStore.save(envelope)
+            }
+            if source.scenarioID != scenarioID {
+                ConnectionNotice.scenario.post(scenarioName: switched.bundle.scenarioName)
             }
             recordDiagnostic("scenario_switch_\(switched.mode.rawValue)")
             if !switched.bundle.scenarioName.isEmpty {

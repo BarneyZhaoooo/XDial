@@ -517,6 +517,11 @@ final class AppState: ObservableObject {
     @Published var language: Lang {
         didSet {
             persistence.defaults.set(language.rawValue, forKey: persistence.languageKey)
+            #if os(iOS)
+            if persistence.defaultsSuiteName == nil {
+                ConnectionNotice.preferences.set(language.rawValue, forKey: "xdial.language")
+            }
+            #endif
         }
     }
 

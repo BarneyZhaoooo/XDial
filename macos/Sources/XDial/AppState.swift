@@ -1842,6 +1842,9 @@ final class AppState: ObservableObject {
                 var updated = targetRecord.profile
                 updated.activeScenarioID = targetScenarioID
                 profile = updated
+                if inFlight.sourceScenarioID != targetScenarioID {
+                    ConnectionNotice.scenario.post(scenarioName: activeScenario?.name ?? "")
+                }
                 save(markDirty: false)
                 configurationChanges.adoptApplied(
                     .valid(report.configurationFingerprint)

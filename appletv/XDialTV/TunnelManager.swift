@@ -811,10 +811,10 @@ enum ProbeFailureReconnectPolicy {
 enum SystemOnDemandReconnectPolicy {
     static func shouldArm(
         userEnabled: Bool,
-        dataPathVerified: Bool,
+        tunnelReady: Bool,
         hasStartEnvelope: Bool
     ) -> Bool {
-        userEnabled && dataPathVerified && hasStartEnvelope
+        userEnabled && tunnelReady && hasStartEnvelope
     }
 
     static func shouldSuspendActiveProfile(
@@ -1053,6 +1053,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     private(set) var activeAcceptancePlan: TunnelAcceptancePlan?
     private var systemOnDemandRequested = false
     private var systemOnDemandSuspendedForSetup = false
+    private var onDemandSaveID: UUID?
     private var pendingOnDemandEnvelope: OnDemandStartEnvelope?
     private var activeStartAllowsSystemOnDemand = true
     private var startWatchdogTask: Task<Void, Never>?
@@ -1298,6 +1299,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     func removeProfile(completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
+        onDemandSaveID = nil
         pendingOnDemandEnvelope = nil
         systemOnDemandActive = false
         systemOnDemandState = systemOnDemandRequested ? .pending : .disabled
@@ -1407,7 +1409,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     private func armSystemOnDemandIfReady() {
-        guard activeStartAllowsSystemOnDemand,
+        guard let manager, systemOnDemandRequested, !systemOnDemandActive, onDemandSaveID == nil,
+              activeStartAllowsSystemOnDemand,
               !systemOnDemandSuspendedForSetup else { return }
         let envelope: OnDemandStartEnvelope?
         if let pendingOnDemandEnvelope {
@@ -1417,11 +1420,18 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         } else {
             envelope = nil
         }
+        #if os(iOS)
+        // The provider completes start after its engine and DNS settings are ready.
+        // Foreground HTTPS checks can be suspended indefinitely on a locked phone.
+        let tunnelReady = manager.connection.status == .connected
+        #else
+        let tunnelReady = dataPathVerified
+        #endif
         guard SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: systemOnDemandRequested,
-            dataPathVerified: dataPathVerified,
-            hasStartEnvelope: envelope != nil
-        ), let envelope, let manager else {
+            tunnelReady: tunnelReady,
+            hasStartEnvelope: envelope?.isValid == true
+        ), let envelope else {
             return
         }
         let keychainStatus = OnDemandStartEnvelopeStore.save(envelope)
@@ -1430,15 +1440,20 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             let message = "无法安全保存系统级按需重连启动包"
             systemOnDemandState = .failed(message)
             engine?.lastError = message
+            recordTimeline("on_demand.failed", result: .failed, detail: "keychain=\(keychainStatus)")
             appLog("TunnelManager.onDemand: secure envelope save failed status=\(keychainStatus)")
             return
         }
+        let saveID = UUID()
+        onDemandSaveID = saveID
+        recordTimeline("on_demand.enabling")
         manager.onDemandRules = Self.makeSystemOnDemandRules()
         manager.isOnDemandEnabled = true
         manager.saveToPreferences { [weak self] error in
             let box = UncheckedBox(value: error)
             Task { @MainActor in
-                guard let self, let manager = self.manager else { return }
+                guard let self, self.onDemandSaveID == saveID else { return }
+                self.onDemandSaveID = nil
                 if let error = box.value {
                     manager.isOnDemandEnabled = false
                     self.systemOnDemandActive = false
@@ -1446,12 +1461,14 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                     self.systemOnDemandState = .failed(message)
                     self.engine?.lastError = message
                     _ = OnDemandStartEnvelopeStore.clear()
+                    self.recordTimeline("on_demand.failed", result: .failed, detail: "preferences=\((error as NSError).code)")
                     appLog("TunnelManager.onDemand: enable failed \(error.localizedDescription)")
                     return
                 }
                 self.systemOnDemandActive = true
                 self.systemOnDemandState = .active
-                appLog("TunnelManager.onDemand: armed after data-path acceptance")
+                self.recordTimeline("on_demand.enabled", result: .ok)
+                appLog("TunnelManager.onDemand: armed")
             }
         }
     }
@@ -1460,6 +1477,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         clearEnvelope: Bool,
         completion: @escaping @MainActor () -> Void
     ) {
+        onDemandSaveID = nil
         if clearEnvelope {
             pendingOnDemandEnvelope = nil
             _ = OnDemandStartEnvelopeStore.clear()
@@ -1613,6 +1631,9 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         switch connection.status {
         case .connected:
+            #if os(iOS)
+            armSystemOnDemandIfReady()
+            #endif
             if dataPathVerified {
                 engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
             } else if previousStatus == .connected && recheckPolicy.isDegraded {

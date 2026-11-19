@@ -168,6 +168,7 @@ targets:
     sources:
       - Sources/XDial
       - ../apple/Home
+      - ../apple/Notifications
       - ../ios/XDialShared/DialGlyph.swift
       - Shared
       - path: AppIcon.icns

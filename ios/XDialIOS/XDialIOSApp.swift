@@ -1,9 +1,12 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct XDialIOSApp: App {
     init() {
+        UNUserNotificationCenter.current().delegate = ConnectionNoticePresenter.shared
         // 快捷指令和控制中心会在无窗口时后台启动 App，宿主必须在 App 初始化时注册。
+        ConnectionNotice.preferences.set(MobileAppRuntime.state.language.rawValue, forKey: "xdial.language")
         XDialIntentHost.current = MobileIntentHost(app: MobileAppRuntime.state)
         MobileAppRuntime.connectionActivity = ConnectionActivityController(app: MobileAppRuntime.state)
     }

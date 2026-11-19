@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 struct SettingsWindowChrome: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
@@ -499,6 +500,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminationApproved = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = ConnectionNoticePresenter.shared
         // XDial 的最后一个普通窗口关闭后仍必须作为菜单栏网络控制面常驻。
         // SwiftUI/AppKit 在无普通窗口时可能重新允许 automatic termination；
         // 对网络托管进程明确保持禁止，不能用保留 Dock 图标来间接续命。
