@@ -53,7 +53,7 @@ Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `ma
 |---|---|---|---|---|
 | 域名解析 | 直连域名与出站默认：本机系统 DNS（未加密）；走代理的域名：经该代理 DoH `1.1.1.1`；代理服务器域名：直连 DoH `223.5.5.5`；AnyConnect 规则用其下发的 DNS；Tailscale 用内存 MagicDNS | 扩展 | 连接期间 | `core/config/generator.go`（`1366-1437`、`538-546`） |
 | 连通性检测 | 仅 TLS 握手：`[2606:4700:4700::1111]:443`、`[2001:4860:4860::8888]:443`（IPv6）；经各线路 `1.1.1.1:443`、`[2606:4700:4700::1111]:443` | 扩展 | 每次连接 | `macos/TransparentProxyExtension/UnderlayIPv6TLSProbe.swift`、`core/libbox/outbound_tls_probe.go` |
-| 出口地址 | IPv4：`1.1.1.1/cdn-cgi/trace` 与 `r.inews.qq.com/api/ip2city`；IPv6：Cloudflare trace；订阅、Tailscale、规则下载线路另用 `checkip.amazonaws.com` | 扩展 | 每次连接，按线路（含直连） | `core/libbox/libbox.go`（`outboundAddressProbeEndpoints*`）、`AppState.synchronizeLineObservations` |
+| 出口地址 | IPv4：`1.1.1.1/cdn-cgi/trace` 与 `r.inews.qq.com/api/ip2city`（`parseTencentProbeAddress` 只检查 `ret` 并取 `ip`，不读城市）；IPv6：Cloudflare trace；订阅、Tailscale、规则下载线路另用 `checkip.amazonaws.com`。不发送定位坐标或 SSID | 扩展 | 每次连接，按线路（含直连） | `core/libbox/libbox.go`（`outboundAddressProbeEndpoints*`）、`AppState.synchronizeLineObservations` |
 | 线路测速 | `www.gstatic.com/generate_204`（或线路组指定） | App（未连接时临时实例）/ 扩展 | 当前场景的线路未连接时测一次；连接后自动组每 3–5 分钟 | `LineLatencyStore.ensureScenarioMeasurements`、`StandaloneLineLatencyService.swift`、`core/config/generator.go` |
 | 出口地区 | `gspe1-ssl.ls.apple.com/pep/gcc`，其次 Cloudflare trace | App / 扩展 | 仅当预置带地区场景（公开版没有） | `UnderlayCountryLookup.swift`、`core/libbox/exit_country_probe.go` |
 | 规则文件 | 规则集写明的地址 | 扩展 | 连接时缺少缓存，或缓存超过 24 小时 | `core/libbox/configgen.go` |
@@ -66,5 +66,6 @@ Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `ma
 
 - AnyConnect 走桌面路径（`sslcon/auth/hostinfo_other.go`）：发送电脑名、系统名称与版本、硬件 UUID 和网卡 MAC 地址。
 - Tailscale 设备名是随机的 `xdial-xxxxxxxx`；不上传日志。
-- 读取 Wi-Fi 名称需要定位权限：只在用户点「设置…」或为场景登记 Wi-Fi 时请求，不读取位置；Wi-Fi 名称只在本机比对，导出配置时随场景导出。
+- Wi-Fi 名称只在本机匹配场景。读取它需要定位权限：只在 App 位于前台、用户点「设置…」或为场景登记 Wi-Fi 时申请「使用期间」定位权限，不读取位置；导出配置时 Wi-Fi 名称随场景导出。
+- 确认说明之前，手动更新或添加订阅、手动测速和自动恢复连接也都不会联网；被说明拦下的连接在点「继续使用」后接着发起，选「稍后」则不再继续。
 - 系统提示：首次连接时添加代理配置；通知和登录时启动只在用户打开后请求。

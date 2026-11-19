@@ -71,6 +71,7 @@ struct DataUseNoticeView: View {
         }
         .frame(width: 520, height: 600)
         .background(XDialPalette.canvas)
+        .onDisappear { state.postponeDataUseNotice() }
     }
 
     private var isChinese: Bool { state.tr("zh", "en") == "zh" }

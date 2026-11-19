@@ -41,6 +41,7 @@ final class AppState: ObservableObject {
     @Published private(set) var dataUseNoticeAccepted = DataUseNoticeAcceptance.isAccepted(
         defaults: xdialDefaults, required: DataUseNoticeAcceptance.requiredByBuild
     )
+    private var connectionAwaitsDataUseNotice = false
     @Published private(set) var exitCountry: String?
     @Published private(set) var surveyingRegion = false
     private let scenarioPathMonitor = NWPathMonitor()
@@ -761,6 +762,11 @@ final class AppState: ObservableObject {
             .store(in: &engineSubs)
         loadSaved()
         lineLatencies.standaloneRequest = { line, url in try await StandaloneLineLatencyService.probe(line, testURL: url) }
+        lineLatencies.permitsNetworkTests = { [weak self] in
+            guard let self else { return false }
+            if !self.dataUseNoticeAccepted { self.presentDataUseNotice() }
+            return self.dataUseNoticeAccepted
+        }
         lineLatencies.groupSelectionRequest = { lines, facts in try await StandaloneLineLatencyService.evaluateGroups(lines, facts: facts) }
         lineLatencies.updateCatalogs([profileLibrary.runtimeRecord])
         $profileLibrary.sink { [weak self] library in
@@ -1502,6 +1508,16 @@ final class AppState: ObservableObject {
         synchronizeLineLatencies()
         refreshDueProfiles()
         runLaunchAutoConnectIfNeeded()
+        if connectionAwaitsDataUseNotice {
+            connectionAwaitsDataUseNotice = false
+            if connectionDesired.wantsConnection, engine.status == "disconnected" { beginConnection() }
+        }
+    }
+
+    /// The notice was closed without confirming: the blocked connection is not resumed later.
+    func postponeDataUseNotice() {
+        guard !dataUseNoticeAccepted else { return }
+        connectionAwaitsDataUseNotice = false
     }
 
     func connect() {
@@ -1537,6 +1553,8 @@ final class AppState: ObservableObject {
         automaticRetryTrigger: AutomaticReconnectTrigger? = nil
     ) {
         guard dataUseNoticeAccepted else {
+            // A connection the user asked for continues once the notice is confirmed.
+            if automaticRetryTrigger == nil { connectionAwaitsDataUseNotice = true }
             presentDataUseNotice()
             return
         }
@@ -2385,7 +2403,9 @@ final class AppState: ObservableObject {
         underlayFingerprint: String,
         completion: @escaping (AutomaticReconnectPreparation?) -> Void
     ) {
-        guard !networkEpochPowerGate.defersNetworkWork,
+        // Declining reschedules the attempt; recovery resumes once the notice is confirmed.
+        guard dataUseNoticeAccepted,
+              !networkEpochPowerGate.defersNetworkWork,
               automaticScenarioChangeKeepsConnection else {
             completion(nil)
             return

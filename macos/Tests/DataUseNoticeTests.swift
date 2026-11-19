@@ -37,4 +37,16 @@ final class DataUseNoticeTests: XCTestCase {
             XCTAssertTrue(preset.contains("gspe1-ssl.ls.apple.com"))
         }
     }
+
+    @MainActor
+    func testLineTestsStayOfflineUntilTheNoticeIsConfirmed() {
+        let store = LineLatencyStore()
+        var allowed = false
+        store.standaloneRequest = { _, _ in throw CocoaError(.userCancelled) }
+        store.permitsNetworkTests = { allowed }
+        let line = Line(id: "direct", name: "直连", type: "direct", verified: true)
+        XCTAssertNil(store.test([line], profileID: "p"))
+        allowed = true
+        XCTAssertNotNil(store.test([line], profileID: "p"))
+    }
 }
