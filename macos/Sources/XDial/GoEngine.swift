@@ -202,7 +202,7 @@ final class GoEngine: ObservableObject {
             releaseTailscaleSetupForConnection { result in
                 guard !self.tailscaleSwitchHandoffCancelled else {
                     self.tailscaleConfigurationLease.resume()
-                    completion(.failure(self.requestError("场景切换已取消"))); return
+                    completion(.failure(ProviderScenarioSwitchRejectedError.cancelled)); return
                 }
                 if case let .failure(error) = result {
                     self.tailscaleConfigurationLease.resume()

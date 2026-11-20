@@ -494,11 +494,11 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 status: "cancelled",
                 activeTransactionID: active.sourceTransactionID,
                 code: "switch-cancelled",
-                message: ManagerError.scenarioSwitchCancelled
+                message: ProviderScenarioSwitchRejectedError.cancelled
                     .localizedDescription
             )
             active.completionGate.finish(.failure(
-                ManagerError.scenarioSwitchCancelled
+                ProviderScenarioSwitchRejectedError.cancelled
             ))
             return
         }
@@ -522,7 +522,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         // original response or the cancellation acknowledgement can be lost.
         beginScenarioSwitchReconciliation(
             requestID: request.requestID,
-            error: ManagerError.scenarioSwitchCancelled
+            error: ProviderScenarioSwitchRejectedError.cancelled
         )
     }
 
@@ -558,11 +558,11 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 status: "cancelled",
                 activeTransactionID: active.sourceTransactionID,
                 code: "switch-cancelled",
-                message: ManagerError.scenarioSwitchCancelled
+                message: ProviderScenarioSwitchRejectedError.cancelled
                     .localizedDescription
             )
             active.completionGate.finish(.failure(
-                ManagerError.scenarioSwitchCancelled
+                ProviderScenarioSwitchRejectedError.cancelled
             ))
             return
         }
@@ -982,7 +982,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                     code: "user-disconnected", message: nil
                 )
                 active.completionGate.finish(.failure(
-                    ManagerError.scenarioSwitchCancelled
+                    ProviderScenarioSwitchRejectedError.cancelled
                 ))
             }
         }
@@ -1677,7 +1677,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                           !active.cancellationRequested,
                           !active.requestSent else {
                         completion(.failure(
-                            ManagerError.scenarioSwitchCancelled
+                            ProviderScenarioSwitchRejectedError.cancelled
                         ))
                         return
                     }
@@ -2025,17 +2025,17 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 return
             }
             let terminalError: Error
-            let code: String
+            let code = ProviderScenarioSwitchReconciliation
+                .sourceRestoredFailureCode(timedOut: active.timedOut)
             if active.timedOut {
                 terminalError = ManagerError.scenarioSwitchTimedOut
-                code = "switch-timeout"
-            } else if active.cancellationRequested {
-                terminalError = ManagerError.scenarioSwitchCancelled
-                code = "switch-cancelled"
             } else {
-                terminalError = active.reconciliationError
-                    ?? ManagerError.scenarioSwitchInvalidResponse
-                code = "switch-not-committed"
+                // Reconcile has no terminal failure code. A requested cancel
+                // may have raced a real failure whose response was lost.
+                terminalError = ProviderScenarioSwitchRejectedError(
+                    code: code,
+                    message: "未能确认场景切换结果，原连接仍在使用"
+                )
             }
             finishSourceScenarioSwitchFailure(
                 active,
@@ -5666,7 +5666,6 @@ private enum ManagerError: LocalizedError {
     case scenarioSwitchUnavailable
     case scenarioSwitchInvalidResponse
     case scenarioSwitchSendFailed
-    case scenarioSwitchCancelled
     case scenarioSwitchTimedOut
     case interruptedTransactionRecovered
     case providerSessionLost
@@ -5699,8 +5698,6 @@ private enum ManagerError: LocalizedError {
             "XDial Provider 返回了无效的场景切换结果"
         case .scenarioSwitchSendFailed:
             "无法向 XDial Provider 发送场景切换请求"
-        case .scenarioSwitchCancelled:
-            "场景切换已取消"
         case .scenarioSwitchTimedOut:
             "场景切换准备超时，当前场景保持连接"
         case .interruptedTransactionRecovered:

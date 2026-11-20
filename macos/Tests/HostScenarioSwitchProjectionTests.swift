@@ -8,6 +8,26 @@ final class HostScenarioSwitchProjectionTests: XCTestCase {
         XCTAssertEqual(HostScenarioSwitchProjection.failureStatus(code: "switch-settings-failed", cancellationRequested: true, timedOut: false), "failed")
     }
 
+    func testRestoredSourceCannotConfirmCancellation() {
+        for timedOut in [false, true] {
+            let code = ProviderScenarioSwitchReconciliation
+                .sourceRestoredFailureCode(timedOut: timedOut)
+            for requested in [false, true] {
+                XCTAssertEqual(
+                    HostScenarioSwitchProjection.failureStatus(
+                        code: code, cancellationRequested: requested,
+                        timedOut: timedOut
+                    ),
+                    timedOut ? "timed-out" : "failed"
+                )
+            }
+        }
+        XCTAssertEqual(
+            ProviderScenarioSwitchRejectedError.cancelled.code,
+            "switch-cancelled"
+        )
+    }
+
     func testCommittedProjectionUsesCompleteProviderReport() {
         let source = report(id: "source", scenario: "old")
         var target = report(id: "target", scenario: "new")

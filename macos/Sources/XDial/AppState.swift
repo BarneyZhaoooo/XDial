@@ -1986,11 +1986,15 @@ final class AppState: ObservableObject {
             // The Provider contract guarantees that a failed/aborted staged
             // switch leaves the source transaction committed. Do not persist
             // the target Scenario or replace the source report.
-            if cancellationWasRequested {
-                engine.lastError = nil
-            } else {
-                engine.lastError = error.localizedDescription
-            }
+            let failureCode =
+                (error as? ProviderScenarioSwitchRejectedError)?.code
+            let failureStatus = HostScenarioSwitchProjection.failureStatus(
+                code: failureCode ?? "",
+                cancellationRequested: cancellationWasRequested,
+                timedOut: false
+            )
+            engine.lastError = failureStatus == "cancelled"
+                ? nil : error.localizedDescription
             if !cancellationWasRequested,
                scenarioSwitchGeneration == generation,
                let automaticIntent = inFlight.automaticIntent,
