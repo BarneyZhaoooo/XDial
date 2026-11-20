@@ -323,7 +323,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         automaticReconnectInProgress = false
         automaticReconnectTrigger = nil
         automaticReconnectAttemptKind = nil
-        pendingInitialRetryTrigger = automaticRetryTrigger
+        pendingInitialRetryTrigger = automaticRetryTrigger ?? .userConnection
         automaticReconnectTransactionID = nil
         automaticReconnectUnderlayWaitEvidence = nil
         connectedSessionTransactionID = nil
@@ -2874,12 +2874,13 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         report: ConnectionReport?
     ) -> Bool {
         guard
-            pendingInitialRetryTrigger == .automaticConnection,
+            let trigger = pendingInitialRetryTrigger,
             let report,
             report.transactionID == currentTransactionID,
             report.state == .failed,
             report.rollbackComplete,
             report.systemTakeoverRemoved,
+            trigger != .userConnection || AutomaticReconnectFailurePolicy.isTransient(report.error),
             requestedProfileJSON != nil,
             startIntentID != nil
         else {
@@ -2887,9 +2888,9 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         pendingInitialRetryTrigger = nil
         automaticReconnectInProgress = true
-        automaticReconnectTrigger = .automaticConnection
+        automaticReconnectTrigger = trigger
         automaticReconnectAttemptKind = nil
-        // The failed launch transaction opens the episode and is awaited as
+        // The failed initial transaction opens the episode and is awaited as
         // its first outcome, but it is no attempt: it can never prove recovery.
         automaticReconnectTransactionID = nil
         automaticRecoveryOutcomeGate.await(report.transactionID)
@@ -2900,12 +2901,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             ),
             at: Date()
         )
-        let reasonCode = report.error?.code ?? "launch-auto-connect-failed"
+        let reasonCode = report.error?.code ?? "initial-connection-failed"
         let reasonMessage = report.error?.message
-            ?? "Launch auto-connect failed"
+            ?? "Initial connection failed"
         let incidentID = ReconnectIncidentJournal.begin(
             at: Date(),
-            trigger: .automaticConnection,
+            trigger: trigger,
             report: report,
             reasonCode: reasonCode,
             reasonMessage: reasonMessage
@@ -2914,7 +2915,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             ? nil
             : incidentID
         appLog(
-            "Transparent Proxy launch auto-connect failed "
+            "Transparent Proxy initial connection failed trigger=\(trigger.rawValue) "
                 + "transaction=\(report.transactionID) code="
                 + ReconnectIncidentFailureCode.recordable(reasonCode)
         )

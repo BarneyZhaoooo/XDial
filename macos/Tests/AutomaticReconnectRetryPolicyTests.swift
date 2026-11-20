@@ -134,7 +134,8 @@ final class AutomaticReconnectRetryPolicyTests: XCTestCase {
 
         for report in reports {
             for trigger in [
-                AutomaticReconnectTrigger.automaticConnection,
+                AutomaticReconnectTrigger.userConnection,
+                .automaticConnection,
                 .unexpectedDisconnect,
             ] {
                 XCTAssertFalse(
@@ -181,7 +182,8 @@ final class AutomaticReconnectRetryPolicyTests: XCTestCase {
 
         for report in reports {
             for trigger in [
-                AutomaticReconnectTrigger.automaticConnection,
+                AutomaticReconnectTrigger.userConnection,
+                .automaticConnection,
                 .unexpectedDisconnect,
             ] {
                 XCTAssertEqual(
@@ -231,7 +233,8 @@ final class AutomaticReconnectRetryPolicyTests: XCTestCase {
 
         for report in reports {
             for trigger in [
-                AutomaticReconnectTrigger.automaticConnection,
+                AutomaticReconnectTrigger.userConnection,
+                .automaticConnection,
                 .unexpectedDisconnect,
             ] {
                 XCTAssertNil(policy.delay(
