@@ -52,7 +52,7 @@ final class VersionConstantContractTests: XCTestCase {
         // Stable and Debug read the same file: a newer schema is refused, never rewritten.
         // Launch goes through loadOrCreate, the path that could replace the library.
         var newer = ProfileLibrary()
-        newer.schemaVersion = 4
+        newer.schemaVersion = 5
         let sealed = try AES.GCM.seal(JSONEncoder().encode(newer), using: key, authenticating: authenticatedData)
         let written = try XCTUnwrap(sealed.combined)
         try written.write(to: file)

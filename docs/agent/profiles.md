@@ -159,3 +159,5 @@ Debug 候选包提供 `--render-settings-preview <目录>` 离线验收入口，
 同步包含线路与凭据、订阅、规则组和匹配顺序、场景及登记的 Wi-Fi、语言，以及各平台支持的连接和界面偏好。系统权限、Tailscale 节点注册、当前网络与连接记录归各设备。macOS 独立分发版的更新渠道由各安装单独选择。依赖 macOS 来源进程的规则会保留，手机和电视会在启动相关场景前提示。规则文件可经指定的原生代理线路获取；需要独立登录会话的 AnyConnect、Tailscale 下载线路目前仍有限制。
 
 三个主程序使用同一 CloudKit 私有容器 `iCloud.com.xd.xdial`。部署的记录类型为 `XDialConfiguration`，字段 `archive` 为 Asset。每个账号使用一个版本化归档，写入时检查 CloudKit change tag。开发、商店与独立分发构建默认使用 Production 环境，测试可以覆盖构建设置并使用独立记录。关闭同步会停止这台设备的读写，已存入 iCloud 的副本会保留。
+
+Mac 沿用 schema 3 保存普通配置库。收到仍使用移动端嵌套订阅的配置时，用 schema 4 一并保存原始节点、凭据与场景绑定。旧 Mac 版本会拒绝读写这类库，避免丢失已同步的订阅。
