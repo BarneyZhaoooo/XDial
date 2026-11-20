@@ -2485,7 +2485,7 @@ extension PacketTunnelProvider {
 
         let validation: @Sendable () -> Bool = { [weak self] in
             guard let self, case .available(let latest) = ScenarioSwitchCatalogStore.load(),
-                  latest.revision == catalog.revision, latest.policy == policy, latest.policy.enabled, latest.policy.placePick() == place,
+                  latest.revision == catalog.revision, latest.policy.hasSameRules(as: policy), latest.policy.enabled, latest.policy.placePick() == place,
                   self.currentEngine()?.isRunning() == true else { return false }
             self.scenarioLock.lock()
             let valid = self.runningBundle?.scenarioID == runningID && self.lastPathSignature == network

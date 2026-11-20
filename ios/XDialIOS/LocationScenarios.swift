@@ -29,6 +29,9 @@ struct ScenarioPlace: Codable, Equatable {
 final class LocationScenarios: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationScenarios()
     private let manager = CLLocationManager()
+    // One-shot fixes do not disturb the continuous background location session.
+    private let renewalManager = CLLocationManager()
+    private var renewalTimer: Timer?
     private static let placesKey = "xdial.location-scenarios.places"
     private static let enabledKey = "xdial.location-scenarios.enabled"
     private static let defaults: UserDefaults = {
@@ -61,6 +64,8 @@ final class LocationScenarios: NSObject, ObservableObject, CLLocationManagerDele
         authorization = manager.authorizationStatus
         precise = manager.accuracyAuthorization == .fullAccuracy
         manager.delegate = self
+        renewalManager.delegate = self
+        renewalManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         manager.distanceFilter = 50
         manager.pausesLocationUpdatesAutomatically = false
@@ -121,8 +126,13 @@ final class LocationScenarios: NSObject, ObservableObject, CLLocationManagerDele
     }
 
     private var shouldMonitor: Bool {
-        enabled && app?.dataUseNoticeAccepted == true && app?.isConnected == true
+        enabled && app?.dataUseNoticeAccepted == true && Self.keepsMonitoring(status: app?.engine.status ?? "", alreadyTracking: tracking)
             && ScenarioAutoPilot.isAutoEnabled && !eligiblePlaces.isEmpty
+    }
+
+    static func keepsMonitoring(status: String, alreadyTracking: Bool) -> Bool {
+        status == "connected" || status == "action-required"
+            || (alreadyTracking && status == "reconnecting")
     }
 
     func reconcile() {
@@ -135,7 +145,16 @@ final class LocationScenarios: NSObject, ObservableObject, CLLocationManagerDele
         if want && !tracking && UIApplication.shared.applicationState == .active {
             tracking = true
             manager.startUpdatingLocation()
+            renewalTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.tracking else { return }
+                    self.renewalManager.requestLocation()
+                }
+            }
         } else if !want && tracking {
+            renewalTimer?.invalidate()
+            renewalTimer = nil
+            renewalManager.stopUpdatingLocation()
             manager.stopUpdatingLocation()
             tracking = false
         }

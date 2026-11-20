@@ -3,6 +3,33 @@ import CoreLocation
 @testable import XDial
 
 final class ScenarioAutoPilotTests: XCTestCase {
+    func testPlaceRenewalPreservesRulesButDepartureAndDisableInvalidateThem() {
+        let now = Date()
+        var original = ScenarioAutoPolicy(enabled: true, wifiRules: [], regionScenarios: [:], scenarioIDs: ["home", "away"])
+        original.placeMatch = .init(scenarioID: "home", expires: now.addingTimeInterval(10))
+        var renewed = original
+        renewed.placeMatch = .init(scenarioID: "home", expires: now.addingTimeInterval(600))
+        XCTAssertTrue(renewed.hasSameRules(as: original))
+        XCTAssertEqual(renewed.placePick(at: now.addingTimeInterval(11))?.scenarioID, "home")
+        XCTAssertNil(renewed.placePick(at: now.addingTimeInterval(600)))
+        renewed.placeMatch = nil
+        XCTAssertFalse(renewed.hasSameRules(as: original))
+        renewed.placeMatch = .init(scenarioID: "away", expires: now.addingTimeInterval(600))
+        XCTAssertFalse(renewed.hasSameRules(as: original))
+        renewed = original
+        renewed.enabled = false
+        XCTAssertFalse(renewed.hasSameRules(as: original))
+    }
+
+    @MainActor
+    func testLocationSessionSurvivesReassertingButStopsAtDisconnect() {
+        XCTAssertTrue(LocationScenarios.keepsMonitoring(status: "connected", alreadyTracking: false))
+        XCTAssertTrue(LocationScenarios.keepsMonitoring(status: "reconnecting", alreadyTracking: true))
+        XCTAssertFalse(LocationScenarios.keepsMonitoring(status: "reconnecting", alreadyTracking: false))
+        XCTAssertFalse(LocationScenarios.keepsMonitoring(status: "disconnected", alreadyTracking: true))
+        XCTAssertFalse(LocationScenarios.keepsMonitoring(status: "connecting", alreadyTracking: true))
+    }
+
     func testPlaceEntryBoundaryAndDeparture() {
         let home = ScenarioPlace(scenarioID: "home", latitude: 0, longitude: 0)
         func fix(_ latitude: Double) -> CLLocation {

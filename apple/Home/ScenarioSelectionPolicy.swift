@@ -26,6 +26,13 @@ struct ScenarioAutoPolicy: Codable, Equatable, Sendable {
         return .init(scenarioID: placeMatch.scenarioID, reason: .place)
     }
 
+    /// Compare rule identity separately from the lease freshness checked at commit.
+    func hasSameRules(as previous: Self) -> Bool {
+        enabled == previous.enabled && wifiRules == previous.wifiRules
+            && regionScenarios == previous.regionScenarios && scenarioIDs == previous.scenarioIDs
+            && placeMatch?.scenarioID == previous.placeMatch?.scenarioID
+    }
+
     /// 「自动」开关。关着时扩展不判断也不切换。
     var enabled: Bool
     /// 按场景列表顺序排列，先匹配的优先。
