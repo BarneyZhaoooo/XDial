@@ -137,6 +137,8 @@ macOS 和 iOS 共同编译 [apple/Home](apple/Home) 中的拨号盘、转盘手�
 候选失败只把目标场景标为失败，并说明“仍在使用〈当前场景〉”；只有旧运行 generation 也失效，
 才把当前连接转为失败。复用 Line 是底层事务语义，不在 UI 增加技术说明。
 
+宿主主动取消且确认取消的候选安静结束。刷新同一场景失败时，提示刷新失败并说明原连接仍在使用。超时仍显示失败提示。
+
 关闭 Switch 失败提示代表确认该候选 transaction 的错误，Popover 错误条与菜单栏叹号同步
 消失，不影响当前连接。确认状态跨 Popover 重建保留；新的候选失败重新提示。
 `reconnecting`、`disconnecting`、`rollingBack`、`rolledBack`、`disabled` 与 `configDirty`
