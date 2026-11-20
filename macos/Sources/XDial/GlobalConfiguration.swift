@@ -85,6 +85,14 @@ extension ProfileLibrary {
         profiles.first { $0.profile.ruleSets.contains { $0.id == id } }
     }
 
+    /// Mobile-only archives have no desktop library. Keep existing ownership so
+    /// repeated downloads reuse the same local protocol identities.
+    func applyingCloudProfile(_ draft: Profile, library data: Data?) throws -> ProfileLibrary {
+        var result = try data.map { try JSONDecoder().decode(ProfileLibrary.self, from: $0).validated() } ?? self
+        result.applyDraft(draft, editingProfileID: result.editingProfileID)
+        return result
+    }
+
     /// Whole-catalog bindings preserve references while resource lists filter by owner.
     mutating func applyDraft(_ draft: Profile, editingProfileID: String) {
         let previousLineIDs = Set(profiles.flatMap { $0.profile.lines.map(\.id) })

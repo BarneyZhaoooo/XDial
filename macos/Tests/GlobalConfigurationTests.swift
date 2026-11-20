@@ -27,6 +27,39 @@ final class GlobalConfigurationTests: XCTestCase {
         return library
     }
 
+    func testMobileOnlyCloudUpdatesKeepDesktopSourceIdentities() throws {
+        var mobile = Profile()
+        mobile.lines = [
+            Line(id: "direct", name: "Direct", type: "direct"),
+            Line(id: "tail", name: "Tailnet", type: "tailscale"),
+        ]
+        mobile.scenarios = [Scenario(id: "mobile", name: "Mobile", defaultLineID: "tail")]
+        mobile.activeScenarioID = "mobile"
+        let first = try ProfileLibrary().applyingCloudProfile(mobile, library: nil).validated()
+        let owner = try XCTUnwrap(first.owner(ofLine: "tail")?.id)
+        var loggedIn = first
+        loggedIn.profiles[0].profile.tailscale.hostname = "xdial-local-node"
+        loggedIn.profiles[0].profile.lines[1].tailscaleAuthenticated = true
+
+        // Also exercise a save/reload between cloud deliveries.
+        let stored = try JSONEncoder().encode(loggedIn)
+        let reloaded = try JSONDecoder().decode(ProfileLibrary.self, from: stored)
+        mobile.lines[1].name = "Renamed on iPhone"
+        let second = try reloaded.applyingCloudProfile(mobile, library: nil).validated()
+        XCTAssertEqual(second.owner(ofLine: "tail")?.id, owner)
+        XCTAssertEqual(second.snapshot().lines.first { $0.id == "tail" }?.identityProfileID, owner)
+        XCTAssertEqual(second.profiles[0].profile.tailscale.hostname, "xdial-local-node")
+        XCTAssertEqual(second.snapshot().lines.first { $0.id == "tail" }?.name, "Renamed on iPhone")
+
+        // A real desktop archive supplies its own ownership.
+        var remote = ProfileLibrary()
+        remote = try remote.applyingCloudProfile(mobile, library: nil).validated()
+        let remoteData = try JSONEncoder().encode(remote)
+        let adopted = try second.applyingCloudProfile(remote.snapshot(), library: remoteData).validated()
+        XCTAssertEqual(adopted.owner(ofLine: "tail")?.id, remote.owner(ofLine: "tail")?.id)
+        XCTAssertNotEqual(adopted.owner(ofLine: "tail")?.id, owner)
+    }
+
     func testMobileSubscriptionSurvivesEncryptedLibraryRoundTrip() throws {
         var library = try legacy([source()]).validated()
         var draft = library.snapshot()

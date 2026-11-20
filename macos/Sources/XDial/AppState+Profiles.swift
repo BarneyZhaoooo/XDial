@@ -282,8 +282,7 @@ extension AppState {
 
     func applyCloudConfiguration(_ archive: CloudConfiguration) throws {
         guard !isBusy, engine.status == "disconnected" else { throw CloudSyncIssue("断开后将继续同步 · Sync will resume after disconnect") }
-        var library = try archive.library.map { try JSONDecoder().decode(ProfileLibrary.self, from: $0).validated() } ?? ProfileLibrary()
-        library.applyDraft(archive.profile, editingProfileID: library.editingProfileID)
+        var library = try profileLibrary.applyingCloudProfile(archive.profile, library: archive.library)
         for index in library.profiles.indices {
             let previous = profileLibrary.profiles.first { $0.id == library.profiles[index].id }
             library.profiles[index].profile = library.profiles[index].profile.restoringDeviceState(from: previous?.profile)
