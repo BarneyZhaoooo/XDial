@@ -2039,49 +2039,39 @@ extension PacketTunnelProvider {
             return .failure(scenarioError("自动判断已失效"))
         }
         let remoteChanges = targetRemote != sourceRemote
-        if remoteChanges, let error = applyRunningNetworkSettings(
-            buildNetworkSettings(remoteAddress: targetRemote, alsoExcluding: [sourceRemote]),
-            generation: generation
-        ) {
-            return .failure(error)
-        }
-
-        do { _ = try deadline.probeTimeoutMS() } catch { return .failure(error) }
-        let staged = canStageScenarioSwitch(from: source, to: target)
-        let result: Result<TunnelScenarioState.SwitchRecord.Mode, Error>
-        if staged {
-            result = stagedScenarioSwitch(
-                engine, to: target, dialAddress: targetRemote, underlay: underlay, generation: generation,
-                deadline: deadline, automaticValidation: automaticValidation
-            ).map { .staged }
-        } else {
-            result = restartScenarioSwitch(
-                engine,
-                from: source, sourceDialAddress: sourceRemote,
-                to: target, targetDialAddress: targetRemote,
-                underlay: underlay, generation: generation,
-                deadline: deadline, automaticValidation: automaticValidation
-            ).map { .restart }
-        }
-
-        switch result {
-        case .success(let mode):
-            if remoteChanges {
-                // 收尾失败不影响新场景：多排除一条旧服务器路由没有害处。
-                _ = applyRunningNetworkSettings(
-                    buildNetworkSettings(remoteAddress: targetRemote),
-                    generation: generation
-                )
+        return ScenarioSwitchNetworkTransaction.run {
+            if remoteChanges, let error = applyRunningNetworkSettings(
+                buildNetworkSettings(remoteAddress: targetRemote, alsoExcluding: [sourceRemote]),
+                generation: generation
+            ) {
+                throw error
             }
-            return .success(ScenarioSwitchOutcome(bundle: target, remoteAddress: targetRemote, mode: mode))
-        case .failure(let error):
-            if remoteChanges, phase(for: generation) == .running {
-                _ = applyRunningNetworkSettings(
-                    buildNetworkSettings(remoteAddress: sourceRemote),
-                    generation: generation
-                )
+        } operation: {
+            _ = try deadline.probeTimeoutMS()
+            let mode: TunnelScenarioState.SwitchRecord.Mode
+            if canStageScenarioSwitch(from: source, to: target) {
+                try stagedScenarioSwitch(
+                    engine, to: target, dialAddress: targetRemote, underlay: underlay,
+                    generation: generation, deadline: deadline, automaticValidation: automaticValidation
+                ).get()
+                mode = .staged
+            } else {
+                try restartScenarioSwitch(
+                    engine, from: source, sourceDialAddress: sourceRemote,
+                    to: target, targetDialAddress: targetRemote, underlay: underlay,
+                    generation: generation, deadline: deadline, automaticValidation: automaticValidation
+                ).get()
+                mode = .restart
             }
-            return .failure(error)
+            return ScenarioSwitchOutcome(bundle: target, remoteAddress: targetRemote, mode: mode)
+        } settle: { committed in
+            guard remoteChanges, phase(for: generation) == .running else { return }
+            // One owner restores source settings for every failure, including preparation
+            // and deadline failures. Successful commits drop the old server exclusion.
+            _ = applyRunningNetworkSettings(
+                buildNetworkSettings(remoteAddress: committed ? targetRemote : sourceRemote),
+                generation: generation
+            )
         }
     }
 

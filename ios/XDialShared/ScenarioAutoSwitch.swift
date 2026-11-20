@@ -28,6 +28,27 @@ struct ScenarioSwitchDeadline: Sendable {
     }
 }
 
+/// The caller owns network settings for the whole switch, including preparation errors.
+/// Every exit settles once; only a committed operation may retain candidate settings.
+enum ScenarioSwitchNetworkTransaction {
+    static func run<Value>(
+        prepare: () throws -> Void,
+        operation: () throws -> Value,
+        settle: (Bool) -> Void
+    ) -> Result<Value, Error> {
+        var committed = false
+        defer { settle(committed) }
+        do {
+            try prepare()
+            let value = try operation()
+            committed = true
+            return .success(value)
+        } catch {
+            return .failure(error)
+        }
+    }
+}
+
 // MARK: - 判断规则
 
 /// Main actor owned catalog build state. Policy changes survive the first build;
