@@ -351,22 +351,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 appLog(
                     "Transparent Proxy underlay default=\(snapshot.defaultInterface.name)"
                 )
-                self.checkExtensionReadiness(purpose: .connection) {
-                    [weak self] result in
-                    guard let self else { return }
-                    guard self.startIntentID == intentID else { return }
-                    switch result {
-                    case .success:
-                        self.configureAndStart(
-                            profileJSON: profileJSON,
-                            underlay: snapshot,
-                            intentID: intentID,
-                            debugFailureStage: failureStage
-                        )
-                    case let .failure(error):
-                        self.publishFailure(error)
-                    }
-                }
+                self.checkReadinessAndConfigure(
+                    profileJSON: profileJSON,
+                    underlay: snapshot,
+                    intentID: intentID,
+                    debugFailureStage: failureStage
+                )
             case let .failure(error):
                 self.publishFailure(error)
             }
@@ -1362,6 +1352,30 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             }
         }
         completion?(result)
+    }
+
+    /// Initial starts and recovery before a manager exists share the same
+    /// extension readiness and preferences preparation, including cancellation.
+    private func checkReadinessAndConfigure(
+        profileJSON: String,
+        underlay: HostUnderlaySnapshot,
+        intentID: UUID,
+        debugFailureStage: String?
+    ) {
+        checkExtensionReadiness(purpose: .connection) { [weak self] result in
+            guard let self, self.startIntentID == intentID else { return }
+            switch result {
+            case .success:
+                self.configureAndStart(
+                    profileJSON: profileJSON,
+                    underlay: underlay,
+                    intentID: intentID,
+                    debugFailureStage: debugFailureStage
+                )
+            case let .failure(error):
+                self.publishFailure(error)
+            }
+        }
     }
 
     private func configureAndStart(
@@ -4389,7 +4403,6 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         guard
             currentTransactionID == failedTransactionID,
             requestedProfileJSON != nil,
-            let manager,
             startIntentID != nil
         else {
             abandonScheduledAttempt(scheduledKind)
@@ -4525,13 +4538,25 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                             + stableSnapshot.defaultInterface.name
                     )
                     self.publishRuntimeStatus("reconnecting", error: nil)
-                    self.startConnection(
-                        manager,
-                        profileJSON: prepared.profileJSON,
-                        underlay: stableSnapshot,
-                        intentID: intentID,
-                        debugFailureStage: nil
-                    )
+                    if let manager = self.manager {
+                        self.startConnection(
+                            manager,
+                            profileJSON: prepared.profileJSON,
+                            underlay: stableSnapshot,
+                            intentID: intentID,
+                            debugFailureStage: nil
+                        )
+                    } else {
+                        // Underlay capture may have failed before the first
+                        // manager was created. The attempt is already counted;
+                        // prepare it exactly like an initial connection.
+                        self.checkReadinessAndConfigure(
+                            profileJSON: prepared.profileJSON,
+                            underlay: stableSnapshot,
+                            intentID: intentID,
+                            debugFailureStage: nil
+                        )
+                    }
                 }
             case let .failure(error):
                 guard self.automaticReconnectPreparationGate
