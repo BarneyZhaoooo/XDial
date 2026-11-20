@@ -321,17 +321,21 @@ struct MobileSettingsView: View {
     }
 
     private var diagnosticReport: String {
-        MobileDiagnosticsService.report(
+        let stage = app.engine.dataPathRechecking
+            ? app.tr("正在重新检测出口与分流", "Rechecking connectivity and routing")
+            : app.engine.dataPathSummary
+        let warning = LineProbeReading.warning(app.engine.lineProbeReadings, isChinese: app.language == .zh)
+        let probeSummary = [stage, warning].compactMap { $0 }.joined(separator: " · ")
+        return MobileDiagnosticsService.report(
             version: version,
             status: diagnosticStatus,
             systemProfileInstalled: app.helperInstalled,
             profile: app.profile,
             lastError: app.engine.lastError,
-            dataPathSummary: app.engine.dataPathRechecking
-                ? app.tr("正在重新检测出口与分流", "Rechecking connectivity and routing")
-                : app.engine.dataPathSummary,
+            dataPathSummary: probeSummary.isEmpty ? nil : probeSummary,
             autoScenarioSummary: autoScenarioSummary,
             onDemandStatus: systemOnDemandStatusText,
+            connectOnOpen: app.connectOnOpenEnabled,
             environment: MobileDiagnosticsService.environmentSummary(version: version),
             scenarioName: app.activeScenario?.name,
             timeline: timelineSnapshot,
