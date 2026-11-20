@@ -148,8 +148,8 @@ enum DataUseNotice {
             Section(title: t("只留在这台设备上", "What stays on this device"), symbol: "iphone", points: [
                 t("账号和密码保存在系统钥匙串里，只用来连接你配置的线路。",
                   "Accounts and passwords are kept in the system keychain and used only to connect your lines."),
-                t("Wi-Fi 名称只在本机用来按 Wi-Fi 自动选场景，不会发出去；不会请求定位权限。",
-                  "The Wi-Fi name is used on the device only, to pick a scenario by Wi-Fi, and is never sent; XDial does not ask for location access."),
+                t("Wi-Fi 名称仅在本机匹配。若启用地点场景，连接 VPN 时会在后台比对已保存地点。坐标仅用于本机匹配，不随配置导出。",
+                  "Wi-Fi names are matched on device. If you enable location scenarios, XDial checks saved places in the background while connected. Coordinates are matched locally and excluded from configuration exports."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开设备。",
                   "Connection history and diagnostics (including exit IP addresses) stay on the device and leave it only when you export or share them."),
             ]),

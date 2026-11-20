@@ -7,29 +7,30 @@ import WidgetKit
 struct ConnectionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: XDialConnectionAttributes.self) { context in
-            XDialActivityLockScreenView(state: context.state, tint: Self.tint(for: context.state.phase))
+            XDialActivityLockScreenView(state: context.state.displayed(isStale: context.isStale), tint: Self.tint(for: context.state.phase))
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
-            let tint = Self.tint(for: context.state.phase)
+            let state = context.state.displayed(isStale: context.isStale)
+            let tint = Self.tint(for: state.phase)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    DialGlyph(filled: context.state.phase != .working, color: tint)
+                    DialGlyph(filled: state.phase != .working, color: tint)
                         .frame(width: 44, height: 44)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(context.state.title)
+                        Text(state.title)
                             .font(.headline)
                             .lineLimit(1)
-                        if let detail = context.state.detail, !detail.isEmpty {
+                        if let detail = state.detail, !detail.isEmpty {
                             Text(detail)
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(tint)
                                 .lineLimit(1)
                         }
-                        Text(context.state.scenarioName)
+                        Text(state.scenarioName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -37,7 +38,7 @@ struct ConnectionLiveActivity: Widget {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    XDialElapsedText(connectedAt: context.state.connectedAt)
+                    XDialElapsedText(connectedAt: state.connectedAt)
                         .font(.system(.title3, design: .rounded).monospacedDigit())
                         .foregroundStyle(tint)
                         .frame(maxHeight: .infinity)
@@ -45,8 +46,8 @@ struct ConnectionLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 10) {
-                        if context.state.connectedAt != nil {
-                            SpeedRow(state: context.state, tint: tint)
+                        if state.connectedAt != nil {
+                            SpeedRow(state: state, tint: tint)
                         }
                         DisconnectButton(title: context.attributes.disconnectTitle)
                     }
@@ -54,15 +55,15 @@ struct ConnectionLiveActivity: Widget {
             } compactLeading: {
                 // 收起时只放网速：左边下载，右边上传，各看各的。哪一侧没有速度可显示就空着不占地方，
                 // 两侧都没有时灵动岛就是原样。
-                if let speed = context.state.compactDownloadSpeed {
+                if let speed = state.compactDownloadSpeed {
                     CompactSpeed(symbol: "arrow.down", value: speed, tint: tint)
                 }
             } compactTrailing: {
-                if let speed = context.state.compactUploadSpeed {
+                if let speed = state.compactUploadSpeed {
                     CompactSpeed(symbol: "arrow.up", value: speed, tint: tint)
                 }
             } minimal: {
-                DialGlyph(filled: context.state.phase != .working, color: tint)
+                DialGlyph(filled: state.phase != .working, color: tint)
                     .frame(width: 20, height: 20)
             }
             .keylineTint(tint)

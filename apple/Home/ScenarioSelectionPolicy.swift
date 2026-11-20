@@ -13,6 +13,19 @@ struct ScenarioAutoPolicy: Codable, Equatable, Sendable {
         }
     }
 
+    struct PlaceMatch: Codable, Equatable, Sendable {
+        let scenarioID: String
+        let expires: Date
+    }
+
+    var placeMatch: PlaceMatch? = nil
+
+    func placePick(at now: Date = Date()) -> ScenarioAutoPick? {
+        guard enabled, let placeMatch, placeMatch.expires > now,
+              scenarioIDs.contains(placeMatch.scenarioID) else { return nil }
+        return .init(scenarioID: placeMatch.scenarioID, reason: .place)
+    }
+
     /// 「自动」开关。关着时扩展不判断也不切换。
     var enabled: Bool
     /// 按场景列表顺序排列，先匹配的优先。
@@ -23,6 +36,7 @@ struct ScenarioAutoPolicy: Codable, Equatable, Sendable {
     var scenarioIDs: [String]
 
     enum CodingKeys: String, CodingKey {
+        case placeMatch = "place_match"
         case enabled
         case wifiRules = "wifi_rules"
         case regionScenarios = "region_scenarios"
@@ -62,6 +76,7 @@ struct ScenarioAutoPick: Codable, Equatable, Sendable {
         case wifi(String)
         /// 按网络出口所在地。
         case country(String)
+        case place
     }
 
     let scenarioID: String
@@ -81,10 +96,10 @@ struct ScenarioAutoPick: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         scenarioID = try container.decode(String.self, forKey: .scenarioID)
-        let value = try container.decode(String.self, forKey: .reasonValue)
         switch try container.decode(String.self, forKey: .reasonKind) {
-        case "wifi": reason = .wifi(value)
-        case "country": reason = .country(value)
+        case "place": reason = .place
+        case "wifi": reason = .wifi(try container.decode(String.self, forKey: .reasonValue))
+        case "country": reason = .country(try container.decode(String.self, forKey: .reasonValue))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .reasonKind, in: container, debugDescription: "unknown pick reason"
@@ -96,6 +111,8 @@ struct ScenarioAutoPick: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(scenarioID, forKey: .scenarioID)
         switch reason {
+        case .place:
+            try container.encode("place", forKey: .reasonKind)
         case .wifi(let ssid):
             try container.encode("wifi", forKey: .reasonKind)
             try container.encode(ssid, forKey: .reasonValue)

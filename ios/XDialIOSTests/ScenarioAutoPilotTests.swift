@@ -1,7 +1,35 @@
 import XCTest
+import CoreLocation
 @testable import XDial
 
 final class ScenarioAutoPilotTests: XCTestCase {
+    func testPlaceEntryBoundaryAndDeparture() {
+        let home = ScenarioPlace(scenarioID: "home", latitude: 0, longitude: 0)
+        func fix(_ latitude: Double) -> CLLocation {
+            CLLocation(coordinate: .init(latitude: latitude, longitude: 0), altitude: 0,
+                       horizontalAccuracy: 50, verticalAccuracy: 10, timestamp: Date())
+        }
+        XCTAssertEqual(ScenarioPlace.match(fix(0), in: [home], previous: nil), "home")
+        XCTAssertNil(ScenarioPlace.match(fix(0.0027), in: [home], previous: nil))
+        XCTAssertEqual(ScenarioPlace.match(fix(0.0027), in: [home], previous: "home"), "home")
+        XCTAssertNil(ScenarioPlace.match(fix(0.004), in: [home], previous: "home"))
+    }
+
+    func testPlaceMatchRequiresFreshEnabledExistingScenario() throws {
+        let now = Date()
+        var policy = ScenarioAutoPolicy(enabled: true, wifiRules: [], regionScenarios: [:], scenarioIDs: ["home"])
+        policy.placeMatch = .init(scenarioID: "home", expires: now.addingTimeInterval(1))
+        XCTAssertEqual(policy.placePick(at: now)?.reason, .place)
+        let pick = try XCTUnwrap(policy.placePick(at: now))
+        XCTAssertEqual(try JSONDecoder().decode(ScenarioAutoPick.self, from: JSONEncoder().encode(pick)), pick)
+        XCTAssertNil(policy.placePick(at: now.addingTimeInterval(1)))
+        policy.enabled = false
+        XCTAssertNil(policy.placePick(at: now))
+        policy.enabled = true
+        policy.scenarioIDs = []
+        XCTAssertNil(policy.placePick(at: now))
+    }
+
     private let scenarios = SeedFixture.profile().scenarios
     private let regions = ["JP": "home-region", "SG": "harbor", "*": "abroad"]
 

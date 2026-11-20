@@ -18,6 +18,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>XDial uses your location to match saved places and switch VPN scenarios, including while connected in the background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>XDialAppGroupIdentifier</key>
 	<string>$(XDIAL_APP_GROUP)</string>
 	<key>XDialPrivacyPolicyURL</key>

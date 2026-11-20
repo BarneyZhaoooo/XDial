@@ -139,6 +139,7 @@ struct HomeView: View {
         }
         .onChange(of: autoScenario) { _, isOn in
             showingAutoScenarios = false
+            LocationScenarios.shared.reconcile()
             app.updateScenarioAutoPolicy()
             if isOn { Task { await refreshAutoScenario() } }
         }
@@ -250,6 +251,8 @@ struct HomeView: View {
             return app.tr("没判断出来，保持当前选择", "Couldn't tell; keeping the current choice")
         }
         switch pick.reason {
+        case .place:
+            return app.tr("位于场景登记的地点", "At the saved place for this scenario")
         case .wifi(let ssid) where ssid.isEmpty:
             return app.tr("已连上场景登记的 Wi-Fi", "On a Wi-Fi registered for this scenario")
         case .wifi(let ssid):

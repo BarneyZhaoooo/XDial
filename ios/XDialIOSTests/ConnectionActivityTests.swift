@@ -18,6 +18,24 @@ final class ConnectionActivityTests: XCTestCase {
         )
     }
 
+    func testSpeedExpiresWithoutLosingConnectionState() {
+        let now = Date()
+        var sample = state(download: 2_000, upload: 3_000)
+        // Activities left by older builds have no timestamp.
+        XCTAssertNil(sample.displayed(isStale: false, at: now).compactDownloadSpeed)
+        sample.speedSampledAt = now
+        XCTAssertEqual(sample.displayed(isStale: false, at: now), sample)
+        for expired in [sample.displayed(isStale: true, at: now),
+                        sample.displayed(isStale: false, at: now.addingTimeInterval(6))] {
+            XCTAssertNil(expired.downloadBytesPerSecond)
+            XCTAssertNil(expired.uploadBytesPerSecond)
+            XCTAssertEqual(expired.connectedAt, sample.connectedAt)
+            XCTAssertEqual(expired.phase, sample.phase)
+        }
+        sample.speedSampledAt = now.addingTimeInterval(7)
+        XCTAssertEqual(sample.displayed(isStale: false, at: now.addingTimeInterval(8)).compactUploadSpeed, 3_000)
+    }
+
     func testIdleConnectionLeavesTheIslandEmpty() {
         for idle in [state(download: nil, upload: nil), state(download: 0, upload: 0), state(download: 999, upload: 999)] {
             XCTAssertNil(idle.compactDownloadSpeed)

@@ -14,11 +14,13 @@ enum MobileAppRuntime {
         let state = makeState()
         // 已连接期间由 VPN 扩展按这份规则判断，App 被挂起时也照样生效。
         state.scenarioAutoPolicyProvider = { profile in
-            ScenarioAutoPolicy.make(
+            var policy = ScenarioAutoPolicy.make(
                 profile: profile,
                 enabled: ScenarioAutoPilot.isAutoEnabled,
                 regionScenarios: MobileSeed.bundled?.regionScenarios ?? [:]
             )
+            policy.placeMatch = LocationScenarios.shared.match
+            return policy
         }
         scenarioStateObserver = DarwinNotificationObserver(
             name: TunnelScenarioStateStore.changedNotification

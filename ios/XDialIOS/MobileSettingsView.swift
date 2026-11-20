@@ -75,6 +75,8 @@ struct MobileSettingsView: View {
                         MobileAppRuntime.connectionActivity?.preferenceChanged()
                     }
                     .accessibilityIdentifier("settings-live-activity")
+                    NavigationLink(app.tr("地点场景", "Location scenarios")) { LocationScenarioSettings() }
+                        .accessibilityIdentifier("settings-place-scenarios")
                     if showsSystemOnDemandStatus {
                         LabeledContent(app.tr("当前状态", "Status")) {
                             Text(systemOnDemandStatusText)

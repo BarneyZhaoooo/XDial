@@ -37,24 +37,39 @@ final class ConnectionActivityController {
         startSamplingIfNeeded()
     }
 
-    /// App 还在运行时由它每两秒采一次网速；App 被挂起后由 VPN 扩展接着刷新。
+    /// App 还在运行时由它每两秒采一次网速；App 被挂起后由系统标记读数过期。
     private func startSamplingIfNeeded() {
         guard sampler == nil else { return }
         sampler = Task { [weak self] in
             var estimator = TrafficRateEstimator()
+            var lastSample: Date?
+            var connectionStart: Date?
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
-                guard self.app.isConnected, Self.isEnabledByUser else { continue }
+                guard self.app.isConnected, Self.isEnabledByUser else {
+                    lastSample = nil
+                    continue
+                }
+                let start = self.app.engine.connectedAt
                 let totals = await self.app.trafficTotals()
-                guard let rate = estimator.update(totals, sampledAt: Date()),
+                let now = Date()
+                let interval = lastSample.map { now.timeIntervalSince($0) }
+                let continuous = connectionStart == start && interval.map {
+                    $0 > 0 && $0 < XDialConnectionAttributes.ContentState.speedLifetime
+                } == true
+                connectionStart = start
+                lastSample = totals == nil ? nil : now
+                guard let rate = estimator.update(totals, sampledAt: now), continuous,
+                      self.app.isConnected, self.app.engine.connectedAt == start,
                       rate.downloadBytesPerSecond != nil else { continue }
                 for activity in Activity<XDialConnectionAttributes>.activities {
                     var state = activity.content.state
                     guard state.connectedAt != nil else { continue }
                     state.downloadBytesPerSecond = rate.downloadBytesPerSecond
                     state.uploadBytesPerSecond = rate.uploadBytesPerSecond
-                    await activity.update(ActivityContent(state: state, staleDate: nil))
+                    state.speedSampledAt = now
+                    await activity.update(ActivityContent(state: state, staleDate: state.speedExpiresAt))
                 }
             }
         }
@@ -128,12 +143,13 @@ final class ConnectionActivityController {
             return
         }
         var state = desired
-        if let current = activities.first, state.connectedAt != nil {
+        if let current = activities.first, state.connectedAt != nil, state.connectedAt == current.content.state.connectedAt {
             // 网速由采样单独刷新，这里更新状态时保留上一次的读数。
+            state.speedSampledAt = current.content.state.speedSampledAt
             state.downloadBytesPerSecond = current.content.state.downloadBytesPerSecond
             state.uploadBytesPerSecond = current.content.state.uploadBytesPerSecond
         }
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: state.speedExpiresAt)
         if let current = activities.first {
             // 只保留一个，多出来的（比如上次没来得及结束的）收掉。
             for extra in activities.dropFirst() {
