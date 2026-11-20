@@ -1797,7 +1797,7 @@ final class AppState: ObservableObject {
                 || mode != .select),
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
-            engine.cancelScenarioSwitch()
+            engine.cancelScenarioSwitch(reason: .superseded)
         }
         driveScenarioSwitchIfPossible()
         return true
@@ -2179,7 +2179,7 @@ final class AppState: ObservableObject {
         if scenarioSwitchInFlight != nil,
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
-            engine.cancelScenarioSwitch()
+            engine.cancelScenarioSwitch(reason: .userCancelled)
         }
     }
 
@@ -2187,7 +2187,7 @@ final class AppState: ObservableObject {
         invalidateAutomaticScenarioSwitchRetry()
         scenarioSwitchGeneration += 1
         if scenarioSwitchInFlight != nil {
-            engine.cancelScenarioSwitch()
+            engine.cancelScenarioSwitch(reason: .disconnected)
         }
         scenarioSwitchInFlight = nil
         scenarioSwitchCancellationRequested = false
@@ -2809,7 +2809,7 @@ final class AppState: ObservableObject {
         if scenarioSwitchInFlight?.automaticIntent == intent,
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
-            engine.cancelScenarioSwitch()
+            engine.cancelScenarioSwitch(reason: .sleep)
         }
     }
 
@@ -2863,7 +2863,7 @@ final class AppState: ObservableObject {
         if scenarioSwitchInFlight?.automaticIntent == intent,
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
-            engine.cancelScenarioSwitch()
+            engine.cancelScenarioSwitch(reason: .networkChanged)
         }
     }
 

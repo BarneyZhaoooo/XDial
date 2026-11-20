@@ -834,6 +834,9 @@ struct MainPopover: View {
         let targetName = projection.candidateReport.scenario.name.isEmpty
             ? scenarioName(for: projection.toScenarioID)
             : projection.candidateReport.scenario.name
+        let title = projection.fromScenarioID == projection.toScenarioID
+            ? state.tr("刷新“\(sourceName)”失败，原连接仍在使用", "Couldn’t refresh “\(sourceName)”. The existing connection is still active.")
+            : state.tr("切换到“\(targetName)”失败，仍在使用“\(sourceName)”", "Couldn’t switch to “\(targetName)”; still using “\(sourceName)”")
         let detail = scenarioSwitchFailureDetail(projection)
         return HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.circle.fill")
@@ -841,12 +844,7 @@ struct MainPopover: View {
                 .foregroundStyle(dangerColor)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 4) {
-                Text(
-                    state.tr(
-                        "切换到“\(targetName)”失败，仍在使用“\(sourceName)”",
-                        "Couldn’t switch to “\(targetName)”; still using “\(sourceName)”"
-                    )
-                )
+                Text(title)
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(.primary.opacity(0.88))
                 .fixedSize(horizontal: false, vertical: true)

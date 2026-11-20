@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Libbox
 import Network
+import OSLog
 @preconcurrency import NetworkExtension
 import SystemConfiguration
 @preconcurrency import SystemExtensions
@@ -470,13 +471,21 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
     }
 
+    private func logScenarioSwitchCancellation(
+        _ active: HostScenarioSwitch, reason: ScenarioSwitchCancellationReason
+    ) {
+        let logger = Logger(subsystem: XDialBuildIdentity.applicationIdentifier, category: "scenario-switch")
+        logger.notice("scenario-switch-cancel-request candidate=\(active.targetTransactionID, privacy: .public) reason=\(reason.rawValue, privacy: .public) automatic=\(active.networkEpochID != nil) sent=\(active.requestSent)")
+    }
+
     /// Cancellation is scoped to the staged switch. It must not stop the
     /// Network Extension session or alter the source transaction.
-    func cancelScenarioSwitch() {
+    func cancelScenarioSwitch(reason: ScenarioSwitchCancellationReason) {
         guard var active = activeScenarioSwitch,
               !active.cancellationRequested else {
             return
         }
+        logScenarioSwitchCancellation(active, reason: reason)
         if !active.requestSent {
             activeScenarioSwitch = nil
             active.timeoutWorkItem?.cancel()
@@ -672,6 +681,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         active.timeoutWorkItem?.cancel()
         active.timeoutWorkItem = nil
+        logScenarioSwitchCancellation(active, reason: .timeout)
         active.timedOut = true
         if !active.requestSent {
             activeScenarioSwitch = nil
@@ -962,7 +972,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
 
     func stop() {
         if activeScenarioSwitch != nil {
-            cancelScenarioSwitch()
+            cancelScenarioSwitch(reason: .disconnected)
             if let active = activeScenarioSwitch {
                 activeScenarioSwitch = nil
                 active.timeoutWorkItem?.cancel()
@@ -1758,7 +1768,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                     code: active.timedOut
                         ? "switch-timeout"
                         : response.code ?? "switch-failed",
-                    message: response.message
+                    message: active.timedOut ? ManagerError.scenarioSwitchTimedOut.localizedDescription : response.message
                 )
                 return
             }
@@ -2117,7 +2127,9 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         recordScenarioSwitch(
             active,
-            status: active.timedOut ? "timed-out" : "failed",
+            status: HostScenarioSwitchProjection.failureStatus(
+                code: code, cancellationRequested: active.cancellationRequested, timedOut: active.timedOut
+            ),
             activeTransactionID: active.sourceTransactionID,
             code: code,
             message: message

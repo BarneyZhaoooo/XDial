@@ -1,6 +1,13 @@
 import XCTest
 
 final class HostScenarioSwitchProjectionTests: XCTestCase {
+    func testOnlyAcknowledgedCancellationsAreQuiet() {
+        XCTAssertEqual(HostScenarioSwitchProjection.failureStatus(code: "switch-cancelled", cancellationRequested: true, timedOut: false), "cancelled")
+        XCTAssertEqual(HostScenarioSwitchProjection.failureStatus(code: "switch-cancelled", cancellationRequested: true, timedOut: true), "timed-out")
+        XCTAssertEqual(HostScenarioSwitchProjection.failureStatus(code: "switch-cancelled", cancellationRequested: false, timedOut: false), "failed")
+        XCTAssertEqual(HostScenarioSwitchProjection.failureStatus(code: "switch-settings-failed", cancellationRequested: true, timedOut: false), "failed")
+    }
+
     func testCommittedProjectionUsesCompleteProviderReport() {
         let source = report(id: "source", scenario: "old")
         var target = report(id: "target", scenario: "new")
