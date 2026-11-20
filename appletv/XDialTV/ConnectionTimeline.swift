@@ -353,6 +353,18 @@ final class ConnectionTimelineStore: @unchecked Sendable {
         }
     }
 
+    // Publish the intent before changing VPN preferences: the extension can be
+    // stopped by iOS as soon as the preferences change.
+    func recordAppStopRequest(fallbackSession id: String) {
+        let event = ConnectionTimeline.Event(t: ConnectionTimeline.nowMilliseconds(), src: .app,
+                                             stage: "app.stop_requested")
+        Self.queue.sync { persist(event, session: id, preferActiveSession: true) }
+    }
+
+    func appRequestedStop(session id: String) -> Bool {
+        Self.queue.sync { read(.app).sessions.first { $0.id == id }?.stopRequestedAt != nil }
+    }
+
     /// Test helper: waits until queued appends have been attempted.
     /// Production shutdown uses the asynchronous endActiveSession completion.
     func flush() {

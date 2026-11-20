@@ -12,8 +12,8 @@ final class ConnectionNoticePresenter: NSObject, UNUserNotificationCenterDelegat
 
 struct ConnectionNoticeSettings: View {
     let chinese: Bool
-    @AppStorage(ConnectionNotice.disconnect.rawValue, store: ConnectionNotice.preferences) private var disconnect = false
-    @AppStorage(ConnectionNotice.scenario.rawValue, store: ConnectionNotice.preferences) private var scenario = false
+    @AppStorage(ConnectionNotice.disconnect.preferenceKey, store: ConnectionNotice.preferences) private var disconnect = false
+    @AppStorage(ConnectionNotice.scenario.preferenceKey, store: ConnectionNotice.preferences) private var scenario = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var denied = false
     @State private var requestFailed = false
