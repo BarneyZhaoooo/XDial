@@ -45,6 +45,15 @@
       "notices": "mac-74-notices.txt",
       "configuration": "AppStore",
       "sourceFiles": 945
+    },
+    "tv-75": {
+      "source": "xdial-210eb609c6d4353aa420f01ae72cef5ff47a1a2b.tar.gz",
+      "version": "1.0",
+      "commit": "210eb609c6d4353aa420f01ae72cef5ff47a1a2b",
+      "notices": "tv-75-notices.txt",
+      "configuration": "Release",
+      "storeCandidate": true,
+      "sourceFiles": 959
     }
   },
   "modules": {

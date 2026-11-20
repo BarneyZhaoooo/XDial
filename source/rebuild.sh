@@ -8,6 +8,7 @@ configuration=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[
 number=${key#*-}
 case "$key" in
   ios-*) scheme=XDialIOS; folder=ios; platform=iOS ;;
+  tv-*) scheme=XDialTV; folder=appletv; platform=tvOS ;;
   mac-*) scheme=XDialStore; folder=macos; platform=macOS ;;
   *) echo "Unknown platform" >&2; exit 2 ;;
 esac
@@ -31,6 +32,11 @@ if [ "$platform" = iOS ]; then
     else
         python3 "$kit/prepare-ios.py" "$PWD" "$kit/$key-notices.txt" "$PWD/build/store-plists"
     fi
+elif [ "$platform" = tvOS ]; then
+    make public-content-gate libbox-xcframework
+    mkdir -p appletv/StoreResources
+    cp "$kit/$key-notices.txt" appletv/StoreResources/ThirdPartyNotices.txt
+    xcodegen generate --spec appletv/project.yml
 else
     make public-content-gate libbox-macos-xcframework macos/AppIcon.icns
     cp "$kit/$1-notices.txt" macos/Store/Host/ThirdPartyNotices.txt
