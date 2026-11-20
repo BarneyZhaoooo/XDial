@@ -1,9 +1,12 @@
+import Foundation
+import SystemConfiguration
+
 struct NetworkChangeNoticeBaseline {
     struct Path: Equatable {
         let available: Bool
         let usesWiFi: Bool
         let interfaces: [String]
-        let gateways: [String]
+        var gateways: [String]
     }
 
     private var lastPath: Path?
@@ -20,5 +23,54 @@ struct NetworkChangeNoticeBaseline {
         if previousPath != path { return true }
         guard path.usesWiFi, let previousSSID, let ssid else { return false }
         return ssid != previousSSID
+    }
+}
+
+/// Observes the same global keys used to sample routers, including while idle.
+/// The callback only feeds the host's existing notice settlement task.
+final class NetworkGatewayNoticeMonitor {
+    private var store: SCDynamicStore?
+
+    private final class Callback {
+        let changed: @MainActor () -> Void
+        init(_ changed: @escaping @MainActor () -> Void) { self.changed = changed }
+    }
+
+    private static let keys = [
+        "State:/Network/Global/IPv4", "State:/Network/Global/IPv6",
+    ]
+
+    init(onChange: @escaping @MainActor () -> Void) {
+        let callback = Unmanaged.passRetained(Callback(onChange))
+        var context = SCDynamicStoreContext(
+            version: 0, info: callback.toOpaque(), retain: nil,
+            release: { info in Unmanaged<Callback>.fromOpaque(info).release() },
+            copyDescription: nil
+        )
+        guard let store = SCDynamicStoreCreate(
+            nil, "XDial network notices" as CFString,
+            { _, _, info in
+                guard let info else { return }
+                let callback = Unmanaged<Callback>.fromOpaque(info).takeUnretainedValue()
+                DispatchQueue.main.async { callback.changed() }
+            }, &context
+        ) else {
+            callback.release()
+            return
+        }
+        guard SCDynamicStoreSetNotificationKeys(store, Self.keys as CFArray, nil),
+              SCDynamicStoreSetDispatchQueue(store, .main) else { return }
+        self.store = store
+    }
+
+    deinit {
+        if let store { SCDynamicStoreSetDispatchQueue(store, nil) }
+    }
+
+    static func currentGateways() -> [String] {
+        zip(keys, [kSCPropNetIPv4Router, kSCPropNetIPv6Router]).compactMap { key, property in
+            let state = SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any]
+            return (state?[property as String] as? String).map { key + "=" + $0 }
+        }
     }
 }

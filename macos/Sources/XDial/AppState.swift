@@ -46,6 +46,7 @@ final class AppState: ObservableObject {
     @Published private(set) var exitCountry: String?
     @Published private(set) var surveyingRegion = false
     private let scenarioPathMonitor = NWPathMonitor()
+    private var gatewayNoticeMonitor: NetworkGatewayNoticeMonitor?
     private var networkNoticeTask: Task<Void, Never>?
     private var networkNoticeBaseline = NetworkChangeNoticeBaseline()
     private var noticePath: NetworkChangeNoticeBaseline.Path?
@@ -73,6 +74,9 @@ final class AppState: ObservableObject {
     }
 
     private func observeScenarioPath() {
+        gatewayNoticeMonitor = NetworkGatewayNoticeMonitor { [weak self] in
+            self?.scheduleNetworkNotice()
+        }
         scenarioPathMonitor.pathUpdateHandler = { [weak self] path in
             let physical = path.availableInterfaces.filter { [.wifi, .wiredEthernet, .cellular].contains($0.type) }
             let signature = "\(path.status) \(physical.map(\.name).sorted()) \(path.gateways)"
@@ -81,7 +85,7 @@ final class AppState: ObservableObject {
             let noticePath = NetworkChangeNoticeBaseline.Path(
                 available: available, usesWiFi: available && path.usesInterfaceType(.wifi),
                 interfaces: available ? active.map(\.name).sorted() : [],
-                gateways: available ? path.gateways.map { String(describing: $0) }.sorted() : []
+                gateways: []
             )
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -99,11 +103,14 @@ final class AppState: ObservableObject {
 
     private func scheduleNetworkNotice() {
         networkNoticeTask?.cancel()
-        guard let noticePath, !networkEpochPowerGate.defersNetworkWork else { return }
+        guard noticePath != nil, !networkEpochPowerGate.defersNetworkWork else { return }
         networkNoticeTask = Task { @MainActor [weak self] in
             // CoreWLAN settles its SSID for one second after a link change.
             try? await Task.sleep(for: .milliseconds(1500))
-            guard !Task.isCancelled, let self, !networkEpochPowerGate.defersNetworkWork else { return }
+            guard !Task.isCancelled, let self, !networkEpochPowerGate.defersNetworkWork,
+                  var noticePath = self.noticePath else { return }
+            // Re-read configd after settlement, even when NWPath did not change.
+            noticePath.gateways = noticePath.available ? NetworkGatewayNoticeMonitor.currentGateways() : []
             if networkNoticeBaseline.changed(path: noticePath, ssid: currentSSID) {
                 ConnectionNotice.network(available: noticePath.available).post()
             }

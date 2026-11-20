@@ -21,4 +21,19 @@ final class NetworkChangeNoticeTests: XCTestCase {
         XCTAssertTrue(baseline.changed(path: wifi, ssid: nil))
         XCTAssertFalse(baseline.changed(path: wifi, ssid: "Home"))
     }
+    func testGatewayOnlyChangesNotifyOnceForBothFamilies() {
+        var baseline = NetworkChangeNoticeBaseline()
+        var path = wifi
+        path.gateways = ["IPv4=192.168.1.1", "IPv6=fe80::1"]
+        XCTAssertFalse(baseline.changed(path: path, ssid: "Office"))
+        path.gateways = ["IPv4=192.168.1.254", "IPv6=fe80::1"]
+        XCTAssertTrue(baseline.changed(path: path, ssid: "Office"))
+        XCTAssertFalse(baseline.changed(path: path, ssid: "Office"))
+        path.gateways = ["IPv4=192.168.1.254", "IPv6=fe80::2"]
+        XCTAssertTrue(baseline.changed(path: path, ssid: "Office"))
+        XCTAssertFalse(baseline.changed(path: path, ssid: "Office"))
+        path.gateways = []
+        XCTAssertTrue(baseline.changed(path: path, ssid: "Office"))
+    }
+
 }
