@@ -80,11 +80,10 @@ final class AppState: ObservableObject {
         scenarioPathMonitor.pathUpdateHandler = { [weak self] path in
             let physical = path.availableInterfaces.filter { [.wifi, .wiredEthernet, .cellular].contains($0.type) }
             let signature = "\(path.status) \(physical.map(\.name).sorted()) \(path.gateways)"
-            let active = physical.filter { path.usesInterfaceType($0.type) }
             let available = path.status == .satisfied
             let noticePath = NetworkChangeNoticeBaseline.Path(
                 available: available, usesWiFi: available && path.usesInterfaceType(.wifi),
-                interfaces: available ? active.map(\.name).sorted() : [],
+                interfaces: [],
                 gateways: []
             )
             Task { @MainActor [weak self] in
@@ -109,8 +108,10 @@ final class AppState: ObservableObject {
             try? await Task.sleep(for: .milliseconds(1500))
             guard !Task.isCancelled, let self, !networkEpochPowerGate.defersNetworkWork,
                   var noticePath = self.noticePath else { return }
-            // Re-read configd after settlement, even when NWPath did not change.
-            noticePath.gateways = noticePath.available ? NetworkGatewayNoticeMonitor.currentGateways() : []
+            // Read the actual primary interfaces, not all available adapters of a type.
+            let facts = NetworkGatewayNoticeMonitor.currentFacts()
+            noticePath.interfaces = noticePath.available ? facts.interfaces : []
+            noticePath.gateways = noticePath.available ? facts.gateways : []
             if networkNoticeBaseline.changed(path: noticePath, ssid: currentSSID) {
                 ConnectionNotice.network(available: noticePath.available).post()
             }

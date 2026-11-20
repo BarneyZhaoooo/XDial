@@ -36,4 +36,28 @@ final class NetworkChangeNoticeTests: XCTestCase {
         XCTAssertTrue(baseline.changed(path: path, ssid: "Office"))
     }
 
+    func testPrimaryAdapterSwitchWithSameGatewayAndUnusedAdapterChanges() {
+        var states: [String: [String: Any]] = [
+            "State:/Network/Global/IPv4": ["PrimaryInterface": "en7", "Router": "192.168.1.1"],
+            "State:/Network/Global/IPv6": ["PrimaryInterface": "en7", "Router": "fe80::1"],
+        ]
+        func sample() -> NetworkChangeNoticeBaseline.Path {
+            let facts = NetworkGatewayNoticeMonitor.currentFacts { states[$0] }
+            return .init(available: true, usesWiFi: false,
+                         interfaces: facts.interfaces, gateways: facts.gateways)
+        }
+        var baseline = NetworkChangeNoticeBaseline()
+        XCTAssertFalse(baseline.changed(path: sample(), ssid: nil))
+        // An unused adapter appearing must not change the primary network.
+        states["State:/Network/Service/unused/IPv4"] = ["InterfaceName": "en8", "Router": "192.168.1.1"]
+        XCTAssertFalse(baseline.changed(path: sample(), ssid: nil))
+        states["State:/Network/Global/IPv4"]?["PrimaryInterface"] = "en8"
+        XCTAssertTrue(baseline.changed(path: sample(), ssid: nil))
+        XCTAssertFalse(baseline.changed(path: sample(), ssid: nil))
+        // IPv6 can move independently, with its router unchanged too.
+        states["State:/Network/Global/IPv6"]?["PrimaryInterface"] = "en8"
+        XCTAssertTrue(baseline.changed(path: sample(), ssid: nil))
+        XCTAssertFalse(baseline.changed(path: sample(), ssid: nil))
+    }
+
 }

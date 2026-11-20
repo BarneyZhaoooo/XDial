@@ -5,7 +5,7 @@ struct NetworkChangeNoticeBaseline {
     struct Path: Equatable {
         let available: Bool
         let usesWiFi: Bool
-        let interfaces: [String]
+        var interfaces: [String]
         var gateways: [String]
     }
 
@@ -67,10 +67,26 @@ final class NetworkGatewayNoticeMonitor {
         if let store { SCDynamicStoreSetDispatchQueue(store, nil) }
     }
 
-    static func currentGateways() -> [String] {
-        zip(keys, [kSCPropNetIPv4Router, kSCPropNetIPv6Router]).compactMap { key, property in
-            let state = SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any]
-            return (state?[property as String] as? String).map { key + "=" + $0 }
+    struct Facts {
+        var interfaces: [String] = []
+        var gateways: [String] = []
+    }
+
+    static func currentFacts(
+        readState: (String) -> [String: Any]? = {
+            SCDynamicStoreCopyValue(nil, $0 as CFString) as? [String: Any]
         }
+    ) -> Facts {
+        var facts = Facts()
+        for (key, property) in zip(keys, [kSCPropNetIPv4Router, kSCPropNetIPv6Router]) {
+            let state = readState(key)
+            if let interface = state?[kSCDynamicStorePropNetPrimaryInterface as String] as? String {
+                facts.interfaces.append(key + "=" + interface)
+            }
+            if let router = state?[property as String] as? String {
+                facts.gateways.append(key + "=" + router)
+            }
+        }
+        return facts
     }
 }
