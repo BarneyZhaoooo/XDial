@@ -3,6 +3,14 @@
 PR #58 仅在现有圆球布局上增加运行状态说明；原纵向列表及其离屏截图已移除，
 圆球、悬停操作、失败与仅 SOCKS5 标识、缺项提示沿用 main。
 
+## 当前验收要求（2026-11-21）
+
+维护者在[复核留言](https://github.com/kafeifei/XDial/pull/58#issuecomment-7049996034)中确认
+此前代码问题与 CI 已通过，不再要求本 PR 的 Debug 实测及浅深色截图。
+已无冲突合入最新 main（f5d4b98）；同步后的完整 Debug macOS XCTest 939 项、0 失败，
+MainPopover.swift 语法检查与 git diff --check 通过。新 head 的完整 CI 及复审仍需等待。
+下文保留历史验证记录与未执行项目，取消要求不表示这些项目已执行。
+
 ## 状态说明约束
 
 运行状态由 GoEngine.status、GoEngine.lastError、连接报告与 AppState.wakeReconnectPhase 持有；顶部说明只投影这些事实，
@@ -53,7 +61,7 @@ xcodebuild -project macos/XDial.xcodeproj -scheme XDialTests \
 ## 构建和运行验收边界
 
 2026-11-16 已按 CI 安装 gomobile/gobind v0.1.13 到临时任务目录，
-并将当前源码复制到无空格路径执行 make ci-macos-build，已通过：
+并将当时源码（f53885c）复制到无空格路径执行 make ci-macos-build，已通过：
 Debug / Release 的 Host 与 Transparent Proxy Extension 均完成未签名构建，
 包含 macOS Libbox.xcframework、Go helper、身份合同与产物名称/最低系统版本检查。
 构建副本中的 MainPopover、状态说明与测试源码以及 go.mod/go.sum 已逐字核对一致。
@@ -67,7 +75,7 @@ Debug 安装与真实网络操作尚未进行。本机签名身份已在主机�
 项目要求 DEVELOPMENT_TEAM=UVZM439VGU，未发现匹配的开发签名身份。
 不修改团队身份、不申请新授权、不覆盖当前网络或凭据来完成验收。
 
-下列真实 Debug 验收仍待具有匹配签名与测试配置的维护者完成，需每项附浅色与深色截图或录屏：
+下列项目保留为后续真实 Debug 验收参考；维护者已取消其作为本 PR 必需条件的要求：
 
 | 运行步骤 | 顶部状态说明应核对的内容 | 本任务结果 |
 | --- | --- | --- |
@@ -90,5 +98,4 @@ Debug 安装与真实网络操作尚未进行。本机签名身份已在主机�
 维护者在 PR #58 的 [f3a9646 复审](https://github.com/kafeifei/XDial/pull/58#pullrequestreview-5909550210)
 报告 make ci-macos-build（Debug / Release 未签名）与 make test-macos-transaction 通过，
 918 项测试 0 失败。该结果属于上一版提交，不替代本轮修改后的完整构建或 Debug 实测。
-当前任务仍未修改网络配置或凭据，直连、AnyConnect、订阅以及切换、断开、重连的 Debug
-运行验收尚待具备构建环境和可用测试配置的维护者完成。
+当前任务仍未修改网络配置或凭据，也未执行真实 Debug 网络操作；这些历史限制不再作为本 PR 的验收阻碍。
