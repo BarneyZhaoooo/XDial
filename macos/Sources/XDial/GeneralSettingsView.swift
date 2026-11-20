@@ -61,7 +61,7 @@ struct GeneralSettingsView: View {
 
     private var startup: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CloudConfigurationSettings(sync: state.cloudSync, chinese: state.language == .zh)
+            CloudConfigurationSettings(sync: state.cloudSync, chinese: state.language == .zh, showNotice: state.presentDataUseNotice)
             Divider()
             Toggle(state.tr("登录时启动", "Launch at login"), isOn: $state.launchAtLogin)
                 .toggleStyle(.switch)

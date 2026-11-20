@@ -512,7 +512,7 @@ struct ProfilePersistenceEnvelope: Codable {
 
 @MainActor
 final class AppState: ObservableObject {
-    let cloudSync = ConfigurationSync()
+    let cloudSync: ConfigurationSync
     @Published var profile: Profile
 
     /// VPN Profile 是否已安装并可用（对应 macOS 的 helperInstalled）。
@@ -543,12 +543,13 @@ final class AppState: ObservableObject {
     /// 「打开 XDial 后自动连接」。只决定启动后是否发起一次普通连接，不接管系统层的按需连接。
     /// 当前的「数据使用说明」版本。App Store 审核指南 5.4 要求 VPN App 在用户使用服务前
     /// 说明收集哪些数据、如何使用；用户确认之前不发起连接，也不做需要联网的自动判断。
-    static let dataUseNoticeVersion = 3
+    static let dataUseNoticeVersion = 4
     @Published private(set) var dataUseNoticeAccepted: Bool
 
     func acceptDataUseNotice() {
         persistence.defaults.set(Self.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
         dataUseNoticeAccepted = true
+        cloudSync.acceptNotice()
     }
 
     @Published var connectOnOpenEnabled: Bool {
@@ -1215,6 +1216,7 @@ final class AppState: ObservableObject {
         self.tunnelManager = tunnelManager
         self.tailscaleSetupRuntime = tailscaleSetupRuntime
         self.persistence = persistence
+        self.cloudSync = ConfigurationSync(defaults: persistence.defaults)
         self.seed = seed
 
         // 先用预置配置（没有就用 bootstrap）初始化，loadSaved 后会被覆盖
@@ -1269,7 +1271,7 @@ final class AppState: ObservableObject {
                 self?.handleEngineStatusChange(status)
             }
         loadSaved()
-        if persistence.defaultsSuiteName == nil { configureCloudSync(defaults: persistence.defaults) }
+        if persistence.defaultsSuiteName == nil { configureCloudSync(noticeAccepted: dataUseNoticeAccepted) }
         if !persistenceRequiresRecovery {
             profile.ensureConnectivityTestConfiguration()
         }

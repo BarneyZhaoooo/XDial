@@ -22,6 +22,9 @@ struct TVDataUseNoticeView: View {
                         .font(.largeTitle.bold())
                     Text(TVDataUseNotice.introduction(isChinese: app.language == .zh))
                         .font(.body)
+                    if mode == .firstUse {
+                        CloudSyncNoticeToggle(sync: app.cloudSync, chinese: app.language == .zh)
+                    }
                     ForEach(TVDataUseNotice.sections(isChinese: app.language == .zh), id: \.title) { section in
                         // Plain text takes no focus on tvOS; focusable sections let the remote scroll.
                         VStack(alignment: .leading, spacing: 10) {
@@ -106,8 +109,8 @@ enum TVDataUseNotice {
                   "All of these services see your IP address. Requests to the DNS and the check and lookup services carry no account, password or configuration content."),
             ]),
             Section(title: t("数据存储与同步", "Storage and sync"), symbol: "appletv", points: [
-                t("开启 iCloud 同步后，配置、保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会存入你的私人 iCloud。其他开启同步的 XDial 设备可以读取。",
-                  "If you enable iCloud Sync, your private iCloud stores configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs for your other XDial devices with sync enabled."),
+                t("iCloud 同步默认开启。确认本说明后，配置、已保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会同步到你的私人 iCloud，供同一 Apple 账号的设备使用。你可以在继续前或之后的设置中关闭同步。",
+                  "iCloud Sync is on by default. After you confirm this notice, XDial syncs configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs to your private iCloud for devices using the same Apple Account. You can turn sync off before continuing or later in Settings."),
                 t("Apple TV 版不按 Wi-Fi 或所在地区自动选场景，不读取 Wi-Fi 名称，也不请求定位权限。",
                   "On Apple TV, XDial does not pick scenarios by Wi-Fi or region, does not read the Wi-Fi name and does not ask for location access."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开设备。",

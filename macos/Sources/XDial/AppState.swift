@@ -12,7 +12,7 @@ final class AppState: ObservableObject {
     static private(set) weak var current: AppState?
     #endif
 
-    let cloudSync = ConfigurationSync()
+    let cloudSync = ConfigurationSync(defaults: xdialDefaults)
     @Published var profile: Profile
     @Published var profileLibrary = ProfileLibrary() {
         didSet { configurationCatalogCache = nil }
@@ -762,7 +762,7 @@ final class AppState: ObservableObject {
             }
             .store(in: &engineSubs)
         loadSaved()
-        configureCloudSync(defaults: xdialDefaults)
+        configureCloudSync(noticeAccepted: DataUseNoticeAcceptance.isAccepted(defaults: xdialDefaults, required: true))
         lineLatencies.standaloneRequest = { line, url in try await StandaloneLineLatencyService.probe(line, testURL: url) }
         lineLatencies.permitsNetworkTests = { [weak self] in
             guard let self else { return false }
@@ -1507,6 +1507,7 @@ final class AppState: ObservableObject {
     /// scenario check, line measurements and the launch connection.
     func acceptDataUseNotice() {
         DataUseNoticeAcceptance.accept(defaults: xdialDefaults)
+        cloudSync.acceptNotice()
         guard !dataUseNoticeAccepted else { return }
         dataUseNoticeAccepted = true
         if installation.shouldPrepareAtLaunch { installation.start() }

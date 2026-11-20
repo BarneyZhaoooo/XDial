@@ -1,8 +1,8 @@
 import Foundation
 
 extension AppState {
-    func configureCloudSync(defaults: UserDefaults) {
-        cloudSync.configure(defaults: defaults, capture: { [weak self] in
+    func configureCloudSync(noticeAccepted: Bool) {
+        cloudSync.configure(noticeAccepted: noticeAccepted, capture: { [weak self] in
             guard let self, self.dataUseNoticeAccepted else {
                 throw CloudSyncIssue("请先确认数据使用说明 · Accept the data use notice first")
             }

@@ -77,12 +77,13 @@ struct CloudSyncIssue: LocalizedError {
 @MainActor
 final class ConfigurationSync: ObservableObject {
     enum Choice { case automatic, local, cloud }
-    @Published private(set) var enabled = false
+    @Published private(set) var enabled: Bool
+    @Published private(set) var noticeAccepted = false
     @Published private(set) var busy = false
     @Published private(set) var conflict = false
     @Published private(set) var message = ""
     private var conflictTag: String?
-    private var defaults: UserDefaults = .standard
+    private let defaults: UserDefaults
     private var capture: (() throws -> CloudConfiguration)?
     private var apply: ((CloudConfiguration) throws -> Void)?
     private var timer: Task<Void, Never>?
@@ -91,8 +92,15 @@ final class ConfigurationSync: ObservableObject {
     private let prefix = "xdial.cloud.v1."
     private let recordID: CKRecord.ID
 
-    init(recordName: String = "configuration") {
+    init(defaults: UserDefaults = .standard, recordName: String = "configuration") {
+        self.defaults = defaults
+        enabled = defaults.object(forKey: prefix + "enabled") as? Bool ?? true
         recordID = CKRecord.ID(recordName: recordName)
+    }
+
+    deinit {
+        timer?.cancel()
+        accountChanges?.cancel()
     }
 
     private var marker: [String: String] {
@@ -100,27 +108,42 @@ final class ConfigurationSync: ObservableObject {
         set { defaults.set(newValue, forKey: prefix + "marker") }
     }
 
-    func configure(defaults: UserDefaults, capture: @escaping () throws -> CloudConfiguration,
+    func configure(noticeAccepted: Bool, capture: @escaping () throws -> CloudConfiguration,
                    apply: @escaping (CloudConfiguration) throws -> Void) {
-        self.defaults = defaults
         self.capture = capture
         self.apply = apply
-        if defaults.bool(forKey: prefix + "enabled") { setEnabled(true) }
+        self.noticeAccepted = noticeAccepted
+        restartSync()
+    }
+
+    func acceptNotice() {
+        guard !noticeAccepted else { return }
+        noticeAccepted = true
+        restartSync()
     }
 
     func setEnabled(_ value: Bool) {
+        defaults.set(value, forKey: prefix + "enabled")
+        enabled = value
+        restartSync()
+    }
+
+    private func restartSync() {
         generation = UUID()
         timer?.cancel()
         accountChanges?.cancel()
-        enabled = value
-        defaults.set(value, forKey: prefix + "enabled")
         message = ""
         conflict = false
         conflictTag = nil
-        guard value else { return }
+        guard enabled, noticeAccepted, capture != nil else { return }
         accountChanges = Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: .CKAccountChanged) {
                 guard let self, !Task.isCancelled else { return }
+                if self.marker["owner"] == nil {
+                    // First iCloud sign-in. An existing owner's marker always requires confirmation.
+                    self.restartSync()
+                    return
+                }
                 self.setEnabled(false)
                 self.message = "iCloud 账号状态已变更，请确认账号后重新开启同步 · Check your iCloud account to resume"
                 return
@@ -135,7 +158,7 @@ final class ConfigurationSync: ObservableObject {
     }
 
     func sync(_ choice: Choice = .automatic) async {
-        guard enabled, !busy, let capture, let apply else { return }
+        guard enabled, noticeAccepted, !busy, let capture, let apply else { return }
         busy = true
         defer { busy = false }
         let request = generation
@@ -239,9 +262,21 @@ final class ConfigurationSync: ObservableObject {
     }
 }
 
+struct CloudSyncNoticeToggle: View {
+    @ObservedObject var sync: ConfigurationSync
+    let chinese: Bool
+
+    var body: some View {
+        Toggle(chinese ? "通过 iCloud 同步配置和密码" : "Sync configuration and passwords with iCloud",
+               isOn: Binding(get: { sync.enabled }, set: sync.setEnabled))
+            .accessibilityIdentifier("data-use-icloud-sync")
+    }
+}
+
 struct CloudConfigurationSettings: View {
     @ObservedObject var sync: ConfigurationSync
     let chinese: Bool
+    var showNotice: (() -> Void)? = nil
     @State private var confirm = false
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -249,7 +284,9 @@ struct CloudConfigurationSettings: View {
                 get: { sync.enabled }, set: { if $0 { confirm = true } else { sync.setEnabled(false) } }
             ))
             if sync.enabled {
-                if sync.conflict {
+                if !sync.noticeAccepted, let showNotice {
+                    Button(chinese ? "查看数据使用说明" : "Review data use notice", action: showNotice)
+                } else if sync.conflict {
                     Button(chinese ? "用 iCloud 配置覆盖本机" : "Replace local configuration with iCloud copy") {
                         Task { await sync.sync(.cloud) }
                     }

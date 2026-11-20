@@ -24,9 +24,9 @@
 - AnyConnect：按协议发送设备名、网卡地址与由它们生成的设备标识（`build/patched-go/sslcon`，补丁见 `patches/sslcon`）。
 - Tailscale：设备名与标准节点信息发往 Tailscale 控制服务器；不上传日志（tailscale fork 固定 `NoLogsNoSupport`）。
 
-## 用户开启的 iCloud 同步
+## iCloud 同步的默认设置
 
-用户逐台开启同步后，主 App 将配置、订阅地址、VPN 凭据、已保存的 Wi-Fi 匹配规则和偏好写入同一 Apple 账号的 CloudKit 私有数据库。运行日志、系统授权、当前网络观测和 Tailscale 节点身份保存在本机。
+三端默认开启同步。每台设备在确认新版说明后开始，用户可在继续前或之后关闭，并保留已保存的关闭选择。开启时主 App 将配置、订阅地址、VPN 凭据、已保存的 Wi-Fi 匹配规则和偏好写入同一 Apple 账号的 CloudKit 私有数据库。运行日志、系统授权、当前网络观测和 Tailscale 节点身份保存在本机。
 
 ## 本机存储
 
@@ -49,7 +49,7 @@ App 与 Packet Tunnel 扩展声明：UserDefaults（App：CA92.1、1C8F.1；扩�
 
 Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `macos/Sources/XDial/DataUseNotice.swift`。
 它在启动时打开，确认前不准备系统组件、不连接、不做自动测速、订阅刷新和出口地区判断（`AppState.dataUseNoticeAccepted`）。
-其他 Mac 版本不需要这道确认。代码改变对外请求时，同步更新这里、说明文案与 `DataUseNoticeAcceptance.version`。
+其他 Mac 版本仅在 iCloud 同步前要求确认说明。代码改变对外请求时，同步更新这里、说明文案与 `DataUseNoticeAcceptance.version`。
 
 ## 自动访问的第三方服务
 

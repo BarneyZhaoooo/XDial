@@ -2587,6 +2587,46 @@ final class AppStateTests: XCTestCase {
         )
     }
 
+    func testCloudSyncDefaultsOnAndWaitsForTheCurrentNotice() async {
+        let prefs = makePersistence().defaults
+        let sync = ConfigurationSync(defaults: prefs)
+        let started = expectation(description: "First sync after confirming the notice")
+        var captures = 0
+        sync.configure(noticeAccepted: false, capture: {
+            captures += 1
+            started.fulfill()
+            throw CancellationError() // Exercise scheduling without contacting iCloud.
+        }, apply: { _ in XCTFail("No cloud data expected") })
+
+        XCTAssertTrue(sync.enabled)
+        await sync.sync()
+        XCTAssertEqual(captures, 0)
+        sync.acceptNotice()
+        await fulfillment(of: [started], timeout: 2)
+        XCTAssertEqual(captures, 1)
+        sync.setEnabled(false)
+    }
+
+    func testCloudSyncRemembersOptOutAcrossLaunchesAndNoticeUpdates() async {
+        let prefs = makePersistence().defaults
+        let first = ConfigurationSync(defaults: prefs)
+        first.setEnabled(false)
+        for accepted in [false, true] {
+            let next = ConfigurationSync(defaults: prefs)
+            next.configure(noticeAccepted: accepted, capture: {
+                XCTFail("A persisted opt-out must prevent any upload or download")
+                throw CancellationError()
+            }, apply: { _ in XCTFail("No cloud data expected") })
+            next.acceptNotice()
+            XCTAssertFalse(next.enabled)
+            await next.sync()
+            await Task.yield()
+        }
+        first.setEnabled(true)
+        XCTAssertTrue(ConfigurationSync(defaults: prefs).enabled)
+        first.setEnabled(false)
+    }
+
     func testCloudProfileSurvivesMobileSaveReloadAndTunnelPreparation() throws {
         let persistence = makePersistence()
         let app = AppState(engine: NoopTunnelEngine(), persistence: persistence)
