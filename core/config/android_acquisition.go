@@ -16,17 +16,23 @@ var ErrAndroidAcquisitionProtocolNeedsLease = errors.New("resource protocol requ
 // Native local DNS transports are replaced with captured OS facts before any
 // runtime is created; a platform callback still owns protection/binding sockets.
 func GenerateAndroidAcquisition(profile *Profile, lineID, basePath string, systemDNS []string) ([]byte, error) {
-	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, false)
+	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, false, false)
 }
 
 // GenerateAppleResourceAcquisition is the same exact-Line capability for Apple
 // callers whose sockets XDial never captures. It keeps the OS Underlay routing
 // instead of Android's callback-selected network.
 func GenerateAppleResourceAcquisition(profile *Profile, lineID, basePath string, systemDNS []string) ([]byte, error) {
-	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, true)
+	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, true, false)
 }
 
-func generateResourceAcquisition(profile *Profile, lineID, basePath string, systemDNS []string, osRouted bool) ([]byte, error) {
+// GenerateAppleColdRuleAcquisition is for the host before packet-tunnel start.
+// The caller must own the isolated protocol session until the download ends.
+func GenerateAppleColdRuleAcquisition(profile *Profile, lineID, basePath string, systemDNS []string) ([]byte, error) {
+	return generateResourceAcquisition(profile, lineID, basePath, systemDNS, true, true)
+}
+
+func generateResourceAcquisition(profile *Profile, lineID, basePath string, systemDNS []string, osRouted, coldProtocols bool) ([]byte, error) {
 	server, err := validateTransparentProxySystemDNS(systemDNS)
 	if err != nil {
 		return nil, err
@@ -34,8 +40,8 @@ func generateResourceAcquisition(profile *Profile, lineID, basePath string, syst
 	if profile == nil {
 		return nil, fmt.Errorf("resource profile is missing")
 	}
+	line := profile.FindLine(lineID)
 	if lineID != builtinDirectLineID {
-		line := profile.FindLine(lineID)
 		if line == nil || !line.Enabled {
 			return nil, fmt.Errorf("resource Line is unavailable")
 		}
@@ -62,16 +68,26 @@ func generateResourceAcquisition(profile *Profile, lineID, basePath string, syst
 	if err = json.Unmarshal(data, &document); err != nil {
 		return nil, err
 	}
-	var endpoints []json.RawMessage
-	if err = json.Unmarshal(document["endpoints"], &endpoints); err == nil && len(endpoints) != 0 {
-		return nil, ErrAndroidAcquisitionProtocolNeedsLease
+	if raw := document["endpoints"]; raw != nil {
+		var endpoints []struct{ Type string }
+		if err := json.Unmarshal(raw, &endpoints); err != nil {
+			return nil, err
+		}
+		for _, endpoint := range endpoints {
+			if !coldProtocols || line == nil || line.Type != LineTypeTailscale || endpoint.Type != "tailscale" {
+				return nil, ErrAndroidAcquisitionProtocolNeedsLease
+			}
+			if line.TailscaleExitNode == "" {
+				return nil, fmt.Errorf("rule-set download requires a Tailscale exit node")
+			}
+		}
 	}
 	var outbounds []map[string]any
 	if err = json.Unmarshal(document["outbounds"], &outbounds); err != nil {
 		return nil, err
 	}
 	for _, outbound := range outbounds {
-		if outbound["type"] == "vpn" {
+		if outbound["type"] == "vpn" && (!coldProtocols || line == nil || line.Type != LineTypeVPN) {
 			return nil, ErrAndroidAcquisitionProtocolNeedsLease
 		}
 	}

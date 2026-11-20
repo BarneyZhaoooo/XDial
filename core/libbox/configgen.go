@@ -2,7 +2,6 @@ package libbox
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -1253,22 +1252,7 @@ func generateNEConfigData(profile *config.Profile, vpnServerIP, basePath string,
 			return direct
 		}
 		return func(url string, limit int64) ([]byte, error) {
-			data, err := config.GenerateAppleResourceAcquisition(profile, lineID, basePath, appleResourceDNS())
-			if err != nil {
-				return nil, err
-			}
-			outbound, resolver, err := resourceAcquisitionTags(data)
-			if err != nil {
-				return nil, err
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), lineProfileSourceTimeout)
-			defer cancel()
-			resource, err := newResourceBox(boxContext(ctx), data, outbound, resolver)
-			if err != nil {
-				return nil, err
-			}
-			defer resource.instance.Close()
-			return resource.fetch(url, limit)
+			return fetchAppleColdRule(profile, lineID, basePath, url, limit)
 		}
 	}
 	return generatePacketTunnelConfigData(profile, basePath, func(profile *config.Profile) ([]byte, error) {

@@ -751,13 +751,6 @@ final class AppState: ObservableObject {
             if selected.contains(where: { $0.type == "application" && (!$0.applications.isEmpty || !$0.processes.isEmpty) }) {
                 issues.append(tr("规则「\(rule.name)」需要 macOS 的来源应用信息", "Rule “\(rule.name)” requires source-app information from macOS"))
             }
-            if selected.contains(where: { resource in
-                guard resource.type == "url", !["", "direct"].contains(resource.fetchLineID),
-                      let source = profile.lines.first(where: { $0.id == resource.fetchLineID }) else { return false }
-                return profile.leafLines(for: [source]).contains { ["vpn", "tailscale"].contains($0.type) }
-            }) {
-                issues.append(tr("规则「\(rule.name)」指定了此设备不能使用的下载线路", "Rule “\(rule.name)” requires a download line unavailable on this device"))
-            }
             if rule.type == "url" && rule.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 issues.append(tr("规则“\(rule.name)”缺少地址", "Rule “\(rule.name)” has no address"))
                 continue
