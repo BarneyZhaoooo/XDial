@@ -61,7 +61,7 @@ final class AppState: ObservableObject {
         didSet {
             guard oldValue != automaticScenario else { return }
             xdialDefaults.set(automaticScenario, forKey: "xdial.auto-scenario")
-            supersedeAutomaticScenarioSwitchForNewEpoch()
+            supersedeAutomaticScenarioSwitchForNewEpoch(reason: .automaticModeChanged)
             cancelNetworkEpochQuietWindow()
             refreshRegionSelection()
             if automaticScenario { activateScenarioForCurrentSSIDIfNeeded(forceMatching: true) }
@@ -2340,7 +2340,7 @@ final class AppState: ObservableObject {
         // A new CoreWLAN transition starts before its stable SSID is readable.
         // Stop the old automatic candidate during the quiet window so it
         // cannot commit using proof from the network being left behind.
-        supersedeAutomaticScenarioSwitchForNewEpoch()
+        supersedeAutomaticScenarioSwitchForNewEpoch(reason: .wifiSettling)
         let currentDesiredScenarioID = scenarioSwitchTargetID
             ?? connectionDesired.scenarioID
             ?? engine.connectionReport?.scenario.id
@@ -2367,7 +2367,7 @@ final class AppState: ObservableObject {
         }
         if let activeIntent = activeNetworkEpochScenarioSwitchIntent,
            (rawMatch ?? regionMatch()) != activeIntent.desiredScenarioID {
-            supersedeAutomaticScenarioSwitchForNewEpoch()
+            supersedeAutomaticScenarioSwitchForNewEpoch(reason: .scenarioMatchChanged)
         }
         let currentDesiredScenarioID = scenarioSwitchTargetID
             ?? connectionDesired.scenarioID
@@ -2394,7 +2394,7 @@ final class AppState: ObservableObject {
             allowedMatch: matchedScenarioID
         )
         if rawMatch == nil, matchedScenarioID == nil, currentSSID != nil {
-            supersedeAutomaticScenarioSwitchForNewEpoch()
+            supersedeAutomaticScenarioSwitchForNewEpoch(reason: .unmatchedWiFi)
             networkEpochSwitchCoordinator.noteUnmatchedSSID()
         }
         guard let resolvedScenarioID = matchedScenarioID
@@ -2431,7 +2431,7 @@ final class AppState: ObservableObject {
         if forceNewEpoch
             || activeNetworkEpochScenarioSwitchIntent?
                 .underlayFingerprint != underlayFingerprint {
-            supersedeAutomaticScenarioSwitchForNewEpoch()
+            supersedeAutomaticScenarioSwitchForNewEpoch(reason: .underlayChanged)
         }
         let desiredScenarioID = scenarioSwitchTargetID
             ?? connectionDesired.scenarioID
@@ -2463,7 +2463,7 @@ final class AppState: ObservableObject {
             completion(nil)
             return
         }
-        supersedeAutomaticScenarioSwitchForNewEpoch()
+        supersedeAutomaticScenarioSwitchForNewEpoch(reason: .recovery)
         let desiredScenarioID = scenarioSwitchTargetID
             ?? connectionDesired.scenarioID
             ?? profile.activeScenarioID
@@ -2536,7 +2536,7 @@ final class AppState: ObservableObject {
                     if let activeIntent = self
                         .activeNetworkEpochScenarioSwitchIntent,
                        (rawMatch ?? self.regionMatch()) != activeIntent.desiredScenarioID {
-                        self.supersedeAutomaticScenarioSwitchForNewEpoch()
+                        self.supersedeAutomaticScenarioSwitchForNewEpoch(reason: .scenarioMatchChanged)
                     }
                     let currentDesiredScenarioID =
                         self.scenarioSwitchTargetID
@@ -2556,7 +2556,7 @@ final class AppState: ObservableObject {
                         allowedMatch: matchedScenarioID
                     )
                     if rawMatch == nil, matchedScenarioID == nil, wifi.ssid != nil {
-                        self.supersedeAutomaticScenarioSwitchForNewEpoch()
+                        self.supersedeAutomaticScenarioSwitchForNewEpoch(reason: .unmatchedWiFi)
                         self.networkEpochSwitchCoordinator
                             .noteUnmatchedSSID()
                     }
@@ -2840,7 +2840,7 @@ final class AppState: ObservableObject {
         return true
     }
 
-    private func supersedeAutomaticScenarioSwitchForNewEpoch() {
+    private func supersedeAutomaticScenarioSwitchForNewEpoch(reason: ScenarioSwitchCancellationReason) {
         guard let intent = activeNetworkEpochScenarioSwitchIntent else {
             return
         }
@@ -2863,7 +2863,7 @@ final class AppState: ObservableObject {
         if scenarioSwitchInFlight?.automaticIntent == intent,
            !scenarioSwitchCancellationRequested {
             scenarioSwitchCancellationRequested = true
-            engine.cancelScenarioSwitch(reason: .networkChanged)
+            engine.cancelScenarioSwitch(reason: reason)
         }
     }
 

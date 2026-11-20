@@ -1,5 +1,6 @@
 enum ScenarioSwitchCancellationReason: String {
-    case superseded, userCancelled, disconnected, sleep, networkChanged, timeout
+    case superseded, userCancelled, disconnected, sleep, timeout
+    case automaticModeChanged, wifiSettling, scenarioMatchChanged, unmatchedWiFi, underlayChanged, recovery
 }
 
 /// Separate host-side Switch fact projection. It deliberately does not replace
