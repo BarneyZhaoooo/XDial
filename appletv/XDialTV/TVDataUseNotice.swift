@@ -105,9 +105,9 @@ enum TVDataUseNotice {
                 t("这些服务都会看到你的 IP 地址。发给 DNS 和各项检测、查询服务的请求不含你的账号、密码或配置内容。",
                   "All of these services see your IP address. Requests to the DNS and the check and lookup services carry no account, password or configuration content."),
             ]),
-            Section(title: t("只留在这台 Apple TV 上", "What stays on this Apple TV"), symbol: "appletv", points: [
-                t("账号和密码保存在系统钥匙串里，只用来连接你配置的线路。",
-                  "Accounts and passwords are kept in the system keychain and used only to connect your lines."),
+            Section(title: t("数据存储与同步", "Storage and sync"), symbol: "appletv", points: [
+                t("开启 iCloud 同步后，配置、保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会存入你的私人 iCloud。其他开启同步的 XDial 设备可以读取。",
+                  "If you enable iCloud Sync, your private iCloud stores configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs for your other XDial devices with sync enabled."),
                 t("Apple TV 版不按 Wi-Fi 或所在地区自动选场景，不读取 Wi-Fi 名称，也不请求定位权限。",
                   "On Apple TV, XDial does not pick scenarios by Wi-Fi or region, does not read the Wi-Fi name and does not ask for location access."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开设备。",

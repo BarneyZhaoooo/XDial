@@ -9,6 +9,8 @@ configs:
 
 settings:
   base:
+    XDIAL_ICLOUD_CONTAINER: iCloud.com.xd.xdial
+    XDIAL_ICLOUD_ENVIRONMENT: Production
     DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
@@ -168,6 +170,7 @@ targets:
     sources:
       - Sources/XDial
       - ../apple/Home
+      - ../apple/Sync
       - ../apple/Notifications
       - ../ios/XDialShared/DialGlyph.swift
       - Shared
@@ -176,6 +179,7 @@ targets:
     info:
       path: Info.plist
       properties:
+        XDialCloudContainer: $(XDIAL_ICLOUD_CONTAINER)
         CFBundleDisplayName: "$(XDIAL_PRODUCT_DISPLAY_NAME)"
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"

@@ -13,7 +13,7 @@ import Foundation
 ///   "profile": { …与「导出配置」里的 profile 相同，不得包含账号密码… }
 /// }
 /// ```
-struct MobileSeed: Equatable {
+struct MobileSeed: Equatable, Sendable {
     static let format = "xdial-mobile-seed"
     static let schemaVersion = 1
 

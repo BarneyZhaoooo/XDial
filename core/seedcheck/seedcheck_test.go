@@ -198,7 +198,7 @@ func TestLoadRejectsWhatThePhoneDoesNotRead(t *testing.T) {
 // The allowlists mirror the phone's Swift model; a renamed key there must not
 // leave the checker approving a field the phone no longer reads.
 func TestMobileKeysExistInThePhoneModel(t *testing.T) {
-	source, err := os.ReadFile("../../appletv/XDialTV/Models.swift")
+	source, err := os.ReadFile("../../macos/Sources/XDial/Models.swift")
 	if err != nil {
 		t.Fatal(err)
 	}

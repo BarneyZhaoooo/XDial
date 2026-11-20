@@ -65,6 +65,7 @@ extension ProfileLibrary {
             result.importWarnings += record.profile.importWarnings
             result.importAdjustments += record.profile.importAdjustments
         }
+        result.subscriptions = mobileSubscriptions
         result.lines += groups
         result.scenarios = scenarios
         result.activeScenarioID = activeScenarioID
@@ -106,6 +107,8 @@ extension ProfileLibrary {
                 profiles[index].profile.tailscale = draft.tailscale
             }
         }
+        mobileSubscriptions = draft.subscriptions
+        schemaVersion = mobileSubscriptions.isEmpty ? 3 : 4
         groups = draft.lines.filter(\.isGroup)
         scenarios = draft.scenarios
         activeScenarioID = draft.activeScenarioID
@@ -347,14 +350,21 @@ extension ProfileLibrary {
         guard activeScenarioID.isEmpty ? scenarios.isEmpty : scenarios.contains(where: { $0.id == activeScenarioID }) else {
             throw ProfileLibraryError.invalid("活动场景不存在")
         }
+        let subscriptionIDs = Set(mobileSubscriptions.map(\.id))
+        guard subscriptionIDs.count == mobileSubscriptions.count, !subscriptionIDs.contains("") else {
+            throw ProfileLibraryError.invalid("同步的订阅标识缺失或重复")
+        }
+        func validTarget(lineID: String, subscriptionID: String) -> Bool {
+            subscriptionID.isEmpty ? lines.contains(lineID) : lineID.isEmpty && subscriptionIDs.contains(subscriptionID)
+        }
         var ssids = Set<String>()
         for scene in scenarios {
-            guard lines.contains(scene.defaultLineID), scene.defaultSubscriptionID.isEmpty else {
+            guard validTarget(lineID: scene.defaultLineID, subscriptionID: scene.defaultSubscriptionID) else {
                 throw ProfileLibraryError.invalid("场景「\(scene.name)」的默认出口已不存在")
             }
             var selected = Set<String>()
             for binding in scene.bindings {
-                guard rules.contains(binding.ruleSetID), lines.contains(binding.lineID), binding.subscriptionID.isEmpty,
+                guard rules.contains(binding.ruleSetID), validTarget(lineID: binding.lineID, subscriptionID: binding.subscriptionID),
                       let rule = draft.ruleSets.first(where: { $0.id == binding.ruleSetID }) else {
                     throw ProfileLibraryError.invalid("场景「\(scene.name)」引用的线路或规则已不存在")
                 }

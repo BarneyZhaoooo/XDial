@@ -128,6 +128,9 @@ struct ProfileLibrary: Codable, Hashable {
     var profiles: [ProfileRecord]
     var activeProfileID: String
     var editingProfileID: String
+    // Mobile subscriptions retain their selected nodes and ordered rules. They are
+    // global scenario targets, separate from the subscription sources of desktop records.
+    var mobileSubscriptions: [Subscription] = []
     var groups: [Line] = []
     var scenarios: [Scenario] = []
     var activeScenarioID = ""
@@ -137,7 +140,7 @@ struct ProfileLibrary: Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion, profiles, activeProfileID, editingProfileID
-        case groups, scenarios, activeScenarioID, groupSources, scenarioSources
+        case groups, scenarios, activeScenarioID, groupSources, scenarioSources, mobileSubscriptions
     }
 
     init() {
@@ -157,6 +160,7 @@ struct ProfileLibrary: Codable, Hashable {
         profiles = try c.decode([ProfileRecord].self, forKey: .profiles)
         activeProfileID = try c.decode(String.self, forKey: .activeProfileID)
         editingProfileID = try c.decode(String.self, forKey: .editingProfileID)
+        mobileSubscriptions = try c.decodeIfPresent([Subscription].self, forKey: .mobileSubscriptions) ?? []
         groups = try c.decodeIfPresent([Line].self, forKey: .groups) ?? []
         scenarios = try c.decodeIfPresent([Scenario].self, forKey: .scenarios) ?? []
         activeScenarioID = try c.decodeIfPresent(String.self, forKey: .activeScenarioID) ?? ""
@@ -165,7 +169,7 @@ struct ProfileLibrary: Codable, Hashable {
     }
 
     func validated() throws -> ProfileLibrary {
-        guard (1...3).contains(schemaVersion), !profiles.isEmpty,
+        guard (1...4).contains(schemaVersion), (mobileSubscriptions.isEmpty || schemaVersion == 4), !profiles.isEmpty,
               Set(profiles.map(\.id)).count == profiles.count,
               profiles.allSatisfy({ !$0.id.isEmpty && $0.id != Self.configurationID }),
               profiles.contains(where: { $0.id == editingProfileID }) else {
@@ -188,7 +192,7 @@ struct ProfileLibrary: Codable, Hashable {
             throw ProfileLibraryError.invalid("全局配置身份无效")
         }
         try result.validateReferences(allowEmptyGroups: true)
-        result.schemaVersion = 3
+        result.schemaVersion = result.mobileSubscriptions.isEmpty ? 3 : 4
         result.activeProfileID = Self.configurationID
         return result
     }

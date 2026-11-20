@@ -12,6 +12,7 @@ final class AppState: ObservableObject {
     static private(set) weak var current: AppState?
     #endif
 
+    let cloudSync = ConfigurationSync()
     @Published var profile: Profile
     @Published var profileLibrary = ProfileLibrary() {
         didSet { configurationCatalogCache = nil }
@@ -761,6 +762,7 @@ final class AppState: ObservableObject {
             }
             .store(in: &engineSubs)
         loadSaved()
+        configureCloudSync(defaults: xdialDefaults)
         lineLatencies.standaloneRequest = { line, url in try await StandaloneLineLatencyService.probe(line, testURL: url) }
         lineLatencies.permitsNetworkTests = { [weak self] in
             guard let self else { return false }

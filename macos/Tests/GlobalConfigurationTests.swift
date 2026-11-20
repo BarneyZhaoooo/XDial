@@ -27,6 +27,26 @@ final class GlobalConfigurationTests: XCTestCase {
         return library
     }
 
+    func testMobileSubscriptionSurvivesEncryptedLibraryRoundTrip() throws {
+        var library = try legacy([source()]).validated()
+        var draft = library.snapshot()
+        let subscription = Subscription(id: "mobile", name: "Mobile", url: "https://example.test/subscription")
+        draft.subscriptions = [subscription]
+        draft.scenarios[0].defaultLineID = ""
+        draft.scenarios[0].defaultSubscriptionID = "mobile"
+        library.applyDraft(draft, editingProfileID: library.editingProfileID)
+        let key = SymmetricKey(size: .bits256)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileLibraryStore(directory: directory, keyProvider: { _ in key })
+        try store.save(library)
+        let restored = try XCTUnwrap(store.load())
+        XCTAssertEqual(restored.schemaVersion, 4)
+        XCTAssertEqual(restored.snapshot(), draft)
+        XCTAssertEqual(restored.profiles.first?.baseline, library.profiles.first?.baseline)
+        XCTAssertEqual(restored.profiles.first?.source, library.profiles.first?.source)
+    }
+
     func testMigrationKeepsSeparateIdentitiesAndEveryReference() throws {
         let original = legacy([source(), source("source-b")])
         let result = try original.validated()

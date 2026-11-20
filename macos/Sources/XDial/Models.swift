@@ -1,6 +1,6 @@
 import Foundation
 
-struct Line: Codable, Identifiable, Hashable {
+struct Line: Codable, Identifiable, Hashable, Sendable {
     // Runtime projection retains protocol identity ownership across global Scenarios.
     var identityProfileID: String = ""
     var identityHostname: String = ""
@@ -57,6 +57,7 @@ struct Line: Codable, Identifiable, Hashable {
     var tailscaleMagicDNS: Bool = false
 
     // 跳过 TLS 证书验证（自签场景显式开启）。默认 false=验证证书。
+    var tailscaleAuthenticated: Bool = false
     var allowInsecure: Bool = false
 
     enum CodingKeys: String, CodingKey {
@@ -69,6 +70,7 @@ struct Line: Codable, Identifiable, Hashable {
         case nativeOptions = "native_options"
         case id, name, type, enabled, verified
         case udp, tfo
+        case tailscaleAuthenticated = "tailscale_authenticated"
         case allowInsecure = "allow_insecure"
         case vpnServer = "vpn_server"
         case vpnUsername = "vpn_username"
@@ -110,7 +112,7 @@ struct Line: Codable, Identifiable, Hashable {
          anytlsMinIdleSession: Int = 0,
          udp: Bool? = nil, tfo: Bool = false,
          tailscaleExitNode: String = "", tailscaleMagicDNS: Bool = false,
-         allowInsecure: Bool = false) {
+         tailscaleAuthenticated: Bool = false, allowInsecure: Bool = false) {
         self.id = id; self.name = name; self.type = type; self.enabled = enabled; self.verified = verified
         self.vpnServer = vpnServer; self.vpnUsername = vpnUsername; self.vpnPassword = vpnPassword
         self.trojanServer = trojanServer; self.trojanPort = trojanPort; self.trojanPassword = trojanPassword; self.trojanSNI = trojanSNI
@@ -129,11 +131,13 @@ struct Line: Codable, Identifiable, Hashable {
         self.tfo = tfo
         self.tailscaleExitNode = tailscaleExitNode
         self.tailscaleMagicDNS = tailscaleMagicDNS
+        self.tailscaleAuthenticated = tailscaleAuthenticated
         self.allowInsecure = allowInsecure
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        tailscaleAuthenticated = try c.decodeIfPresent(Bool.self, forKey: .tailscaleAuthenticated) ?? false
         identityProfileID = try c.decodeIfPresent(String.self, forKey: .identityProfileID) ?? ""
         identityHostname = try c.decodeIfPresent(String.self, forKey: .identityHostname) ?? ""
         groupMembers = try c.decodeIfPresent([String].self, forKey: .groupMembers) ?? []
@@ -280,7 +284,7 @@ struct Line: Codable, Identifiable, Hashable {
     }
 }
 
-struct TailscaleIdentity: Codable, Hashable {
+struct TailscaleIdentity: Codable, Hashable, Sendable {
     var hostname: String = ""
 
     init(hostname: String = "") { self.hostname = hostname }
@@ -294,6 +298,7 @@ struct TailscaleIdentity: Codable, Hashable {
     }
 }
 
+#if os(macOS)
 struct TailscaleRuntimeExitNode: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
@@ -320,9 +325,11 @@ struct TailscaleRuntimeStatus: Decodable, Hashable {
     var isRunning: Bool { backendState.lowercased() == "running" }
 }
 
+#endif
+
 /// 一个被用户选入应用 RuleSet 的 App Bundle。Bundle ID 用于 macOS 直接提供的
 /// source-app 归因，规范化 Bundle 路径用于 audit token 可解析时的交叉验证和兜底。
-struct ApplicationRuleApplication: Codable, Identifiable, Hashable {
+struct ApplicationRuleApplication: Codable, Identifiable, Hashable, Sendable {
     var name: String
     var path: String
     var bundleIdentifier: String?
@@ -367,7 +374,7 @@ struct ApplicationRuleApplication: Codable, Identifiable, Hashable {
     }
 }
 
-struct RuleSet: Codable, Identifiable, Hashable {
+struct RuleSet: Codable, Identifiable, Hashable, Sendable {
     var conditions: [RuleSet] = []
     var matchingResources: [RuleSet] { type == "group" ? conditions : [self] }
     func contentSummary(chinese: Bool) -> String {
@@ -653,7 +660,7 @@ struct RuleSet: Codable, Identifiable, Hashable {
     }
 }
 
-struct RuleBinding: Codable, Hashable, Identifiable {
+struct RuleBinding: Codable, Hashable, Identifiable, Sendable {
     var conditionIDs: [String] = []
     var ruleSetID: String
     var lineID: String = ""
@@ -701,7 +708,7 @@ struct RuleBinding: Codable, Hashable, Identifiable {
     }
 }
 
-struct SubProxyGroup: Codable, Hashable {
+struct SubProxyGroup: Codable, Hashable, Sendable {
     var name: String
     var type: String
     var proxies: [String] = []
@@ -740,7 +747,7 @@ struct SubProxyGroup: Codable, Hashable {
     }
 }
 
-struct SubRule: Codable, Hashable {
+struct SubRule: Codable, Hashable, Sendable {
     var options: String = ""
     var type: String
     var value: String = ""
@@ -759,7 +766,7 @@ struct SubRule: Codable, Hashable {
     }
 }
 
-struct Subscription: Codable, Identifiable, Hashable {
+struct Subscription: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var name: String
     var url: String
@@ -819,7 +826,7 @@ struct Subscription: Codable, Identifiable, Hashable {
     }
 }
 
-struct Scenario: Codable, Identifiable, Hashable {
+struct Scenario: Codable, Identifiable, Hashable, Sendable {
     var matchOrder: [String] = []
     var id: String
     var name: String
@@ -877,12 +884,12 @@ struct Scenario: Codable, Identifiable, Hashable {
     }
 }
 
-struct ImportAdjustment: Codable, Hashable {
+struct ImportAdjustment: Codable, Hashable, Sendable {
     var code: String
     var count: Int
 }
 
-struct Profile: Codable, Hashable {
+struct Profile: Codable, Hashable, Sendable {
     var profileID: String = ""
     var importWarnings: [SubRule] = []
     var importAdjustments: [ImportAdjustment] = []
@@ -975,6 +982,7 @@ struct Profile: Codable, Hashable {
     }
 }
 
+#if os(macOS)
 extension Profile {
     var usesSSIDScenarioMatching: Bool {
         scenarios.contains { scenario in
@@ -1040,6 +1048,8 @@ extension Profile {
         )
     }
 }
+
+#endif
 
 // Group membership is private to its shared RuleSet; editors can still validate
 // a leaf change against the complete Profile without exposing extra navigation.

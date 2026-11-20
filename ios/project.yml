@@ -14,6 +14,8 @@ configs:
 
 settings:
   base:
+    XDIAL_ICLOUD_CONTAINER: iCloud.com.xd.xdial
+    XDIAL_ICLOUD_ENVIRONMENT: Production
     DEVELOPMENT_TEAM: SX9RG894L5
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
@@ -163,13 +165,18 @@ targets:
       - path: ../appletv/XDialTV/GoEngine.swift
       - path: ../appletv/XDialTV/KeychainStore.swift
       - path: ../appletv/XDialTV/Localization.swift
-      - path: ../appletv/XDialTV/Models.swift
+      - path: ../appletv/XDialTV/MobileProfile.swift
+      - path: ../macos/Sources/XDial/Models.swift
+      - path: ../macos/Shared/JSONValue.swift
+      - path: ../apple/Sync
+
       - path: ../appletv/XDialTV/OnDemandStartEnvelope.swift
       - path: ../appletv/XDialTV/TunnelManager.swift
       - path: ../macos/Shared/AutomaticConnectionPolicy.swift
     info:
       path: XDialIOS/Info.plist
       properties:
+        XDialCloudContainer: $(XDIAL_ICLOUD_CONTAINER)
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
@@ -180,6 +187,9 @@ targets:
     entitlements:
       path: XDialIOS/XDialIOS.entitlements
       properties:
+        com.apple.developer.icloud-container-identifiers: [$(XDIAL_ICLOUD_CONTAINER)]
+        com.apple.developer.icloud-container-environment: $(XDIAL_ICLOUD_ENVIRONMENT)
+        com.apple.developer.icloud-services: [CloudKit]
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         # 读当前 Wi-Fi 名称，用来按场景登记的 Wi-Fi 自动选场景。

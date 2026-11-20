@@ -58,6 +58,8 @@
 	<string>$(CONFIGURATION)</string>
 	<key>XDialBuildFlavor</key>
 	<string>$(XDIAL_BUILD_FLAVOR)</string>
+	<key>XDialCloudContainer</key>
+	<string>$(XDIAL_ICLOUD_CONTAINER)</string>
 	<key>XDialReleaseTag</key>
 	<string>$(XDIAL_RELEASE_TAG)</string>
 	<key>XDialSourceRevision</key>

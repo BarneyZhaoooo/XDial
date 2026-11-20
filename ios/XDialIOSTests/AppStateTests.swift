@@ -2587,6 +2587,50 @@ final class AppStateTests: XCTestCase {
         )
     }
 
+    func testCloudProfileSurvivesMobileSaveReloadAndTunnelPreparation() throws {
+        let persistence = makePersistence()
+        let app = AppState(engine: NoopTunnelEngine(), persistence: persistence)
+        var incoming = Profile()
+        var proxy = Line(id: "tls", name: "TLS", type: "anytls")
+        proxy.anytlsServer = "proxy.example.test"
+        proxy.anytlsPassword = "fixture-private-password"
+        proxy.nativeOptions = .object(["tls": .object(["enabled": .bool(true)])])
+        var pool = Line(id: "pool", name: "Pool", type: "selector")
+        pool.groupMembers = ["tls"]
+        pool.groupDefault = "tls"
+        incoming.lines = [Line(id: "direct", name: "直连", type: "direct", verified: true), proxy, pool]
+        let signedURL = "https://example.test/fixture-private-url"
+        var domain = RuleSet(id: "domain", name: "Domain", type: "native")
+        domain.nativeRule = .object(["domain_suffix": .array([.string("example.test")])])
+        incoming.ruleSets = [RuleSet(id: "rules", name: "Rules", type: "group", conditions: [
+            domain, RuleSet(id: "remote", name: "Remote", type: "url", url: signedURL, format: "binary", fetchLineID: "tls")
+        ])]
+        incoming.scenarios = [Scenario(id: "work", name: "Work", matchSSIDs: ["Work Wi-Fi"],
+            bindings: [RuleBinding(ruleSetID: "rules", lineID: "pool", conditionIDs: ["domain"])],
+            defaultLineID: "pool", matchOrder: ["domain"])]
+        incoming.activeScenarioID = "work"
+        try app.applyCloudConfiguration(CloudConfiguration(profile: incoming, settings: [:]))
+        let stored = try XCTUnwrap(persistence.defaults.data(forKey: persistence.profileKey))
+        let plaintext = String(decoding: stored, as: UTF8.self)
+        XCTAssertFalse(plaintext.contains("fixture-private"))
+        let reloaded = AppState(engine: NoopTunnelEngine(), persistence: persistence)
+        XCTAssertEqual(try reloaded.cloudConfiguration().profile, incoming)
+        XCTAssertEqual(reloaded.activeConfigurationIssues, [])
+        let profile = reloaded.profile
+        XCTAssertEqual(profile.scenarios.first?.matchOrder, [RuleSet.connectivityDirectID, RuleSet.connectivityOutboundID, "domain"])
+        let json = String(decoding: try CloudConfiguration.encode(profile), as: UTF8.self)
+        let plan = try TunnelAcceptancePlan.make(profile: profile, profileJSON: json, anyConnect: nil)
+        XCTAssertEqual(plan.currentRouteTag, "proxy-pool")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let session = try TunnelManager.generateStartSession(profileJSON: json, server: "", basePath: dir.path,
+            scenarioID: "work", scenarioName: "Work", cachedOnly: true).get()
+        XCTAssertTrue(session.configJSON.contains("example.test"))
+        XCTAssertTrue(session.configJSON.contains("proxy-pool"))
+        XCTAssertFalse(session.configJSON.contains("fixture-private-url"))
+    }
+
     func testPlaintextEnvelopeIsRewrittenIntoSecureVault() throws {
         let persistence = makePersistence()
         let legacyRevision = "plaintext-envelope-revision"

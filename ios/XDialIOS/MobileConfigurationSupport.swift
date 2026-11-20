@@ -129,13 +129,15 @@ enum MobileConfigurationService {
 
     static func sanitizedForExport(_ profile: Profile) -> Profile {
         var sanitized = profile
-        for ruleIndex in sanitized.ruleSets.indices {
-            guard sanitized.ruleSets[ruleIndex].type == "url" else { continue }
-            // 签名地址的 token 既可能在 query，也可能在 path。截掉其中一部分会生成
-            // 看似有效、实际必然失败的规则，因此导出时清空并停用，等待用户重新填写。
-            sanitized.ruleSets[ruleIndex].url = ""
-            sanitized.ruleSets[ruleIndex].enabled = false
+        func redact(_ rule: inout RuleSet) {
+            if rule.type == "url" {
+                rule.url = ""
+                rule.enabled = false
+            }
+            for index in rule.conditions.indices { redact(&rule.conditions[index]) }
         }
+        for index in sanitized.ruleSets.indices { redact(&sanitized.ruleSets[index]) }
+        sanitized.importWarnings = []
         for index in sanitized.lines.indices {
             removeCredentials(from: &sanitized.lines[index])
         }
@@ -155,6 +157,10 @@ enum MobileConfigurationService {
     }
 
     private static func removeCredentials(from line: inout Line) {
+        line.anytlsPassword = ""
+        line.anytlsServer = removingURLCredentials(line.anytlsServer)
+        line.groupURL = ""
+        line.nativeOptions = nil
         line.vpnUsername = ""
         line.vpnPassword = ""
         line.trojanPassword = ""
@@ -216,14 +222,14 @@ enum MobileConfigurationService {
         }
     }
 
-    private static func validate(_ profile: Profile) throws {
+    static func validate(_ profile: Profile) throws {
         try validateIDs(profile.lines.map(\.id), kind: "line")
         try validateIDs(profile.ruleSets.map(\.id), kind: "rule")
         try validateIDs(profile.scenarios.map(\.id), kind: "scenario")
         try validateIDs(profile.subscriptions.map(\.id), kind: "subscription")
 
         let supportedLineTypes: Set<String> = [
-            "direct", "vpn", "trojan", "shadowsocks", "ss", "vmess", "tailscale",
+            "direct", "vpn", "trojan", "shadowsocks", "ss", "vmess", "tailscale", "selector", "urltest", "anytls",
         ]
         let allLines = profile.lines + profile.subscriptions.flatMap(\.lines)
         if let unsupported = allLines.first(where: { !supportedLineTypes.contains($0.type) }) {
@@ -287,8 +293,8 @@ enum MobileConfigurationService {
             throw MobileConfigurationError.invalidActiveScenario
         }
 
-        let supportedRuleTypes: Set<String> = ["url", "manual"]
-        for rule in profile.ruleSets {
+        let supportedRuleTypes: Set<String> = ["url", "manual", "native", "group", "application"]
+        for rule in profile.ruleSets + profile.ruleSets.flatMap(\.conditions) {
             guard supportedRuleTypes.contains(rule.type) else {
                 throw MobileConfigurationError.invalidReference("rule.type")
             }
@@ -299,7 +305,7 @@ enum MobileConfigurationService {
             if !rule.url.isEmpty, rule.type == "url", !isHTTPSRemoteAddress(rule.url) {
                 throw MobileConfigurationError.invalidReference("rule.url")
             }
-            if rule.type == "url", !["", "auto", "srs", "json", "text"].contains(rule.format) {
+            if rule.type == "url", !["", "auto", "srs", "binary", "json", "source", "text"].contains(rule.format) {
                 throw MobileConfigurationError.invalidReference("rule.format")
             }
         }
@@ -509,13 +515,23 @@ enum MobileDiagnosticsService {
     private static func sensitiveValues(in profile: Profile) -> Set<String> {
         var values = Set<String>()
 
+        func collectOptions(_ option: JSONValue) {
+            switch option {
+            case let .object(fields): fields.values.forEach(collectOptions)
+            case let .array(items): items.forEach(collectOptions)
+            case let .string(value): if !value.isEmpty { values.insert(value) }
+            default: break
+            }
+        }
+
         func collect(_ line: Line) {
+            if let options = line.nativeOptions { collectOptions(options) }
             for value in [
                 line.vpnServer, line.vpnUsername, line.vpnPassword,
                 line.trojanServer, line.trojanPassword, line.trojanSNI,
                 line.ssServer, line.ssPassword,
                 line.vmessServer, line.vmessUUID,
-                line.tailscaleExitNode,
+                line.tailscaleExitNode, line.anytlsServer, line.anytlsPassword, line.anytlsSNI, line.groupURL,
             ] where !value.isEmpty {
                 values.insert(value)
             }
@@ -525,7 +541,8 @@ enum MobileDiagnosticsService {
         if !profile.tailscale.hostname.isEmpty {
             values.insert(profile.tailscale.hostname)
         }
-        for ruleSet in profile.ruleSets where !ruleSet.url.isEmpty {
+        for warning in profile.importWarnings where !warning.value.isEmpty { values.insert(warning.value) }
+        for ruleSet in profile.matchingResources where !ruleSet.url.isEmpty {
             values.insert(ruleSet.url)
         }
         for subscription in profile.subscriptions {
