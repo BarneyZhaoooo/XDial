@@ -140,6 +140,22 @@ struct TunnelAcceptanceTarget: Codable, Sendable, Equatable {
     let label: String
 }
 
+struct LineProbeReading: Equatable {
+    let label: String
+    let result: ConnectionTimeline.Result
+
+    static func warning(_ readings: [Self], isChinese: Bool) -> String? {
+        guard readings.contains(where: { $0.result != .ok }) else { return nil }
+        return readings.map { reading in
+            switch reading.result {
+            case .ok: return reading.label + (isChinese ? "探测通过" : " probe passed")
+            case .timeout: return reading.label + (isChinese ? "探测超时" : " probe timed out")
+            default: return reading.label + (isChinese ? "探测失败" : " probe failed")
+            }
+        }.joined(separator: isChinese ? "，" : ", ")
+    }
+}
+
 struct TunnelAcceptancePlan: Codable, Sendable, Equatable {
     let requiresAnyConnect: Bool
     /// nil 只允许用于真正的单出口 Direct 场景。非 nil 时，它是配置页可见的
@@ -1194,6 +1210,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
     /// 连接离开 connected 时，补测状态随之作废；下次连上会做完整验收。
     private func resetDegradedRecheck() {
+        engine?.lineProbeReadings = []
         recheckPolicy.clearDegraded()
         dataPathProbeIsRecheck = false
         dataPathProbeStage = nil
@@ -1741,6 +1758,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         let attemptID = activeStartAttemptID
         let acceptancePlan = activeAcceptancePlan
         dataPathVerified = false
+        if !isRecheck { engine?.lineProbeReadings = [] }
         if isRecheck {
             engine?.dataPathRechecking = true
             appLog("DataPathProbe: recheck begin")
@@ -2133,6 +2151,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
 
     private func probeLines(_ targets: [TunnelAcceptanceTarget]) async -> [String: OutboundAddressProbeResult] {
+        let probeID = dataPathProbeID
         recordProbeCheckpoint("开始线路试拨")
         var results: [String: OutboundAddressProbeResult] = [:]
         await withTaskGroup(of: (TunnelAcceptanceTarget, OutboundAddressProbeResult).self) { group in
@@ -2148,8 +2167,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 }
             }
             for await (target, probe) in group {
-                guard !Task.isCancelled else { continue }
+                guard !Task.isCancelled, probeID != nil, probeID == dataPathProbeID else { continue }
                 results[target.tag] = probe
+                engine?.lineProbeReadings = targets.compactMap { target in
+                    guard let reading = results[target.tag] else { return nil }
+                    return LineProbeReading(label: target.label, result: reading.address != nil
+                        ? .ok : ConnectionTimeline.classify(probeFailure: reading.failure))
+                }
                 recordTimeline(
                     "check.line",
                     result: probe.address != nil ? .ok
@@ -3083,6 +3107,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         activeAcceptancePlan = plan
         guard let connection = manager?.connection, connection.status == .connected else { return }
+        engine?.lineProbeReadings = []
         // 切换不断开连接：自检没通过时保留连接并提示，不按首次连接的规则断开。
         verifyDataPath(for: connection, isRecheck: true)
     }

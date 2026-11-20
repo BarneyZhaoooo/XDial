@@ -79,6 +79,7 @@ protocol TunnelEngine: AnyObject {
     var status: String { get }
     var lastError: String? { get set }
     var dataPathSummary: String? { get set }
+    var lineProbeReadings: [LineProbeReading] { get }
     /// 自检没通过、连接保留期间正在补测。只有真实隧道会补测，其余实现恒为 false。
     var dataPathRechecking: Bool { get }
     var connectedAt: Date? { get }
@@ -128,6 +129,7 @@ protocol TunnelEngine: AnyObject {
 }
 
 extension TunnelEngine {
+    var lineProbeReadings: [LineProbeReading] { [] }
     var dataPathVerifiedPublisher: AnyPublisher<Void, Never> { Empty().eraseToAnyPublisher() }
     var dataPathRechecking: Bool { false }
     var connectedAt: Date? { nil }
@@ -1295,6 +1297,9 @@ final class AppState: ObservableObject {
             updatePendingRuntimeChanges()
         }
 
+        if current == "connected" || current == "action-required" || current == "reconnecting" {
+            openConnectPending = false
+        }
         if current == "connected" {
             if previous == "action-required" {
                 let running = Set((runningProfileSnapshot?.lines ?? []).filter { $0.enabled && $0.type == "tailscale" }.map(\.id))
@@ -1382,6 +1387,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    func cancelPendingLaunchConnection() {
+        openConnectPending = false
+    }
+
     /// 打开 XDial 后自动连接一次。首页在 App 回到前台、读完系统里的连接状态并按网络选好场景后调用。
     /// 已连接、正在连接、配置或账号不完整时不发起；不重试，失败交给已有的掉线重连规则（它不重试首次连接失败）。
     @discardableResult
@@ -1391,6 +1400,9 @@ final class AppState: ObservableObject {
         await refreshTunnelProfileStatusAndWait()
         // 等待期间用户可能已经点了连接或断开，那就以用户为准。
         guard openConnectPending, !Task.isCancelled, contextIsCurrent() else { return false }
+        // A system cold start can fail before reaching connected. Let the next idle
+        // transition finish this launch decision without racing the system start.
+        guard engine.status != "connecting", engine.status != "disconnecting" else { return false }
         openConnectPending = false
         guard AutomaticConnectionPolicy.shouldConnectOnLaunch(
             enabled: connectOnOpenEnabled,

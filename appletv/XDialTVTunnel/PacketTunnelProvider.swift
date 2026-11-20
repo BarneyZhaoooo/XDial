@@ -718,6 +718,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         #endif
         setLastError(error.localizedDescription)
         recordDiagnostic(diagnosticStage)
+        // iOS may terminate this extension immediately after the failure callback.
+        timeline?.flush()
         monitor?.cancel()
         completion?.finish(error)
     }
@@ -1284,10 +1286,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // 的完整手动契约，就必须按冷启动处理，不能误读为旧版手动启动。
         do {
             #if os(iOS)
-            guard case .available(let envelope) = OnDemandStartEnvelopeStore.load() else {
-                return nil
+            recordTimeline("start_envelope_read")
+            switch OnDemandStartEnvelopeStore.load() {
+            case .available(let envelope):
+                let bundle = StartBundle.from(envelope: envelope, fromSecureEnvelope: true)
+                recordTimeline("start_envelope_decoded", result: bundle == nil ? .failed : .ok)
+                return bundle
+            case .missing:
+                recordTimeline("start_envelope_missing", result: .failed)
+            case .unavailable(let status):
+                recordTimeline("start_envelope_unavailable", result: .failed, detail: "keychain=\(status)")
+            case .corrupt:
+                recordTimeline("start_envelope_invalid", result: .failed)
             }
-            return StartBundle.from(envelope: envelope, fromSecureEnvelope: true)
+            return nil
             #else
             return nil
             #endif
@@ -2127,8 +2139,8 @@ extension PacketTunnelProvider {
             }
             var error: NSError?
             let address = prepared
-                ? engine.probePreparedSwitchOutboundIP(tag, timeoutMS: 6_000, error: &error)
-                : engine.probeOutboundIP(tag, timeoutMS: 6_000, error: &error)
+                ? engine.probePreparedSwitchOutboundIP(tag, timeoutMS: 10_000, error: &error)
+                : engine.probeOutboundIP(tag, timeoutMS: 10_000, error: &error)
             guard error == nil, !address.isEmpty else {
                 throw scenarioError("新场景的线路暂时不可用：\(error?.localizedDescription ?? "出口无回应")")
             }
@@ -2504,8 +2516,10 @@ extension PacketTunnelProvider {
                 self.settledSurvey = .init(context: context, at: surveyStart)
             }
             state.lastSurvey = survey
-            // 这次没判断出来（比如刚好断网）就保留上一次的结论。
-            guard let pick else { return }
+            guard let pick else {
+                state.suggestedScenarioID = nil
+                return
+            }
             state.lastPick = pick
             guard pick.scenarioID != runningID else {
                 state.suggestedScenarioID = nil

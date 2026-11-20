@@ -3577,6 +3577,28 @@ final class ConnectOnOpenTests: XCTestCase {
         }
     }
 
+    func testOpeningDuringFailedSystemStartHandsOffOnceWhenIdle() async {
+        let (app, engine, manager) = launch(makePersistence(connectOnOpen: true))
+        engine.setStatus("connecting")
+        _ = await app.connectAfterOpeningIfWanted()
+        XCTAssertEqual(manager.startCallCount, 0)
+        engine.setStatus("disconnected")
+        _ = await app.connectAfterOpeningIfWanted()
+        _ = await app.connectAfterOpeningIfWanted()
+        XCTAssertEqual(manager.startCallCount, 1)
+        XCTAssertEqual(manager.lastOrigin, .launch)
+    }
+
+    func testSuccessfulSystemStartConsumesLaunchDecision() async {
+        let (app, engine, manager) = launch(makePersistence(connectOnOpen: true))
+        engine.setStatus("connecting")
+        _ = await app.connectAfterOpeningIfWanted()
+        engine.setStatus("connected")
+        engine.setStatus("disconnected")
+        _ = await app.connectAfterOpeningIfWanted()
+        XCTAssertEqual(manager.startCallCount, 0)
+    }
+
     func testIncompleteAccountIsSkippedWithoutRetrying() async {
         let (app, _, manager) = launch(makePersistence(connectOnOpen: true))
         app.profile.lines[1].vpnPassword = ""

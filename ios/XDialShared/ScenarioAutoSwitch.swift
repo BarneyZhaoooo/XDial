@@ -220,6 +220,9 @@ struct TunnelScenarioState: Codable, Equatable, Sendable {
     var runningScenarioID: String?
     /// 最近一次判断的结论。没判断出来时保留上一次。
     var lastPick: ScenarioAutoPick?
+    var currentPick: ScenarioAutoPick? {
+        lastSurvey?.picked == false ? nil : lastPick
+    }
     var lastSurvey: ScenarioSurveyRecord?
     /// 判断出该换、却因为十分钟内刚换过而没有自动换的场景。App 显示为建议。
     var suggestedScenarioID: String?
