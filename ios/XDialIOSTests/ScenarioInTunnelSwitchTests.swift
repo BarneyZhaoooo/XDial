@@ -5,6 +5,26 @@ import XCTest
 // MARK: - 共用规则
 
 final class ScenarioAutoSwitchRuleTests: XCTestCase {
+    func testSwitchDeadlineIncludesQueueAndPreparationTime() throws {
+        let request = ScenarioSwitchDeadline(now: 100)
+        let provider = ScenarioSwitchDeadline(requested: request.uptime, now: 125)
+        XCTAssertEqual(provider.uptime, 160)
+        // Slow successful probes cannot extend the transaction indefinitely.
+        for index in 0..<6 {
+            XCTAssertEqual(try provider.probeTimeoutMS(now: 100 + Double(index) * 9), 10_000)
+        }
+        XCTAssertEqual(try provider.probeTimeoutMS(now: 158), 2_000)
+        XCTAssertThrowsError(try provider.probeTimeoutMS(now: 160))
+        XCTAssertThrowsError(try provider.probeTimeoutMS(now: 190))
+        XCTAssertLessThan(request.uptime - 100, ScenarioSwitchDeadline.replySeconds)
+    }
+
+    func testSwitchDeadlineCannotBeExtendedByPeer() {
+        XCTAssertEqual(ScenarioSwitchDeadline(requested: 500, now: 100).uptime, 160)
+        XCTAssertEqual(ScenarioSwitchDeadline(requested: 90, now: 100).uptime, 90)
+        XCTAssertEqual(ScenarioSwitchDeadline(requested: .nan, now: 100).uptime, 100)
+    }
+
     func testCatalogCompletionPreservesPolicyChangesAndCannotReviveClearedBuilds() {
         let enabled = ScenarioAutoPolicy(enabled: true, wifiRules: [], regionScenarios: [:], scenarioIDs: ["a"])
         var disabled = enabled

@@ -5,6 +5,29 @@ import CryptoKit
 // App 与 VPN 扩展共用的自动选场景规则、扩展上报的场景状态，以及共享 Keychain 里的场景目录。
 // 只依赖 Foundation / Security：小组件也编译这个目录。
 
+/// One monotonic deadline travels from the App through queueing, preparation and probes.
+/// Leave 30 seconds before the App watchdog for abort/restore and the reply.
+struct ScenarioSwitchDeadline: Sendable {
+    static let requestKey = "scenario_deadline_uptime"
+    static let operationSeconds: TimeInterval = 60
+    static let replySeconds: TimeInterval = 90
+    let uptime: TimeInterval
+
+    init(requested: TimeInterval? = nil, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        let local = now + Self.operationSeconds
+        uptime = requested.map { $0.isFinite ? min($0, local) : now } ?? local
+    }
+
+    func probeTimeoutMS(now: TimeInterval = ProcessInfo.processInfo.systemUptime) throws -> Int {
+        let remaining = min(10, uptime - now)
+        guard remaining >= 0.001 else {
+            throw NSError(domain: "XDial.ScenarioSwitch", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "场景切换超时，未提交新场景"])
+        }
+        return Int(remaining * 1_000)
+    }
+}
+
 // MARK: - 判断规则
 
 /// Main actor owned catalog build state. Policy changes survive the first build;

@@ -3000,13 +3000,14 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                   "cmd": reapply ? "scenario-reapply" : "scenario-switch",
                   "scenario_id": scenarioID,
                   "catalog_revision": revision,
+                  ScenarioSwitchDeadline.requestKey: ScenarioSwitchDeadline().uptime,
               ]) else {
             return .failed("VPN 扩展不可用", nil)
         }
         return await withCheckedContinuation { continuation in
             let oneShot = OneShotContinuation<ScenarioSwitchReply>(continuation)
-            // 准备新场景可能要连 AnyConnect 并逐条确认出口；扩展侧每一步都有自己的时限。
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 90) {
+            // 请求携带整次切换的截止时间；watchdog 额外留出中止、恢复与回包时间。
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + ScenarioSwitchDeadline.replySeconds) {
                 oneShot.finish(.failed("VPN 扩展没有及时回应", nil))
             }
             do {
@@ -3035,11 +3036,14 @@ final class TunnelManager: ObservableObject, TunnelManaging {
 
     func requestScenarioEvaluation() async -> ScenarioEvaluationReply {
         guard let session = providerSession else { return .unavailable }
-        let request = Data("{\"cmd\":\"scenario-evaluate\"}".utf8)
+        guard let request = try? JSONSerialization.data(withJSONObject: [
+            "cmd": "scenario-evaluate",
+            ScenarioSwitchDeadline.requestKey: ScenarioSwitchDeadline().uptime,
+        ]) else { return .unavailable }
         return await withCheckedContinuation { continuation in
             let oneShot = OneShotContinuation<ScenarioEvaluationReply>(continuation)
             // 读 Wi-Fi 名称最多 3 秒、查出口最多 8 秒，判断出要切换时还要等切换结束。
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 90) {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + ScenarioSwitchDeadline.replySeconds) {
                 oneShot.finish(.unavailable)
             }
             do {
