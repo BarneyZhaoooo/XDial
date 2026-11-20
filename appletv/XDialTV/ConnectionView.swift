@@ -3,8 +3,7 @@ import SwiftUI
 /// 主视图：连接状态 + 当前场景 + 连接/断开按钮 + 进入场景选择/凭据/设置的导航入口。
 ///
 /// 完全数据驱动：只读 AppState 暴露的派生属性（statusText / isConnected / isBusy /
-/// canConnect / activeScenario），不硬编码任何具体连接结果。引擎层未接入时，
-/// NoopTunnelEngine 让状态停在 "disconnected"，视图照常渲染。
+/// canConnect / activeScenario），不硬编码任何具体连接结果。
 struct ConnectionView: View {
     @EnvironmentObject private var app: AppState
 

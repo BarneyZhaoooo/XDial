@@ -65,13 +65,8 @@ private final class StopCompletionGate: @unchecked Sendable {
 ///     gomobile 导出面,方法名遵循 gomobile 首字母小写惯例)。
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
-    #if os(iOS)
     private static let appGroupID = XDialIdentity.appGroup
-    private static let subsystem = "com.xd.xdial.ios.tunnel"
-    #else
-    private static let appGroupID = "group.com.kafeifei.xdialtv"
-    private static let subsystem = "com.kafeifei.xdialtv.tunnel"
-    #endif
+    private static let subsystem = XDialIdentity.tunnelBundleIdentifier
 
     /// 仅用于读取并清理早期版本留在 App Group 的启动参数。
     /// 新版本不会再写这些 key，完整配置统一通过一次性 start options 交付。
@@ -2632,12 +2627,7 @@ extension PacketTunnelProvider {
 
 /// 静态版错误构造:供 startTunnel 内 `[weak self]` 闭包在 self 已释放时使用。
 private func providerErrorStatic(_ code: Int, _ message: String) -> NSError {
-    #if os(iOS)
-    let domain = "com.xd.xdial.ios.tunnel"
-    #else
-    let domain = "com.kafeifei.xdialtv.tunnel"
-    #endif
-    return NSError(domain: domain, code: code,
+    return NSError(domain: XDialIdentity.tunnelBundleIdentifier, code: code,
             userInfo: [NSLocalizedDescriptionKey: message])
 }
 

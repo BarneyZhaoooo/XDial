@@ -355,6 +355,7 @@ enum MobileConfigurationService {
     }
 }
 
+#if os(iOS)
 struct MobileJSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
 
@@ -375,6 +376,8 @@ struct MobileJSONDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
+
+#endif
 
 enum MobileDiagnosticsService {
     static func report(

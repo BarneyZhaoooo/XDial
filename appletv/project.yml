@@ -1,11 +1,23 @@
 name: XDialTV
 options:
-  bundleIdPrefix: com.kafeifei
+  bundleIdPrefix: com.xd
   deploymentTarget:
     tvOS: "17.0"
 configs:
   Debug: debug
   Release: release
+
+settings:
+  base:
+    # tvOS shares the iOS product identity (one App Store record). Override
+    # these with `xcodebuild -xcconfig` when another team builds it.
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    DEVELOPMENT_TEAM: SX9RG894L5
+    CODE_SIGN_STYLE: Automatic
+    XDIAL_BUNDLE_ID: com.xd.xdial.ios
+    XDIAL_APP_GROUP: group.com.xd.xdial.ios
+    XDIAL_SHARED_KEYCHAIN_GROUP: SX9RG894L5.com.xd.xdial.shared
 
 targets:
   XDialTVTunnel:
@@ -18,10 +30,17 @@ targets:
       # 一直引用着它，tvOS 漏了，导致 tvOS 构建断裂。
       - path: XDialTV/OnDemandStartEnvelope.swift
       - path: XDialTV/ConnectionTimeline.swift
+      - path: ../ios/XDialShared/XDialIdentity.swift
     info:
       path: XDialTVTunnel/Info.plist
       properties:
         CFBundleDisplayName: XDial Tunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIRequiredDeviceCapabilities: [arm64]
+        XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
+        XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
+        XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
@@ -31,10 +50,12 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.com.kafeifei.xdialtv
+          - $(XDIAL_APP_GROUP)
+        keychain-access-groups:
+          - $(XDIAL_SHARED_KEYCHAIN_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kafeifei.xdialtv.tunnel
+        PRODUCT_BUNDLE_IDENTIFIER: $(XDIAL_BUNDLE_ID).tunnel
         SWIFT_VERSION: "6.0"
     dependencies:
       - framework: ../build/Libbox.xcframework
@@ -46,20 +67,62 @@ targets:
     platform: tvOS
     sources:
       - XDialTV
+      - path: StoreResources/ThirdPartyNotices.txt
+        optional: true
+        buildPhase: resources
+      - path: ../ios/XDialShared/XDialIdentity.swift
       - path: ../macos/Shared/AutomaticConnectionPolicy.swift
+      - path: ../ios/XDialIOS/MobileSeed.swift
+      - path: ../ios/XDialIOS/MobileConfigurationSupport.swift
+    info:
+      path: XDialTV/Info.plist
+      properties:
+        CFBundleDisplayName: XDial
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIRequiredDeviceCapabilities: [arm64]
+        XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
+        XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
+        XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
     entitlements:
       path: XDialTV/XDialTV.entitlements
       properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.com.kafeifei.xdialtv
+          - $(XDIAL_APP_GROUP)
+        keychain-access-groups:
+          - $(XDIAL_SHARED_KEYCHAIN_GROUP)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kafeifei.xdialtv
+        PRODUCT_BUNDLE_IDENTIFIER: $(XDIAL_BUNDLE_ID)
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME: LaunchImage
+    postBuildScripts:
+      # Only an explicit, authorized private input is embedded. Reused build
+      # directories must not leak a previous company's preset into a blank app.
+      - name: Embed authorized private configuration
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/PrivateConfig"
+          rm -rf "${destination}"
+          source_dir="${XDIAL_PRIVATE_CONFIG_DIR:-}"
+          [ -n "${source_dir}" ] || exit 0
+          if [ ! -f "${source_dir}/Seed.json" ]; then
+            echo "error: authorized private input must contain Seed.json" >&2
+            exit 1
+          fi
+          mkdir -p "${destination}"
+          cp "${source_dir}/Seed.json" "${destination}/Seed.json"
+          if [ -d "${source_dir}/RuleSets" ]; then
+            mkdir -p "${destination}/RuleSets"
+            find "${source_dir}/RuleSets" -maxdepth 1 -type f \( -name '*.srs' -o -name '*.json' \) \
+              -exec cp {} "${destination}/RuleSets/" \;
+          fi
     dependencies:
       - target: XDialTVTunnel
         embed: true

@@ -1200,7 +1200,7 @@ final class AppState: ObservableObject {
     }
 
     init(
-        engine: TunnelEngine = NoopTunnelEngine(),
+        engine: TunnelEngine,
         tunnelManager: TunnelManaging? = nil,
         tailscaleSetupRuntime: TailscaleSetupRuntime? = nil,
         persistence: AppPersistenceContext = .production,
@@ -1773,6 +1773,9 @@ final class AppState: ObservableObject {
     private func loadSaved() {
         let profileState = loadStoredProfile()
         let vaultState = KeychainStore.loadVaultState(context: persistence.keychain)
+        let pendingSeed = seed.flatMap {
+            persistence.defaults.integer(forKey: persistence.seedRevisionKey) < $0.revision ? $0 : nil
+        }
 
         switch profileState {
         case .missing:
@@ -1816,9 +1819,8 @@ final class AppState: ObservableObject {
             let profileBeforeNormalization = loaded
             normalizeLegacyProfile(&loaded)
             // 预置配置有新增时，给老配置补一次；每个 revision 只补一次，用户之后删掉的不会再回来。
-            if let seed, persistence.defaults.integer(forKey: persistence.seedRevisionKey) < seed.revision {
-                loaded.adding(seed: seed.profile, ruleSetHistory: seed.ruleSetHistory)
-                persistence.defaults.set(seed.revision, forKey: persistence.seedRevisionKey)
+            if let pendingSeed {
+                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory)
             }
             let normalizationChanged = loaded != profileBeforeNormalization
             profile = loaded
@@ -1831,7 +1833,7 @@ final class AppState: ObservableObject {
                 blockPersistence(with: loaded, log: "legacy secure-data cleanup is incomplete")
                 return
             }
-            if containedPlaintext || normalizationChanged {
+            if containedPlaintext || normalizationChanged || pendingSeed != nil {
                 // 早期 envelope 或中断迁移可能仍把账号/URL 留在 UserDefaults；
                 // revision 已匹配，可以安全地重写为严格脱敏格式，同时把旧版
                 // Tailscale verified 登录事实迁移到专用字段。
@@ -1840,6 +1842,8 @@ final class AppState: ObservableObject {
                     // UserDefaults。恢复入口只允许用户显式导入或重置。
                     persistenceRequiresRecovery = true
                     engine.lastError = persistenceRecoveryMessage
+                } else if let pendingSeed {
+                    persistence.defaults.set(pendingSeed.revision, forKey: persistence.seedRevisionKey)
                 }
             }
 
@@ -1872,11 +1876,18 @@ final class AppState: ObservableObject {
             let migration = restoreLegacyValues(legacyValues, into: &loaded)
             preexistingQuarantine.merge(migration.quarantine) { current, _ in current }
             normalizeLegacyProfile(&loaded)
+            if let pendingSeed {
+                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory)
+            }
             profile = loaded
             lastPersistedProfile = loaded
             quarantinedLegacyValues = preexistingQuarantine
             persistenceRequiresRecovery = false
-            if save(), migration.hadCollision || !preexistingQuarantine.isEmpty {
+            let saved = save()
+            if saved, let pendingSeed {
+                persistence.defaults.set(pendingSeed.revision, forKey: persistence.seedRevisionKey)
+            }
+            if saved, migration.hadCollision || !preexistingQuarantine.isEmpty {
                 engine.lastError = tr(
                     "旧版安全数据存在重名，相关凭据未自动迁移，请重新填写。",
                     "Some legacy secure data was ambiguous and was not migrated. Re-enter the affected credentials."
@@ -3079,35 +3090,6 @@ final class AppState: ObservableObject {
     func buildProfileJSON() -> String {
         guard let data = try? JSONEncoder().encode(profile) else { return "{}" }
         return String(data: data, encoding: .utf8) ?? "{}"
-    }
-}
-
-// MARK: - Noop engine (占位默认引擎)
-//
-// 在真实引擎层注入之前，AppState 需要一个满足 TunnelEngine 的默认引擎，
-// 保证状态机语义完整（能读 status、start/stop 只切状态、不做真实拨号）。
-// 并行引擎任务写好后，用 AppState(engine:) 注入真实引擎替换它。
-@MainActor
-final class NoopTunnelEngine: TunnelEngine, ObservableObject {
-    @Published private(set) var status: String = "disconnected"
-    @Published var lastError: String?
-    @Published var dataPathSummary: String?
-    var statusPublisher: AnyPublisher<String, Never> { $status.eraseToAnyPublisher() }
-
-    var isConnected: Bool { status == "connected" }
-    var isBusy: Bool { status == "connecting" || status == "disconnecting" || status == "reconnecting" }
-
-    func start(profileJSON: String) {
-        // TODO: 真实引擎接入后由具体实现完成拨号；占位仅记录调用点。
-        appLog("NoopTunnelEngine.start called (\(profileJSON.count) bytes) — no real engine bound")
-    }
-
-    func stop() {
-        appLog("NoopTunnelEngine.stop called — no real engine bound")
-    }
-
-    func syncStatus() {
-        // 占位：真实引擎会查询扩展/NEVPNManager 的当前状态并回填 status。
     }
 }
 

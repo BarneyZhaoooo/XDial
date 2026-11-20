@@ -9,11 +9,23 @@ struct ScenarioPickerView: View {
     @FocusState private var focusedScenarioID: String?
 
     var body: some View {
-        Group {
-            if app.profile.scenarios.isEmpty {
-                emptyState
-            } else {
-                scenarioList
+        List {
+            ForEach(app.profile.scenarios) { scenario in
+                Button { select(scenario) } label: { row(for: scenario) }
+                    .focused($focusedScenarioID, equals: scenario.id)
+                    .disabled(!app.canMutateConfiguration)
+            }
+            if !availableLines.isEmpty {
+                Section(app.tr("创建场景", "Create Scenario")) {
+                    ForEach(availableLines) { line in
+                        Button {
+                            createScenario(for: line)
+                        } label: {
+                            Label(lineName(line), systemImage: "plus")
+                        }
+                    }
+                }
+                .disabled(!app.canMutateConfiguration)
             }
         }
         .navigationTitle(app.tr("选择场景", "Select Scenario"))
@@ -23,17 +35,28 @@ struct ScenarioPickerView: View {
         }
     }
 
-    private var scenarioList: some View {
-        List {
-            ForEach(app.profile.scenarios) { scenario in
-                Button {
-                    select(scenario)
-                } label: {
-                    row(for: scenario)
+    // A public installation starts with Direct and an unconfigured AnyConnect
+    // line. Creating a scenario is explicit and never starts the tunnel.
+    private var availableLines: [Line] {
+        app.profile.lines.filter { line in
+            line.enabled && (line.type == "direct" || line.type == "vpn") &&
+                !app.profile.scenarios.contains { scenario in
+                    scenario.defaultLineID == line.id && scenario.defaultSubscriptionID.isEmpty &&
+                        scenario.bindings.allSatisfy { RuleSet.isConnectivityTestRuleID($0.ruleSetID) }
                 }
-                .focused($focusedScenarioID, equals: scenario.id)
-            }
         }
+    }
+
+    private func lineName(_ line: Line) -> String {
+        line.type == "direct" ? app.tr("直连", "Direct") : line.name
+    }
+
+    private func createScenario(for line: Line) {
+        guard app.canMutateConfiguration else { return }
+        let scenario = Scenario(id: UUID().uuidString, name: lineName(line), defaultLineID: line.id)
+        app.profile.scenarios.append(scenario)
+        if app.activeScenario == nil { app.profile.activeScenarioID = scenario.id }
+        if app.save() { focusedScenarioID = scenario.id }
     }
 
     private func row(for scenario: Scenario) -> some View {
@@ -52,27 +75,13 @@ struct ScenarioPickerView: View {
         .padding(.vertical, 8)
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "square.grid.2x2")
-                .font(.system(size: 80))
-                .foregroundStyle(.secondary)
-            Text(app.tr("暂无场景", "No scenarios yet"))
-                .font(.title2)
-            Text(app.tr("请从 Mac 端同步配置", "Sync configuration from your Mac"))
-                .font(.body)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private func isActive(_ scenario: Scenario) -> Bool {
         app.profile.activeScenarioID == scenario.id
     }
 
     /// 场景的分流规则数量作为副标题，纯数据派生，不依赖连接结果。
     private func subtitle(for scenario: Scenario) -> String {
-        let count = scenario.bindings.count
+        let count = scenario.bindings.filter { !RuleSet.isConnectivityTestRuleID($0.ruleSetID) }.count
         return app.tr("\(count) 条分流绑定", "\(count) binding(s)")
     }
 

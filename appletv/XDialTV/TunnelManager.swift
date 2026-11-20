@@ -28,13 +28,8 @@ import UIKit
 //     注入给 GoEngine.session,让 GoEngine 的 sendProviderMessage 落到真实扩展会话上。
 
 /// bundle id 与 App Group 必须和各平台 target 的 entitlement 一致。
-#if os(iOS)
 private let kTunnelBundleIdentifier = XDialIdentity.tunnelBundleIdentifier
 private let kAppGroupIdentifier = XDialIdentity.appGroup
-#else
-private let kTunnelBundleIdentifier = "com.kafeifei.xdialtv.tunnel"
-private let kAppGroupIdentifier = "group.com.kafeifei.xdialtv"
-#endif
 
 /// providerConfiguration 里携带的隧道自身描述名。
 private let kTunnelLocalizedDescription = "XDial"

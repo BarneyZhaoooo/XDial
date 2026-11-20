@@ -2,7 +2,7 @@
 
 ## Apple 平台的 TestFlight 身份
 
-iOS、原生 macOS 和未来的 tvOS 等平台使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
+iOS、原生 macOS 和 tvOS使用同一条 XDial App Store Connect 记录（Apple ID `6835229250`）。
 各平台商店构建的宿主 bundle ID 均为 `com.xd.xdial.ios`。扩展保留各自的子标识。
 macOS Developer ID 独立分发版沿用 `com.xd.xdial.app`，Debug 使用 `com.xd.xdial.debug`。
 
@@ -25,6 +25,32 @@ Mac App Store 描述文件及 Apple Distribution 签名，上传包使用 Mac In
 
 预填 `false` 的前提是只用标准加密，并且不在法国商店分发；正式归档不能沿用它。
 
+
+Apple TV 正式包定位为公司内部使用，保留企业预置；从 `appletv/project.yml` 生成。
+先用 `make libbox-xcframework` 构建 tvOS 引擎，将与实际链接版本核对过的许可文本放入
+`appletv/StoreResources/ThirdPartyNotices.txt`，再运行 `xcodegen generate --spec appletv/project.yml`。
+使用 `XDialTV` scheme、Release、`generic/platform=tvOS` 和获授权的 tvOS 签名配置归档。
+通过构建设置 `XDIAL_PRIVATE_CONFIG_DIR=<授权私有目录>` 注入与手机同来源的 `Seed.json`、可选 `RuleSets/`；
+不指定时生成无预置包，且清除上次构建留下的预置。私有内容、签名配置与凭据不得提交公开仓库。
+
+启动时由 `MobileSeed` 读取包内预置并传给 AppState，首启采用它；升级按 `revision` 添加缺失对象，
+保留用户凭据、修改和当前场景，使用 `rule_set_history` 保护已修改规则，每个 revision 成功落盘后才记账。
+连接前随包规则进入同一引擎缓存。Release 使用真实引擎；模拟器 Debug 的演示数据不得覆盖公司预置。
+tvOS 当前不执行手机的按出口地区自动选场景；`region_scenarios` 随同来源保留并校验，电视上由用户选择场景。
+
+分发前对归档和解开的 IPA **分别**验实际 `.app`，不能只检查构建设置或来源目录：
+
+```sh
+# 公司包：必须提供授权来源，严格核对 seed（含 revision/迁移历史）与规则内容
+python3 scripts/verify-tvos-store-app.py <XDialTV.app> --seed-authority <授权私有目录>
+# 无预置包：独立路径，必须不含 seed、随包规则或签名私密输入
+python3 scripts/verify-tvos-store-app.py <XDialTV.app>
+```
+
+两种路径均核对宿主与扩展的 XD 身份、签名、真实引擎、图标、隐私清单和无 LAN 实验。
+公司模式同时运行 `cmd/xdial-seed check --platform tvos` 校验移动格式和同来源规则，不能跳过 seed 校验。
+新公司正式包必须重新构建并采用新构建号，不得把旧 tvOS 70 当作最终交付。
+分发渠道由 Dash 另选；真机 VPN 授权、连接和断开、GPL 与版权仍需独立核实，脚本通过不等于已获分发许可。
 
 Android 的固定工具链、可安装测试包、签名校验与事件驱动 CI 见
 [Android 构建与测试分发](android-release.md)。两端构建入口不互相安装或重启。

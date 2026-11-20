@@ -84,20 +84,18 @@ try writePNG(
 
 // tvOS 分层图标：背景层满幅不透明，内容层只有拨号盘（透明），系统做视差。
 let tvRoot = "appletv/XDialTV/Assets.xcassets/App Icon & Top Shelf Image.brandassets"
-for scale in [1, 2] {
-    let width = 400 * scale
-    let height = 240 * scale
+for (stack, width, height) in [("App Icon", 400, 240), ("App Icon", 800, 480), ("App Icon - Store", 1280, 768)] {
     try writePNG(
         width: width,
         height: height,
         hasAlpha: false,
-        to: "\(tvRoot)/App Icon.imagestack/Back.imagestacklayer/Content.imageset/back-\(width)x\(height).png"
+        to: "\(tvRoot)/\(stack).imagestack/Back.imagestacklayer/Content.imageset/back-\(width)x\(height).png"
     ) { _ in }
     try writePNG(
         width: width,
         height: height,
         hasAlpha: true,
-        to: "\(tvRoot)/App Icon.imagestack/Content.imagestacklayer/Content.imageset/appicon-\(width)x\(height).png"
+        to: "\(tvRoot)/\(stack).imagestack/Content.imagestacklayer/Content.imageset/appicon-\(width)x\(height).png"
     ) { rect in
         AppIcon.drawDial(
             in: dialRect(in: rect, side: rect.height * 0.78),
@@ -114,4 +112,13 @@ try writePNG(
     to: "\(tvRoot)/Top Shelf Image.imageset/topshelf-1920x720.png"
 ) { rect in
     AppIcon.drawDial(in: dialRect(in: rect, side: 460), connected: true)
+}
+
+for scale in [1, 2] {
+    let width = 2320 * scale
+    let height = 720 * scale
+    try writePNG(width: width, height: height, hasAlpha: false,
+                 to: "\(tvRoot)/Top Shelf Wide.imageset/topshelf-\(width)x\(height).png") { rect in
+        AppIcon.drawDial(in: dialRect(in: rect, side: 460 * CGFloat(scale)), connected: true)
+    }
 }
