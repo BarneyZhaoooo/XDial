@@ -392,6 +392,7 @@ targets:
       - Sources/XDial/MenuBarRecoveryPolicy.swift
       - Sources/XDial/MenuBarRecoveryController.swift
       - Sources/XDial/MenuBarTrackingRepair.swift
+      - Sources/XDial/NetworkChangeNoticeBaseline.swift
       - Sources/XDial/NetworkInfo.swift
       - Sources/XDial/LineLatencyStore.swift
       - Sources/XDial/RotaryDial.swift

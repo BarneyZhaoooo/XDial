@@ -46,6 +46,9 @@ final class AppState: ObservableObject {
     @Published private(set) var exitCountry: String?
     @Published private(set) var surveyingRegion = false
     private let scenarioPathMonitor = NWPathMonitor()
+    private var networkNoticeTask: Task<Void, Never>?
+    private var networkNoticeBaseline = NetworkChangeNoticeBaseline()
+    private var noticePath: NetworkChangeNoticeBaseline.Path?
     private var scenarioSwitchGuard = ScenarioAutoSwitchGuard()
     private var currentScenarioNetwork: String {
         ScenarioNetworkIdentity.key(path: scenarioPathSignature, ssid: currentSSID)
@@ -70,17 +73,41 @@ final class AppState: ObservableObject {
     }
 
     private func observeScenarioPath() {
-        guard !regionScenarioTargets.isEmpty else { return }
         scenarioPathMonitor.pathUpdateHandler = { [weak self] path in
             let physical = path.availableInterfaces.filter { [.wifi, .wiredEthernet, .cellular].contains($0.type) }
             let signature = "\(path.status) \(physical.map(\.name).sorted()) \(path.gateways)"
+            let active = physical.filter { path.usesInterfaceType($0.type) }
+            let available = path.status == .satisfied
+            let noticePath = NetworkChangeNoticeBaseline.Path(
+                available: available, usesWiFi: available && path.usesInterfaceType(.wifi),
+                interfaces: available ? active.map(\.name).sorted() : [],
+                gateways: available ? path.gateways.map { String(describing: $0) }.sorted() : []
+            )
             Task { @MainActor [weak self] in
-                guard let self, self.scenarioPathSignature != signature else { return }
+                guard let self else { return }
+                if self.noticePath != noticePath {
+                    self.noticePath = noticePath
+                    self.scheduleNetworkNotice()
+                }
+                guard !self.regionScenarioTargets.isEmpty, self.scenarioPathSignature != signature else { return }
                 self.scenarioPathSignature = signature
                 self.refreshRegionSelection()
             }
         }
         scenarioPathMonitor.start(queue: DispatchQueue(label: "xdial.scenario-path"))
+    }
+
+    private func scheduleNetworkNotice() {
+        networkNoticeTask?.cancel()
+        guard let noticePath, !networkEpochPowerGate.defersNetworkWork else { return }
+        networkNoticeTask = Task { @MainActor [weak self] in
+            // CoreWLAN settles its SSID for one second after a link change.
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled, let self, !networkEpochPowerGate.defersNetworkWork else { return }
+            if networkNoticeBaseline.changed(path: noticePath, ssid: currentSSID) {
+                ConnectionNotice.network(available: noticePath.available).post()
+            }
+        }
     }
 
     private func refreshRegionSelection() {
@@ -1197,6 +1224,7 @@ final class AppState: ObservableObject {
     private func handleWakeSignal(trigger: String) {
         if trigger == "workspace_did_wake" {
             networkEpochPowerGate.noteSystemDidWake()
+            scheduleNetworkNotice()
         }
         wakeStatusSyncGeneration += 1
         let generation = wakeStatusSyncGeneration
@@ -2280,6 +2308,7 @@ final class AppState: ObservableObject {
         link: WiFiLinkState
     ) {
         currentSSID = ssid
+        scheduleNetworkNotice()
         currentWiFiLink = link
         wifiSSIDAccessState = accessState
         if initialSSIDAccessCheck.shouldPresent(
@@ -2490,6 +2519,7 @@ final class AppState: ObservableObject {
                     .sampleCurrentForNetworkEpoch() {
                     ssidIsStable = self.currentSSID == wifi.ssid
                     self.currentSSID = wifi.ssid
+                    if !ssidIsStable { self.scheduleNetworkNotice() }
                     self.currentWiFiLink = wifi.link
                     self.wifiSSIDAccessState = wifi.accessState
                     let rawMatch = self.automaticScenario ? wifi.ssid.flatMap {
@@ -2865,10 +2895,13 @@ final class AppState: ObservableObject {
         guard profile.scenarios.contains(where: { $0.id == id }) else {
             return false
         }
+        let changed = profile.activeScenarioID != id
         profile.activeScenarioID = id
         if blockedConnectionScenarioID != id { blockedConnectionScenarioID = nil }
         save()
-        return profilePersistenceError == nil
+        guard profilePersistenceError == nil else { return false }
+        if changed { ConnectionNotice.scenario.post(scenarioName: activeScenario?.name ?? "") }
+        return true
     }
 
     /// 兼容既有 UI / Debug intent；实际执行统一进入完整安装事务。
