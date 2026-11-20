@@ -46,6 +46,8 @@ enum MobileAppRuntime {
         if shouldResetUITesting {
             _ = persistence.clearForTesting()
             UserDefaults.standard.removeObject(forKey: "xdial.auto-scenario")
+            UserDefaults.standard.removeObject(forKey: ConnectionActivityController.preferenceKey)
+            UserDefaults.standard.removeObject(forKey: ConnectionActivityController.backgroundSpeedKey)
         }
         // 界面自动化从已确认数据使用说明之后开始；-XDialUITestingDataUseNotice 用来测说明本身。
         if isUITesting, !arguments.contains("-XDialUITestingDataUseNotice") {

@@ -16,6 +16,7 @@ struct MobileSettingsView: View {
     @State private var notice: SettingsNotice?
     @State private var signInTarget: SettingsAccountTarget?
     @AppStorage(ConnectionActivityController.preferenceKey) private var showsLiveActivity = true
+    @AppStorage(ConnectionActivityController.backgroundSpeedKey) private var updatesBackgroundSpeed = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -75,6 +76,18 @@ struct MobileSettingsView: View {
                         MobileAppRuntime.connectionActivity?.preferenceChanged()
                     }
                     .accessibilityIdentifier("settings-live-activity")
+                    Toggle(isOn: $updatesBackgroundSpeed) {
+                        Text(app.tr("在后台持续更新网络速度", "Keep network speed updated in the background"))
+                        Text(app.tr(
+                            "地点场景定位期间可持续刷新，可能增加耗电。iOS 挂起 XDial 后会暂停刷新。",
+                            "Speeds can keep updating while location scenarios are active, using more battery. Updates pause when iOS suspends XDial."
+                        ))
+                    }
+                    .disabled(!showsLiveActivity)
+                    .onChange(of: updatesBackgroundSpeed) { _, _ in
+                        MobileAppRuntime.connectionActivity?.refreshSampling()
+                    }
+                    .accessibilityIdentifier("settings-background-speed")
                     NavigationLink(app.tr("地点场景", "Location scenarios")) { LocationScenarioSettings() }
                         .accessibilityIdentifier("settings-place-scenarios")
                     if showsSystemOnDemandStatus {

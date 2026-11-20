@@ -219,8 +219,8 @@ struct LocationScenarioSettings: View {
                     get: { location.enabled }, set: { location.setEnabled($0) }))
                     .accessibilityIdentifier("place-enabled")
             } footer: {
-                Text(app.tr("开启自动场景并连接 VPN 后，在后台匹配已保存地点。地点优先于 Wi-Fi 和出口地区。位置仅在本机使用。定位期间灵动岛可继续采样网速，耗电可能增加。",
-                            "While automatic scenarios and the VPN are on, match saved places in the background. Places take priority over Wi-Fi and exit region. Location stays on this device. Live Activity speeds can continue updating during location use, which may increase battery use."))
+                Text(app.tr("开启自动场景并连接 VPN 后，在后台匹配已保存地点。地点优先于 Wi-Fi 和出口地区。位置仅在本机使用。后台定位可能增加耗电。",
+                            "While automatic scenarios and the VPN are on, match saved places in the background. Places take priority over Wi-Fi and exit region. Location stays on this device. Background location may increase battery use."))
             }
             if location.enabled {
                 if location.authorization == .denied || location.authorization == .restricted {

@@ -5,6 +5,32 @@ import XCTest
 @MainActor
 final class HomeViewUITests: XCTestCase {
     #if targetEnvironment(simulator)
+    func testBackgroundSpeedIsOptionalAndRemembered() {
+        let app = launchApp()
+        app.buttons["home-settings"].tap()
+        let display = app.switches["settings-live-activity"]
+        let speed = app.switches["settings-background-speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        XCTAssertEqual(display.value as? String, "1")
+        XCTAssertEqual(speed.value as? String, "0")
+        let toggle = CGVector(dx: 0.9, dy: 0.5)
+        speed.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertEqual(speed.value as? String, "1")
+        display.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertFalse(speed.isEnabled)
+
+        app.terminate()
+        let reopened = launchApp(reset: false)
+        reopened.buttons["home-settings"].tap()
+        let restoredSpeed = reopened.switches["settings-background-speed"]
+        XCTAssertFalse(restoredSpeed.isEnabled)
+        reopened.switches["settings-live-activity"].coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertTrue(restoredSpeed.isEnabled)
+        XCTAssertEqual(restoredSpeed.value as? String, "1")
+        restoredSpeed.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertEqual(restoredSpeed.value as? String, "0")
+    }
+
     func testSaveAndRemoveCurrentPlace() throws {
         let app = launchApp(extraArguments: ["-XDialUITestingLocation"])
         let previous = XCUIDevice.shared.location
