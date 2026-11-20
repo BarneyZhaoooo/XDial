@@ -1,6 +1,6 @@
 import Foundation
 
-indirect enum JSONValue: Codable, Hashable {
+indirect enum JSONValue: Codable, Hashable, Sendable {
     case object([String: JSONValue]), array([JSONValue]), string(String), number(Double), bool(Bool), null
 
     init(from decoder: Decoder) throws {

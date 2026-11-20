@@ -65,6 +65,12 @@ struct CredentialsView: View {
             }
 
             Section {
+                NavigationLink(app.tr("从 Mac 或 iPhone 同步", "Sync from Mac or iPhone")) { SettingsView() }
+            } footer: {
+                Text(app.tr("在已填好账号的 Mac 或 iPhone 上打开 XDial，等到显示「已同步」。这台 Apple TV 使用同一 Apple 账号时，选择「用 iCloud 配置覆盖本机」即可。", "Open XDial on the Mac or iPhone with your account details and wait for “Up to date”. On this Apple TV, use the same Apple Account and choose “Replace local configuration with iCloud copy” when prompted."))
+            }
+
+            Section {
                 Button(app.tr("保存", "Save")) {
                     app.save()
                 }

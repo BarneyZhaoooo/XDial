@@ -179,7 +179,7 @@ func Load(data []byte) (*Seed, error) {
 }
 
 // A shared preset may only use what the phone's importer reads the same way
-// (appletv/XDialTV/Models.swift, shared by iOS and tvOS, and
+// (macos/Sources/XDial/Models.swift, shared by the Apple hosts, and
 // MobileConfigurationService.validate in ios/XDialIOS): the Mac imports through
 // Go, which accepts more, and comparing two identical files through one loader
 // cannot reveal what the phone drops or rejects. Anything else is refused here

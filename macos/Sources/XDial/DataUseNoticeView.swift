@@ -53,8 +53,11 @@ struct DataUseNoticeView: View {
             }
             Divider()
             HStack {
+                if !state.cloudSync.noticeAccepted {
+                    CloudSyncNoticeToggle(sync: state.cloudSync, chinese: isChinese)
+                }
                 Spacer()
-                if state.dataUseNoticeAccepted {
+                if state.dataUseNoticeAccepted && state.cloudSync.noticeAccepted {
                     Button(state.tr("完成", "Done")) { dismissWindow(id: Self.windowID) }
                         .keyboardShortcut(.defaultAction)
                 } else {

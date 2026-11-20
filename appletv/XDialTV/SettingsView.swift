@@ -8,36 +8,27 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
 
-    /// 语言选择的本地镜像：Picker 需要一个可写绑定；tvOS 上把 .system 展开成
-    /// 具体 zh/en 供选择。切换后写回 app.language（其 didSet 会持久化）。
-    @State private var langSelection: Lang = .en
-
     /// 最近一次手测结果，长按触发后回填展示。
     @State private var smokeResult: String = ""
 
     var body: some View {
         Form {
+            Section { CloudConfigurationSettings(sync: app.cloudSync, chinese: app.language == .zh) }
             languageSection
             statusSection
             privacySection
             debugSection
         }
         .navigationTitle(app.tr("设置", "Settings"))
-        .onAppear {
-            langSelection = (app.language == .zh) ? .zh : .en
-        }
     }
 
     // MARK: - 语言
 
     private var languageSection: some View {
         Section {
-            Picker(app.tr("语言", "Language"), selection: $langSelection) {
+            Picker(app.tr("语言", "Language"), selection: $app.language) {
                 Text("简体中文").tag(Lang.zh)
                 Text("English").tag(Lang.en)
-            }
-            .onChange(of: langSelection) { _, newValue in
-                app.language = newValue
             }
         } header: {
             Text(app.tr("外观", "Appearance"))

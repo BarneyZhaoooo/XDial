@@ -15,12 +15,13 @@ struct MobileSettingsView: View {
     @State private var isConfirmingProfileRemoval = false
     @State private var notice: SettingsNotice?
     @State private var signInTarget: SettingsAccountTarget?
-    @State private var showsLiveActivity = ConnectionActivityController.isEnabledByUser
+    @AppStorage(ConnectionActivityController.preferenceKey) private var showsLiveActivity = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                Section { CloudConfigurationSettings(sync: app.cloudSync, chinese: app.language == .zh) }
                 if let line = app.accountLine {
                     Section(app.tr("账号", "Account")) {
                         Button {
@@ -70,8 +71,7 @@ struct MobileSettingsView: View {
                         app.tr("在灵动岛和锁屏显示", "Show in Dynamic Island and Lock Screen"),
                         isOn: $showsLiveActivity
                     )
-                    .onChange(of: showsLiveActivity) { _, isOn in
-                        ConnectionActivityController.isEnabledByUser = isOn
+                    .onChange(of: showsLiveActivity) { _, _ in
                         MobileAppRuntime.connectionActivity?.preferenceChanged()
                     }
                     .accessibilityIdentifier("settings-live-activity")

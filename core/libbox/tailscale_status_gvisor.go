@@ -1095,3 +1095,52 @@ func tailscaleStatusPeerName(peer *ipnstate.PeerStatus, tailnet *ipnstate.Tailne
 	}
 	return name
 }
+
+// A cold download has no traffic runtime from which to borrow an endpoint.
+// Hold the state lock and require the exact configured exit before any DNS or HTTP.
+func (b *androidBootstrap) waitForRuleExitNode(endpointTag, exitNode string, magicDNS bool) error {
+	endpoint, found := activeTailscaleRuntimeEndpoint(nil, "", b.instance, endpointTag)
+	if !found {
+		return fmt.Errorf("rule-set download Tailscale endpoint is unavailable")
+	}
+	client, err := endpoint.Server().LocalClient()
+	if err != nil {
+		return fmt.Errorf("rule-set download Tailscale status is unavailable")
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status, err := client.Status(b.ctx)
+		if err == nil && status != nil {
+			if status.AuthURL != "" || status.BackendState == "NeedsLogin" || status.BackendState == "NeedsMachineAuth" {
+				return fmt.Errorf("rule-set download requires Tailscale sign-in on this device")
+			}
+			if ruleExitNodeReady(status, exitNode, magicDNS) {
+				return nil
+			}
+		}
+		select {
+		case <-b.ctx.Done():
+			return fmt.Errorf("rule-set download Tailscale exit node is unavailable")
+		case <-ticker.C:
+		}
+	}
+}
+
+func ruleExitNodeReady(status *ipnstate.Status, exitNode string, magicDNS bool) bool {
+	if status.BackendState != "Running" || exitNode == "" {
+		return false
+	}
+	if magicDNS && (status.CurrentTailnet == nil || !status.CurrentTailnet.MagicDNSEnabled || status.CurrentTailnet.MagicDNSSuffix == "") {
+		return false
+	}
+	for _, peer := range status.Peer {
+		if peer == nil || !peer.ExitNodeOption || !peer.ExitNode || !peer.Online {
+			continue
+		}
+		if string(peer.ID) == exitNode || preferredTailscaleStatusIP(peer.TailscaleIPs) == exitNode {
+			return true
+		}
+	}
+	return false
+}

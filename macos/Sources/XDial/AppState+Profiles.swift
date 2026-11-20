@@ -262,3 +262,36 @@ extension AppState {
             XDialBuildIdentity.tailscaleDeviceChannel, &error)
     }
 }
+
+extension AppState {
+    func cloudConfiguration() throws -> CloudConfiguration {
+        guard profileLibraryLoaded, profilePersistenceError == nil, profile == profileLibrary.snapshot(),
+              profileLibrary == (try profileLibraryStore.load(readOnly: true)) else {
+            throw CloudSyncIssue("请先保存或重新打开配置 · Save or reopen the configuration first")
+        }
+        var portable = profileLibrary
+        for index in portable.profiles.indices {
+            portable.profiles[index].profile = portable.profiles[index].profile.forCloud
+            portable.profiles[index].baseline = portable.profiles[index].baseline?.forCloud
+        }
+        let snapshot = portable.snapshot().forCloud
+        portable.mobileSubscriptions = snapshot.subscriptions
+        return CloudConfiguration(profile: snapshot,
+                                  library: try CloudConfiguration.encode(portable), settings: cloudPreferences())
+    }
+
+    func applyCloudConfiguration(_ archive: CloudConfiguration) throws {
+        guard !isBusy, engine.status == "disconnected" else { throw CloudSyncIssue("断开后将继续同步 · Sync will resume after disconnect") }
+        var library = try profileLibrary.applyingCloudProfile(archive.profile, library: archive.library)
+        for index in library.profiles.indices {
+            let previous = profileLibrary.profiles.first { $0.id == library.profiles[index].id }
+            library.profiles[index].profile = library.profiles[index].profile.restoringDeviceState(from: previous?.profile)
+        }
+        library = try library.validated()
+        try profileLibraryStore.save(library)
+        profileLibrary = library
+        profile = library.snapshot()
+        browsedProfileID = library.activeProfileID
+        applyCloudPreferences(archive.settings)
+    }
+}

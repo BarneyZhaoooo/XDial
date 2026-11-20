@@ -9,6 +9,8 @@ configs:
 
 settings:
   base:
+    XDIAL_ICLOUD_CONTAINER: iCloud.com.xd.xdial
+    XDIAL_ICLOUD_ENVIRONMENT: Production
     # tvOS shares the iOS product identity (one App Store record). Override
     # these with `xcodebuild -xcconfig` when another team builds it.
     MARKETING_VERSION: "0.1.0"
@@ -67,6 +69,9 @@ targets:
     platform: tvOS
     sources:
       - XDialTV
+      - path: ../macos/Sources/XDial/Models.swift
+      - path: ../macos/Shared/JSONValue.swift
+      - path: ../apple/Sync
       - path: StoreResources/ThirdPartyNotices.txt
         optional: true
         buildPhase: resources
@@ -77,6 +82,7 @@ targets:
     info:
       path: XDialTV/Info.plist
       properties:
+        XDialCloudContainer: $(XDIAL_ICLOUD_CONTAINER)
         CFBundleDisplayName: XDial
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -87,6 +93,9 @@ targets:
     entitlements:
       path: XDialTV/XDialTV.entitlements
       properties:
+        com.apple.developer.icloud-container-identifiers: [$(XDIAL_ICLOUD_CONTAINER)]
+        com.apple.developer.icloud-container-environment: $(XDIAL_ICLOUD_ENVIRONMENT)
+        com.apple.developer.icloud-services: [CloudKit]
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:

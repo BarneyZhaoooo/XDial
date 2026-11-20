@@ -31,6 +31,9 @@ struct DataUseNoticeView: View {
                     .font(.body)
                     .foregroundStyle(XDialTheme.ink)
 
+                    if mode == .firstUse {
+                        CloudSyncNoticeToggle(sync: app.cloudSync, chinese: app.language == .zh)
+                    }
                     ForEach(sections, id: \.title) { section in
                         VStack(alignment: .leading, spacing: 8) {
                             Label(section.title, systemImage: section.symbol)
@@ -145,9 +148,9 @@ enum DataUseNotice {
                   "With an AnyConnect line, XDial sends your VPN server the device name, network interface address and a device identifier derived from them, as that protocol requires; with a Tailscale line, the device name is sent to Tailscale's servers."),
             ]),
             Section(title: t("自动访问的公共服务", "Public services XDial contacts"), symbol: "network", points: services),
-            Section(title: t("只留在这台设备上", "What stays on this device"), symbol: "iphone", points: [
-                t("账号和密码保存在系统钥匙串里，只用来连接你配置的线路。",
-                  "Accounts and passwords are kept in the system keychain and used only to connect your lines."),
+            Section(title: t("数据存储与同步", "Storage and sync"), symbol: "iphone", points: [
+                t("iCloud 同步默认开启。确认本说明后，配置、已保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会同步到你的私人 iCloud，供同一 Apple 账号的设备使用。你可以在继续前或之后的设置中关闭同步。",
+                  "iCloud Sync is on by default. After you confirm this notice, XDial syncs configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs to your private iCloud for devices using the same Apple Account. You can turn sync off before continuing or later in Settings."),
                 t("Wi-Fi 名称仅在本机匹配。若启用地点场景，连接 VPN 时会在后台比对已保存地点。坐标仅用于本机匹配，不随配置导出。",
                   "Wi-Fi names are matched on device. If you enable location scenarios, XDial checks saved places in the background while connected. Coordinates are matched locally and excluded from configuration exports."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开设备。",

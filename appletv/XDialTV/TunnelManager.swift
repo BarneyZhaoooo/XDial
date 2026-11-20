@@ -198,7 +198,7 @@ struct TunnelAcceptancePlan: Codable, Sendable, Equatable {
             case "direct": return "direct"
             case "vpn": return "vpn"
             case "tailscale": return "tailscale-" + line.id
-            case "trojan", "shadowsocks", "ss", "vmess": return "proxy-" + line.id
+            case "trojan", "shadowsocks", "ss", "vmess", "anytls", "selector", "urltest": return "proxy-" + line.id
             default: return nil
             }
         }
@@ -2669,11 +2669,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         server: String,
         basePath: String,
         scenarioID: String,
-        scenarioName: String
+        scenarioName: String,
+        cachedOnly: Bool = false
     ) -> Result<StartSession, NSError> {
         var genError: NSError?
         #if os(iOS)
-        let raw = LibboxGenerateNESession(profileJSON, server, basePath, &genError)
+        let raw = cachedOnly ? LibboxGenerateCachedNESession(profileJSON, server, basePath, &genError)
+            : LibboxGenerateNESession(profileJSON, server, basePath, &genError)
         if let genError { return .failure(genError) }
         guard let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2876,18 +2878,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                 userInfo: [NSLocalizedDescriptionKey: "当前场景不可用"])
         }
 
-        var referencedLineIDs = Set<String>()
-        if !scenario.defaultLineID.isEmpty {
-            referencedLineIDs.insert(scenario.defaultLineID)
-        }
-        for binding in scenario.bindings {
-            guard !binding.lineID.isEmpty,
-                  profile.ruleSets.first(where: { $0.id == binding.ruleSetID })?.enabled == true else {
-                continue
-            }
-            referencedLineIDs.insert(binding.lineID)
-        }
-
+        let referencedLineIDs = profile.referencedLineIDs(in: scenario)
         let lines = profile.lines.filter {
             referencedLineIDs.contains($0.id) && $0.enabled && $0.type == "vpn"
         }
@@ -2925,7 +2916,8 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                         server: input.anyConnect?.server ?? "",
                         basePath: basePath,
                         scenarioID: input.scenarioID,
-                        scenarioName: input.scenarioName
+                        scenarioName: input.scenarioName,
+                        cachedOnly: true
                     ) else {
                         appLog("scenario catalog: skipped \(input.scenarioID), config generation failed")
                         continue

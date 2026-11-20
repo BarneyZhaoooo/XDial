@@ -8,7 +8,7 @@
 | 用途 | 目标 | 进程 | 何时 | 代码 |
 |---|---|---|---|---|
 | 域名解析 | Cloudflare 1.1.1.1:53，未加密 UDP；AnyConnect 线路改用其下发的 DNS；Tailscale 名称由 Tailscale 解析 | 扩展 | 连接期间的所有设备查询 | `core/config/generator.go`（公共 DNS）、`core/libbox/mobile_dns_transport.go` |
-| 连通性检测 | `1.0.0.1/cdn-cgi/trace`、`1.1.1.1/cdn-cgi/trace`、`www.apple.com/library/test/success.html`；首个失败时 `223.5.5.5` | App | 每次连接与连接变差时 | `appletv/XDialTV/TunnelManager.swift`、`appletv/XDialTV/Models.swift` |
+| 连通性检测 | `1.0.0.1/cdn-cgi/trace`、`1.1.1.1/cdn-cgi/trace`、`www.apple.com/library/test/success.html`；首个失败时 `223.5.5.5` | App | 每次连接与连接变差时 | `appletv/XDialTV/TunnelManager.swift`、`appletv/XDialTV/MobileProfile.swift` |
 | 节点测速 | `www.gstatic.com/generate_204`（或订阅指定） | 扩展 | 连接期间每 300 秒（自动选节点） | `core/config/generator.go` |
 | 出口地址 | `checkip.amazonaws.com`，其次 `1.1.1.1/cdn-cgi/trace` | 扩展 | 每次连接，按线路 | `core/libbox/libbox.go` |
 | 出口地区 | `gspe1-ssl.ls.apple.com/pep/gcc`，其次 Cloudflare trace | App / 扩展 | 仅当预置带 `region_scenarios`（公开版没有，不会发生） | `core/libbox/exit_country_probe.go`、`ios/XDialIOS/ScenarioAutoPilot.swift` |
@@ -24,7 +24,11 @@
 - AnyConnect：按协议发送设备名、网卡地址与由它们生成的设备标识（`build/patched-go/sslcon`，补丁见 `patches/sslcon`）。
 - Tailscale：设备名与标准节点信息发往 Tailscale 控制服务器；不上传日志（tailscale fork 固定 `NoLogsNoSupport`）。
 
-## 不离开设备
+## iCloud 同步的默认设置
+
+三端默认开启同步。每台设备在确认新版说明后开始，用户可在继续前或之后关闭，并保留已保存的关闭选择。开启时主 App 将配置、订阅地址、VPN 凭据、已保存的 Wi-Fi 匹配规则和偏好写入同一 Apple 账号的 CloudKit 私有数据库。运行日志、系统授权、当前网络观测和 Tailscale 节点身份保存在本机。
+
+## 本机存储
 
 账号与密码在钥匙串；Wi-Fi 名称只在本机比对场景。可选的地点场景请求使用期间定位授权，在 VPN 连接期间支持后台匹配，所存地点不随配置导出；连接时间线与诊断（含出口 IP）在 App Group，
 只有用户导出或分享才离开设备；小组件、快捷指令、实时活动只显示连接状态和场景名；通知默认关闭、在本机产生。
@@ -45,7 +49,7 @@ App 与 Packet Tunnel 扩展声明：UserDefaults（App：CA92.1、1C8F.1；扩�
 
 Mac 商店版（`macos/store.yml`，`XDIAL_STORE`）的数据使用说明在 `macos/Sources/XDial/DataUseNotice.swift`。
 它在启动时打开，确认前不准备系统组件、不连接、不做自动测速、订阅刷新和出口地区判断（`AppState.dataUseNoticeAccepted`）。
-其他 Mac 版本不需要这道确认。代码改变对外请求时，同步更新这里、说明文案与 `DataUseNoticeAcceptance.version`。
+其他 Mac 版本仅在 iCloud 同步前要求确认说明。代码改变对外请求时，同步更新这里、说明文案与 `DataUseNoticeAcceptance.version`。
 
 ## 自动访问的第三方服务
 

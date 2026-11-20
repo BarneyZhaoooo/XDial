@@ -255,8 +255,10 @@ struct XDialApp: App {
             }
             .onDisappear { trafficInfo.stop() }
             .task {
-                // Shown before the App Store build first goes online; it cannot connect until confirmed.
-                if !state.dataUseNoticeAccepted { state.presentDataUseNotice() }
+                // All builds disclose cloud storage before the first sync. The Store build also gates connections.
+                if !state.dataUseNoticeAccepted || (state.cloudSync.enabled && !state.cloudSync.noticeAccepted) {
+                    state.presentDataUseNotice()
+                }
             }
             .task {
                 await updateChecker.pollForUpdates()
