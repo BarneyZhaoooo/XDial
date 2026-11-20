@@ -29,6 +29,22 @@
       "notices": "ios-66-notices.txt",
       "sourceFiles": 935,
       "xcode": "27B52"
+    },
+    "ios-73": {
+      "source": "xdial-b912cd000ae421c25432f0e361ac7d5bf583fede.tar.gz",
+      "version": "1.0",
+      "commit": "b912cd000ae421c25432f0e361ac7d5bf583fede",
+      "notices": "ios-73-notices.txt",
+      "configuration": "AppStore",
+      "sourceFiles": 945
+    },
+    "mac-74": {
+      "source": "xdial-b912cd000ae421c25432f0e361ac7d5bf583fede.tar.gz",
+      "version": "0.1.0",
+      "commit": "b912cd000ae421c25432f0e361ac7d5bf583fede",
+      "notices": "mac-74-notices.txt",
+      "configuration": "AppStore",
+      "sourceFiles": 945
     }
   },
   "modules": {
