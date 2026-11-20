@@ -5,6 +5,7 @@ package libbox
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1852,5 +1853,66 @@ func TestTailscaleSetupUsesRequestedIdentityInsteadOfActiveScenario(t *testing.T
 	}
 	if len(doc.Endpoints) != 1 || doc.Endpoints[0].State != filepath.Join(base, "profiles", "source-b", "tailscale") || doc.Endpoints[0].Hostname != "xdial-debug-editing" || len(doc.Inbounds) != 0 {
 		t.Fatalf("setup selected the wrong owner: %+v", doc)
+	}
+}
+
+func TestSyncedTailscaleUsesSetupIdentityForTrafficAndColdRules(t *testing.T) {
+	for _, ids := range [][2]string{{"", ""}, {"profile-one", ""}, {"global", "source-one"}, {"", "source-one"}} {
+		t.Run(ids[0]+"/"+ids[1], func(t *testing.T) {
+			base := t.TempDir()
+			profileJSON := fmt.Sprintf(`{"profile_id":%q,"lines":[{"id":"tail","type":"tailscale","enabled":true,"identity_profile_id":%q,"tailscale_exit_node":"100.64.0.8"}],"scenarios":[{"id":"s","default_line_id":"tail"}],"active_scenario_id":"s"}`, ids[0], ids[1])
+			profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
+			if err != nil {
+				t.Fatal(err)
+			}
+			setup, err := GenerateTailscaleSetupConfig(profileJSON, "tail", base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cold, err := config.GenerateAppleColdRuleAcquisition(profile, "tail", base, []string{"192.0.2.53"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			traffic, err := GenerateCachedNESession(profileJSON, "", base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var session struct {
+				ConfigJSON string `json:"config_json"`
+			}
+			if err := json.Unmarshal([]byte(traffic), &session); err != nil {
+				t.Fatal(err)
+			}
+			directory := func(raw string) string {
+				var document struct {
+					Endpoints []struct {
+						StateDirectory string `json:"state_directory"`
+					}
+				}
+				if err := json.Unmarshal([]byte(raw), &document); err != nil {
+					t.Fatal(err)
+				}
+				if len(document.Endpoints) != 1 {
+					t.Fatal("expected one Tailscale endpoint")
+				}
+				return document.Endpoints[0].StateDirectory
+			}
+			want := directory(setup)
+			for _, raw := range []string{string(cold), session.ConfigJSON} {
+				if got := directory(raw); got != want {
+					t.Fatalf("state directory = %q, setup uses %q", got, want)
+				}
+				locks, err := acquireTailscaleStateLocks(setup)
+				if err != nil {
+					t.Fatal(err)
+				}
+				other, err := acquireTailscaleStateLocks(raw)
+				releaseTailscaleStateLocks(other)
+				releaseTailscaleStateLocks(locks)
+				if !errors.Is(err, errTailscaleStateInUse) {
+					t.Fatalf("setup lock bypassed: %v", err)
+				}
+			}
+		})
 	}
 }

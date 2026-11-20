@@ -4,7 +4,7 @@ import Foundation
 /// build requires it; bump `version` when the notice changes materially so users
 /// confirm again.
 enum DataUseNoticeAcceptance {
-    static let version = 2
+    static let version = 4
     static let defaultsKey = "xdial.data-use-notice-version"
 
     static var requiredByBuild: Bool {
@@ -79,11 +79,11 @@ enum MacDataUseNotice {
                   "With an AnyConnect line, XDial sends your VPN server the computer name, the system name and version, this Mac's hardware identifier and the network adapter's MAC address, as that protocol requires; with a Tailscale line, a randomly generated device name and standard node information are sent to Tailscale's servers."),
             ]),
             Section(title: t("自动访问的公共服务", "Public services XDial contacts"), symbol: "network", points: services),
-            Section(title: t("只留在这台 Mac 上", "What stays on this Mac"), symbol: "desktopcomputer", points: [
-                t("账号和密码保存在系统钥匙串里，只用来连接你配置的线路。",
-                  "Accounts and passwords are kept in the system keychain and used only to connect your lines."),
-                t("Wi-Fi 名称只在这台 Mac 上用来匹配场景，不会发出去。macOS 读取 Wi-Fi 名称需要定位权限：只有你在前台主动设置时，XDial 才会申请「使用期间」的定位权限，也不读取位置。",
-                  "The Wi-Fi name is used on this Mac only, to match scenarios, and is never sent. macOS requires location access to read it: XDial asks for location access while in use only when you set this up in the foreground, and does not read your location."),
+            Section(title: t("数据存储与同步", "Storage and sync"), symbol: "desktopcomputer", points: [
+                t("iCloud 同步默认开启。确认本说明后，配置、已保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会同步到你的私人 iCloud，供同一 Apple 账号的设备使用。你可以在继续前或之后的设置中关闭同步。",
+                  "iCloud Sync is on by default. After you confirm this notice, XDial syncs configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs to your private iCloud for devices using the same Apple Account. You can turn sync off before continuing or later in Settings."),
+                t("当前连接的 Wi-Fi 名称只在这台 Mac 上用来匹配场景，不会发出去。macOS 读取 Wi-Fi 名称需要定位权限：只有你在前台主动设置时，XDial 才会申请「使用期间」的定位权限，也不读取位置。",
+                  "The current Wi-Fi name is used on this Mac only, to match scenarios, and is never sent. macOS requires location access to read it: XDial asks for location access while in use only when you set this up in the foreground, and does not read your location."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开 Mac；导出的配置文件包含你为场景登记的 Wi-Fi 名称。",
                   "Connection history and diagnostics (including exit IP addresses) stay on the Mac and leave it only when you export or share them; an exported configuration includes the Wi-Fi names you registered for scenarios."),
                 t("通知和登录时启动默认关闭，只在你打开后生效；通知在本机产生。",

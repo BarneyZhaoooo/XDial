@@ -31,6 +31,9 @@ struct DataUseNoticeView: View {
                     .font(.body)
                     .foregroundStyle(XDialTheme.ink)
 
+                    if mode == .firstUse {
+                        CloudSyncNoticeToggle(sync: app.cloudSync, chinese: app.language == .zh)
+                    }
                     ForEach(sections, id: \.title) { section in
                         VStack(alignment: .leading, spacing: 8) {
                             Label(section.title, systemImage: section.symbol)
@@ -145,11 +148,11 @@ enum DataUseNotice {
                   "With an AnyConnect line, XDial sends your VPN server the device name, network interface address and a device identifier derived from them, as that protocol requires; with a Tailscale line, the device name is sent to Tailscale's servers."),
             ]),
             Section(title: t("自动访问的公共服务", "Public services XDial contacts"), symbol: "network", points: services),
-            Section(title: t("只留在这台设备上", "What stays on this device"), symbol: "iphone", points: [
-                t("账号和密码保存在系统钥匙串里，只用来连接你配置的线路。",
-                  "Accounts and passwords are kept in the system keychain and used only to connect your lines."),
-                t("Wi-Fi 名称只在本机用来按 Wi-Fi 自动选场景，不会发出去；不会请求定位权限。",
-                  "The Wi-Fi name is used on the device only, to pick a scenario by Wi-Fi, and is never sent; XDial does not ask for location access."),
+            Section(title: t("数据存储与同步", "Storage and sync"), symbol: "iphone", points: [
+                t("iCloud 同步默认开启。确认本说明后，配置、已保存的 Wi-Fi 匹配规则、偏好、VPN 密码和订阅地址会同步到你的私人 iCloud，供同一 Apple 账号的设备使用。你可以在继续前或之后的设置中关闭同步。",
+                  "iCloud Sync is on by default. After you confirm this notice, XDial syncs configuration, saved Wi-Fi matching rules, preferences, VPN passwords and subscription URLs to your private iCloud for devices using the same Apple Account. You can turn sync off before continuing or later in Settings."),
+                t("当前连接的 Wi-Fi 名称只在本机用来按 Wi-Fi 自动选场景，不会发出去；不会请求定位权限。",
+                  "The current Wi-Fi name is used on the device only, to pick a scenario by Wi-Fi, and is never sent; XDial does not ask for location access."),
                 t("连接记录和诊断信息（含出口 IP 地址）保存在本机，只有你主动导出或分享时才会离开设备。",
                   "Connection history and diagnostics (including exit IP addresses) stay on the device and leave it only when you export or share them."),
             ]),

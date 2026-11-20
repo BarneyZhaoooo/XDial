@@ -56,3 +56,7 @@ func (l *Libbox) TailscaleLogout(_ string) error {
 func (l *Libbox) preparedSwitchTailscaleDNSCaptureDomains(_ string) (string, error) {
 	return "", fmt.Errorf("Tailscale is unavailable in this build")
 }
+
+func (b *androidBootstrap) waitForRuleExitNode(_, _ string, _ bool) error {
+	return fmt.Errorf("Tailscale is unavailable in this build")
+}

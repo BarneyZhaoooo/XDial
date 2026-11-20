@@ -449,3 +449,25 @@ func TestBoxContextRegistersTailscale(t *testing.T) {
 	}
 	_ = instance.Close()
 }
+
+func TestColdRuleDownloadWaitsForRequestedExitNode(t *testing.T) {
+	peer := &ipnstate.PeerStatus{ID: "exit", Online: true, ExitNode: true, ExitNodeOption: true,
+		TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.9")}}
+	status := &ipnstate.Status{BackendState: "Running", Peer: map[key.NodePublic]*ipnstate.PeerStatus{key.NewNode().Public(): peer}}
+	if !ruleExitNodeReady(status, "exit", false) || !ruleExitNodeReady(status, "100.64.0.9", false) ||
+		ruleExitNodeReady(status, "other", false) || ruleExitNodeReady(status, "exit", true) {
+		t.Fatal("readiness ignored the configured exit or DNS")
+	}
+	status.CurrentTailnet = &ipnstate.TailnetStatus{MagicDNSEnabled: true, MagicDNSSuffix: "example.ts.net"}
+	if !ruleExitNodeReady(status, "exit", true) {
+		t.Fatal("ready exit node rejected")
+	}
+	peer.Online = false
+	if ruleExitNodeReady(status, "exit", false) {
+		t.Fatal("offline exit node accepted")
+	}
+	peer.Online, peer.ExitNode = true, false
+	if ruleExitNodeReady(status, "exit", false) {
+		t.Fatal("unselected exit node accepted")
+	}
+}

@@ -512,6 +512,7 @@ struct ProfilePersistenceEnvelope: Codable {
 
 @MainActor
 final class AppState: ObservableObject {
+    let cloudSync: ConfigurationSync
     @Published var profile: Profile
 
     /// VPN Profile 是否已安装并可用（对应 macOS 的 helperInstalled）。
@@ -542,12 +543,13 @@ final class AppState: ObservableObject {
     /// 「打开 XDial 后自动连接」。只决定启动后是否发起一次普通连接，不接管系统层的按需连接。
     /// 当前的「数据使用说明」版本。App Store 审核指南 5.4 要求 VPN App 在用户使用服务前
     /// 说明收集哪些数据、如何使用；用户确认之前不发起连接，也不做需要联网的自动判断。
-    static let dataUseNoticeVersion = 2
+    static let dataUseNoticeVersion = 4
     @Published private(set) var dataUseNoticeAccepted: Bool
 
     func acceptDataUseNotice() {
         persistence.defaults.set(Self.dataUseNoticeVersion, forKey: persistence.dataUseNoticeKey)
         dataUseNoticeAccepted = true
+        cloudSync.acceptNotice()
     }
 
     @Published var connectOnOpenEnabled: Bool {
@@ -698,7 +700,7 @@ final class AppState: ObservableObject {
     /// 但不能同时引用不同的 AnyConnect 线路，否则所有 tag 会被折叠到错误凭据上。
     var activeAnyConnectLineIDs: Set<String> {
         guard let scenario = activeScenario else { return [] }
-        let referenced = effectiveReferencedLineIDs(in: scenario)
+        let referenced = profile.referencedLineIDs(in: scenario)
         return Set(profile.lines.compactMap { line in
             guard referenced.contains(line.id), line.enabled, line.type == "vpn" else { return nil }
             return line.id
@@ -708,7 +710,7 @@ final class AppState: ObservableObject {
     /// 当前场景实际引用且已启用的 Tailscale 线路，用于识别 Tailscale-only 启动。
     var activeTailscaleLineIDs: Set<String> {
         guard let scenario = activeScenario else { return [] }
-        let referenced = effectiveReferencedLineIDs(in: scenario)
+        let referenced = profile.referencedLineIDs(in: scenario)
         return Set(profile.lines.compactMap { line in
             guard referenced.contains(line.id), line.enabled, line.type == "tailscale" else { return nil }
             return line.id
@@ -744,6 +746,12 @@ final class AppState: ObservableObject {
                 continue
             }
             guard rule.enabled else { continue }
+            let selected = rule.matchingResources.filter {
+                $0.enabled && (binding.conditionIDs.isEmpty || binding.conditionIDs.contains($0.id))
+            }
+            if selected.contains(where: { $0.type == "application" && (!$0.applications.isEmpty || !$0.processes.isEmpty) }) {
+                issues.append(tr("规则「\(rule.name)」需要 macOS 的来源应用信息", "Rule “\(rule.name)” requires source-app information from macOS"))
+            }
             if rule.type == "url" && rule.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 issues.append(tr("规则“\(rule.name)”缺少地址", "Rule “\(rule.name)” has no address"))
                 continue
@@ -752,7 +760,7 @@ final class AppState: ObservableObject {
                 issues.append(tr("规则“\(rule.name)”必须使用 HTTPS 地址", "Rule “\(rule.name)” must use an HTTPS address"))
                 continue
             }
-            if rule.type == "url" && !["", "auto", "srs", "json", "text"].contains(rule.format) {
+            if rule.type == "url" && !["", "auto", "srs", "binary", "json", "source", "text"].contains(rule.format) {
                 issues.append(tr("规则“\(rule.name)”格式不受支持", "Rule “\(rule.name)” uses an unsupported format"))
                 continue
             }
@@ -764,7 +772,7 @@ final class AppState: ObservableObject {
             )
         }
 
-        let referencedLineIDs = effectiveReferencedLineIDs(in: scenario)
+        let referencedLineIDs = profile.referencedLineIDs(in: scenario)
         // Tailscale endpoint 的子网路由能力是全局生成的，即使当前场景没有显式
         // 绑定也会随隧道启动。所有 enabled Tailscale 因而都必须先完成登录；
         // 出口节点仍只对承担默认公网出口的那一条强制要求。
@@ -838,21 +846,10 @@ final class AppState: ObservableObject {
         return host != "localhost" && !host.hasSuffix(".localhost") && !host.hasSuffix(".local")
     }
 
-    private func effectiveReferencedLineIDs(in scenario: Scenario) -> Set<String> {
-        var ids = Set<String>()
-        if !scenario.defaultLineID.isEmpty { ids.insert(scenario.defaultLineID) }
-        for binding in scenario.bindings {
-            guard !binding.lineID.isEmpty,
-                  profile.ruleSets.first(where: { $0.id == binding.ruleSetID })?.enabled == true else { continue }
-            ids.insert(binding.lineID)
-        }
-        return ids
-    }
-
     /// 当前场景用到、但还没填完的线路，首页据此用一句话告诉用户去哪儿补什么。
     var incompleteActiveLineSummaries: [String] {
         guard !persistenceRequiresRecovery, let scenario = activeScenario else { return [] }
-        let ids = effectiveReferencedLineIDs(in: scenario)
+        let ids = profile.referencedLineIDs(in: scenario)
         return profile.lines.compactMap { line in
             guard ids.contains(line.id) else { return nil }
             let issues = routeLineConfigurationIssues(line)
@@ -918,6 +915,15 @@ final class AppState: ObservableObject {
             }
             if UUID(uuidString: line.vmessUUID) == nil {
                 issues.append(tr("UUID 无效", "UUID is invalid"))
+            }
+        case "anytls":
+            if line.anytlsServer.isEmpty || line.anytlsPassword.isEmpty || !(1...65_535).contains(line.anytlsPort) {
+                issues.append(tr("请填写 AnyTLS 服务器、端口和密码", "Enter an AnyTLS server, port and password"))
+            }
+            if let issue = line.anyTLSOptionsValidationIssue { issues.append(issue) }
+        case "selector", "urltest":
+            if profile.leafLines(for: [line]).isEmpty {
+                issues.append(tr("线路组没有可用成员", "The group has no usable members"))
             }
         case "tailscale":
             if !line.tailscaleAuthenticated {
@@ -1210,6 +1216,7 @@ final class AppState: ObservableObject {
         self.tunnelManager = tunnelManager
         self.tailscaleSetupRuntime = tailscaleSetupRuntime
         self.persistence = persistence
+        self.cloudSync = ConfigurationSync(defaults: persistence.defaults)
         self.seed = seed
 
         // 先用预置配置（没有就用 bootstrap）初始化，loadSaved 后会被覆盖
@@ -1264,6 +1271,7 @@ final class AppState: ObservableObject {
                 self?.handleEngineStatusChange(status)
             }
         loadSaved()
+        if persistence.defaultsSuiteName == nil { configureCloudSync(noticeAccepted: dataUseNoticeAccepted) }
         if !persistenceRequiresRecovery {
             profile.ensureConnectivityTestConfiguration()
         }
@@ -1288,6 +1296,12 @@ final class AppState: ObservableObject {
         }
 
         if current == "connected" {
+            if previous == "action-required" {
+                let running = Set((runningProfileSnapshot?.lines ?? []).filter { $0.enabled && $0.type == "tailscale" }.map(\.id))
+                let recovered = profile.lines.indices.filter { running.contains(profile.lines[$0].id) && !profile.lines[$0].tailscaleAuthenticated }
+                for index in recovered { profile.lines[index].tailscaleAuthenticated = true }
+                if !recovered.isEmpty { save() }
+            }
             tailscaleAuthRefreshGeneration &+= 1
             runtimeTailscaleNeedsLoginIDs = []
             autoReconnectAttempt = 0
@@ -1562,7 +1576,7 @@ final class AppState: ObservableObject {
         return persist(replacingConflictedState: true)
     }
 
-    private func persist(replacingConflictedState: Bool) -> Bool {
+    private func persist(replacingConflictedState: Bool, normalizeForm: Bool = true) -> Bool {
         guard !persistenceRequiresRecovery || replacingConflictedState else {
             engine.lastError = persistenceRecoveryMessage
             profile = lastPersistedProfile
@@ -1571,23 +1585,25 @@ final class AppState: ObservableObject {
 
         profile.ensureConnectivityTestConfiguration()
 
-        // 先把所有 ASCII 字段做一次全角→半角清洗（兜底）
-        for i in profile.lines.indices {
-            profile.lines[i].vpnServer = profile.lines[i].vpnServer.normalizedASCII()
-            profile.lines[i].vpnUsername = profile.lines[i].vpnUsername.normalizedASCII()
-            profile.lines[i].vpnPassword = profile.lines[i].vpnPassword.normalizedASCII()
-            profile.lines[i].trojanServer = profile.lines[i].trojanServer.normalizedASCII()
-            profile.lines[i].trojanPassword = profile.lines[i].trojanPassword.normalizedASCII()
-            profile.lines[i].trojanSNI = profile.lines[i].trojanSNI.normalizedASCII()
-            profile.lines[i].ssServer = profile.lines[i].ssServer.normalizedASCII()
-            profile.lines[i].ssMethod = profile.lines[i].ssMethod.normalizedASCII()
-            profile.lines[i].ssPassword = profile.lines[i].ssPassword.normalizedASCII()
-            profile.lines[i].vmessServer = profile.lines[i].vmessServer.normalizedASCII()
-            profile.lines[i].vmessUUID = profile.lines[i].vmessUUID.normalizedASCII()
-            profile.lines[i].tailscaleExitNode = profile.lines[i].tailscaleExitNode.normalizedASCII()
-        }
-        for i in profile.ruleSets.indices {
-            profile.ruleSets[i].url = profile.ruleSets[i].url.normalizedASCII()
+        if normalizeForm {
+            // 先把所有 ASCII 字段做一次全角→半角清洗（兜底）
+            for i in profile.lines.indices {
+                profile.lines[i].vpnServer = profile.lines[i].vpnServer.normalizedASCII()
+                profile.lines[i].vpnUsername = profile.lines[i].vpnUsername.normalizedASCII()
+                profile.lines[i].vpnPassword = profile.lines[i].vpnPassword.normalizedASCII()
+                profile.lines[i].trojanServer = profile.lines[i].trojanServer.normalizedASCII()
+                profile.lines[i].trojanPassword = profile.lines[i].trojanPassword.normalizedASCII()
+                profile.lines[i].trojanSNI = profile.lines[i].trojanSNI.normalizedASCII()
+                profile.lines[i].ssServer = profile.lines[i].ssServer.normalizedASCII()
+                profile.lines[i].ssMethod = profile.lines[i].ssMethod.normalizedASCII()
+                profile.lines[i].ssPassword = profile.lines[i].ssPassword.normalizedASCII()
+                profile.lines[i].vmessServer = profile.lines[i].vmessServer.normalizedASCII()
+                profile.lines[i].vmessUUID = profile.lines[i].vmessUUID.normalizedASCII()
+                profile.lines[i].tailscaleExitNode = profile.lines[i].tailscaleExitNode.normalizedASCII()
+            }
+            for i in profile.ruleSets.indices {
+                profile.ruleSets[i].url = profile.ruleSets[i].url.normalizedASCII()
+            }
         }
         // 直连恒为已验证
         for i in profile.lines.indices where profile.lines[i].type == "direct" {
@@ -1700,6 +1716,14 @@ final class AppState: ObservableObject {
         }
 
         func storeLine(_ line: inout Line, scope: [String]) {
+            store(&line.anytlsServer, key: Self.vaultKey(scope + ["anytls-server"]))
+            store(&line.anytlsPassword, key: Self.vaultKey(scope + ["anytls-password"]))
+            store(&line.anytlsSNI, key: Self.vaultKey(scope + ["anytls-sni"]))
+            store(&line.groupURL, key: Self.vaultKey(scope + ["group-url"]))
+            if let options = line.nativeOptions {
+                vault[Self.vaultKey(scope + ["native-options"])] = options.formatted
+                line.nativeOptions = nil
+            }
             store(&line.vpnServer, key: Self.vaultKey(scope + ["vpn-server"]))
             store(&line.vpnUsername, key: Self.vaultKey(scope + ["vpn-username"]))
             store(&line.vpnPassword, key: Self.vaultKey(scope + ["vpn-password"]))
@@ -1713,9 +1737,19 @@ final class AppState: ObservableObject {
             store(&line.tailscaleExitNode, key: Self.vaultKey(scope + ["tailscale-exit-node"]))
         }
 
-        for index in sanitized.ruleSets.indices where sanitized.ruleSets[index].type == "url" {
-            let id = sanitized.ruleSets[index].id
-            store(&sanitized.ruleSets[index].url, key: Self.vaultKey("rule", id, "url"))
+        func storeRule(_ rule: inout RuleSet, scope: [String]) {
+            store(&rule.url, key: Self.vaultKey(scope + ["url"]))
+            for index in rule.conditions.indices {
+                let id = rule.conditions[index].id
+                storeRule(&rule.conditions[index], scope: scope + ["condition", id])
+            }
+        }
+        for index in sanitized.importWarnings.indices {
+            store(&sanitized.importWarnings[index].value, key: Self.vaultKey("import-warning", String(index), "value"))
+        }
+        for index in sanitized.ruleSets.indices {
+            let scope = ["rule", sanitized.ruleSets[index].id]
+            storeRule(&sanitized.ruleSets[index], scope: scope)
         }
         for index in sanitized.lines.indices {
             let id = sanitized.lines[index].id
@@ -1945,10 +1979,12 @@ final class AppState: ObservableObject {
                 || !line.trojanServer.isEmpty || !line.trojanPassword.isEmpty || !line.trojanSNI.isEmpty
                 || !line.ssServer.isEmpty || !line.ssPassword.isEmpty
                 || !line.vmessServer.isEmpty || !line.vmessUUID.isEmpty
-                || !line.tailscaleExitNode.isEmpty
+                || !line.tailscaleExitNode.isEmpty || !line.anytlsPassword.isEmpty || !line.anytlsServer.isEmpty
+                || !line.anytlsSNI.isEmpty || !line.groupURL.isEmpty || line.nativeOptions != nil
         }
         if profile.lines.contains(where: lineContainsSensitiveValue) { return true }
-        if profile.ruleSets.contains(where: { $0.type == "url" && !$0.url.isEmpty }) { return true }
+        if profile.matchingResources.contains(where: { !$0.url.isEmpty })
+            || profile.importWarnings.contains(where: { !$0.value.isEmpty }) { return true }
         return profile.subscriptions.contains { subscription in
             !subscription.url.isEmpty || !subscription.testURL.isEmpty
                 || !subscription.geoIPRuleSetURLTemplate.isEmpty
@@ -1966,6 +2002,13 @@ final class AppState: ObservableObject {
         }
 
         func restoreLine(_ line: inout Line, scope: [String]) {
+            restore(&line.anytlsServer, key: Self.vaultKey(scope + ["anytls-server"]))
+            restore(&line.anytlsPassword, key: Self.vaultKey(scope + ["anytls-password"]))
+            restore(&line.anytlsSNI, key: Self.vaultKey(scope + ["anytls-sni"]))
+            restore(&line.groupURL, key: Self.vaultKey(scope + ["group-url"]))
+            if let options = vault[Self.vaultKey(scope + ["native-options"])] {
+                line.nativeOptions = try? JSONDecoder().decode(JSONValue.self, from: Data(options.utf8))
+            }
             restore(&line.vpnServer, key: Self.vaultKey(scope + ["vpn-server"]))
             restore(&line.vpnUsername, key: Self.vaultKey(scope + ["vpn-username"]))
             restore(&line.vpnPassword, key: Self.vaultKey(scope + ["vpn-password"]))
@@ -1979,8 +2022,19 @@ final class AppState: ObservableObject {
             restore(&line.tailscaleExitNode, key: Self.vaultKey(scope + ["tailscale-exit-node"]))
         }
 
-        for index in profile.ruleSets.indices where profile.ruleSets[index].type == "url" {
-            restore(&profile.ruleSets[index].url, key: Self.vaultKey("rule", profile.ruleSets[index].id, "url"))
+        func restoreRule(_ rule: inout RuleSet, scope: [String]) {
+            restore(&rule.url, key: Self.vaultKey(scope + ["url"]))
+            for index in rule.conditions.indices {
+                let id = rule.conditions[index].id
+                restoreRule(&rule.conditions[index], scope: scope + ["condition", id])
+            }
+        }
+        for index in profile.importWarnings.indices {
+            restore(&profile.importWarnings[index].value, key: Self.vaultKey("import-warning", String(index), "value"))
+        }
+        for index in profile.ruleSets.indices {
+            let scope = ["rule", profile.ruleSets[index].id]
+            restoreRule(&profile.ruleSets[index], scope: scope)
         }
         for index in profile.lines.indices {
             let id = profile.lines[index].id
@@ -3258,7 +3312,7 @@ extension AppState {
               configurationIssues(for: scenario).isEmpty else { return nil }
         var candidate = base
         candidate.activeScenarioID = scenarioID
-        let referenced = effectiveReferencedLineIDs(in: scenario)
+        let referenced = profile.referencedLineIDs(in: scenario)
         let anyConnectLines = candidate.lines.filter {
             referenced.contains($0.id) && $0.enabled && $0.type == "vpn"
         }
@@ -3297,3 +3351,24 @@ extension AppState {
     }
 }
 #endif
+
+extension AppState {
+    func cloudConfiguration() throws -> CloudConfiguration {
+        guard !persistenceRequiresRecovery, profile == lastPersistedProfile else {
+            throw CloudSyncIssue("请先保存或修复本机配置 · Save or recover local configuration first")
+        }
+        return CloudConfiguration(profile: profile.forCloud, settings: cloudPreferences())
+    }
+
+    func applyCloudConfiguration(_ archive: CloudConfiguration) throws {
+        guard canMutateConfiguration else {
+            throw CloudSyncIssue("断开后将继续同步 · Sync will resume after disconnect")
+        }
+        try MobileConfigurationService.validate(archive.profile)
+        profile = archive.profile.restoringDeviceState(from: profile)
+        guard persist(replacingConflictedState: false, normalizeForm: false) else {
+            throw CloudSyncIssue(engine.lastError ?? "无法保存配置 · Save failed")
+        }
+        applyCloudPreferences(archive.settings)
+    }
+}

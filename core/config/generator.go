@@ -493,7 +493,11 @@ func generateSingBox(
 		if platform == PlatformNE {
 			authKey = line.TailscaleAuthKey
 		}
-		endpoint, err := buildTailscaleEndpoint(line, profile.Tailscale, basePath, authKey)
+		identityPath, err := ProfileDataPath(&Profile{ID: TailscaleIdentityProfileID(profile, line)}, basePath)
+		if err != nil {
+			return nil, err
+		}
+		endpoint, err := buildTailscaleEndpoint(line, profile.Tailscale, identityPath, authKey)
 		if err != nil {
 			return nil, err
 		}

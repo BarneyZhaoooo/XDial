@@ -236,7 +236,12 @@ func GenerateConnectionPlan(profileJSON string) (string, error) {
 // .containerURL(forSecurityApplicationGroupIdentifier:) 拿到的路径),用于拼
 // cache_file 的绝对路径,必须是扩展进程可写的目录。
 func GenerateNEConfig(profileJSON string, vpnServerIP string, basePath string) (string, error) {
-	return generateNEConfig(profileJSON, vpnServerIP, basePath, config.PlatformNE)
+	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
+	if err != nil {
+		return "", err
+	}
+	data, err := generateNEConfigData(profile, vpnServerIP, basePath, true)
+	return string(data), err
 }
 
 // GenerateTransparentProxySession 供 macOS Transparent Proxy 扩展调用。
@@ -1157,11 +1162,21 @@ type neSessionLine struct {
 // returns a JSON neSession. iOS uses it for every start so that the running
 // generation's Line capabilities are reusable by a later in-tunnel switch.
 func GenerateNESession(profileJSON string, vpnServerIP string, basePath string) (string, error) {
+	return generateNESession(profileJSON, vpnServerIP, basePath, true)
+}
+
+// GenerateCachedNESession prepares a switch while the old tunnel carries traffic.
+// Only previously validated caches may be read from the host in this state.
+func GenerateCachedNESession(profileJSON, vpnServerIP, basePath string) (string, error) {
+	return generateNESession(profileJSON, vpnServerIP, basePath, false)
+}
+
+func generateNESession(profileJSON, vpnServerIP, basePath string, allowDownload bool) (string, error) {
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", err
 	}
-	data, err := generateNEConfigData(profile, vpnServerIP, basePath, config.PlatformNE)
+	data, err := generateNEConfigData(profile, vpnServerIP, basePath, allowDownload)
 	if err != nil {
 		return "", err
 	}
@@ -1217,37 +1232,40 @@ func GenerateAndroidConfig(profileJSON, systemDNSJSON, basePath string) (string,
 	}, nil)
 }
 
-func generateNEConfig(profileJSON string, vpnServerIP string, basePath string, platform config.Platform) (string, error) {
-	return generatePacketTunnelConfig(profileJSON, basePath, func(profile *config.Profile) ([]byte, error) {
-		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
-	})
-}
-
-func generatePacketTunnelConfig(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error)) (string, error) {
-	return generatePacketTunnelConfigWithFetcher(profileJSON, basePath, generate, subscription.FetchStrictBytes)
-}
-
 func generatePacketTunnelConfigWithFetcher(profileJSON, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) (string, error) {
 	profile, err := config.ParseRuntimeProfile([]byte(profileJSON))
 	if err != nil {
 		return "", err
 	}
-	data, err := generatePacketTunnelConfigData(profile, basePath, generate, fetch)
+	data, err := generatePacketTunnelConfigData(profile, basePath, generate, func(*config.RuleSet) neRuleSetFetcher { return fetch }, fetch)
 	return string(data), err
 }
 
-func generateNEConfigData(profile *config.Profile, vpnServerIP, basePath string, platform config.Platform) ([]byte, error) {
+func generateNEConfigData(profile *config.Profile, vpnServerIP, basePath string, allowDownload bool) ([]byte, error) {
+	var direct neRuleSetFetcher
+	if allowDownload {
+		direct = subscription.FetchStrictBytes
+	}
+	fetchForRule := func(rule *config.RuleSet) neRuleSetFetcher {
+		lineID := rule.EffectiveFetchLineID()
+		if !allowDownload || lineID == "direct" {
+			return direct
+		}
+		return func(url string, limit int64) ([]byte, error) {
+			return fetchAppleColdRule(profile, lineID, basePath, url, limit)
+		}
+	}
 	return generatePacketTunnelConfigData(profile, basePath, func(profile *config.Profile) ([]byte, error) {
-		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, platform, basePath)
-	}, subscription.FetchStrictBytes)
+		return config.GenerateSingBoxFor(profile, 0, vpnServerIP, config.PlatformNE, basePath)
+	}, fetchForRule, direct)
 }
 
-func generatePacketTunnelConfigData(profile *config.Profile, basePath string, generate func(*config.Profile) ([]byte, error), fetch neRuleSetFetcher) ([]byte, error) {
+func generatePacketTunnelConfigData(profile *config.Profile, basePath string, generate func(*config.Profile) ([]byte, error), fetchForRule func(*config.RuleSet) neRuleSetFetcher, fetch neRuleSetFetcher) ([]byte, error) {
 	ruleDir, err := prepareNERuleSetDirectory(basePath)
 	if err != nil {
 		return nil, err
 	}
-	if err := materializeNERuleSets(profile, basePath, fetch); err != nil {
+	if _, err := materializeNERuleSetsWithFetchForRule(profile, basePath, fetchForRule, nil); err != nil {
 		return nil, err
 	}
 	// socksPort 在 NE 模式下不生效(vpn 出口固定用自研 type:"vpn",见

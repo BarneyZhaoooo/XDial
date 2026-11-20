@@ -100,3 +100,63 @@ func TestAppleResourceAcquisitionKeepsOSUnderlayRouting(t *testing.T) {
 		t.Fatal("Android resource session lost its callback-selected network")
 	}
 }
+
+func TestAppleColdRuleAcquisitionIsolatesProtocolAndDNS(t *testing.T) {
+	profile := &Profile{Lines: []Line{
+		{ID: "vpn", Type: LineTypeVPN, Enabled: true, VPNServer: "vpn.invalid"},
+		{ID: "tail", Type: LineTypeTailscale, Enabled: true, TailscaleExitNode: "100.64.0.42", TailscaleAuthKey: "unused-registration-key"},
+	}}
+	for _, lineID := range []string{"vpn", "tail"} {
+		t.Run(lineID, func(t *testing.T) {
+			dir := t.TempDir()
+			servers := []string{"192.0.2.53"}
+			if _, err := GenerateAppleResourceAcquisition(profile, lineID, dir, servers); !errors.Is(err, ErrAndroidAcquisitionProtocolNeedsLease) {
+				t.Fatalf("parallel source acquisition accepted protocol: %v", err)
+			}
+			data, err := GenerateAppleColdRuleAcquisition(profile, lineID, dir, servers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Inbounds, Experimental json.RawMessage
+				Outbounds, Endpoints   []map[string]any
+				DNS                    struct {
+					Final   string
+					Servers []map[string]any
+				}
+				Route struct{ Final string }
+			}
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			if doc.Inbounds != nil || doc.Experimental != nil || doc.Route.Final == "direct" {
+				t.Fatal("cold fetch leaked into user traffic")
+			}
+			var resolver map[string]any
+			for _, server := range doc.DNS.Servers {
+				if server["tag"] == doc.DNS.Final {
+					resolver = server
+				}
+			}
+			if lineID == "vpn" {
+				if len(doc.Endpoints) != 0 || doc.Route.Final != "vpn" || resolver["type"] != "https" || resolver["detour"] != "vpn" {
+					t.Fatal("AnyConnect cold fetch did not own DNS and HTTPS")
+				}
+			} else {
+				if len(doc.Endpoints) != 1 || doc.Endpoints[0]["tag"] != doc.Route.Final || doc.Endpoints[0]["exit_node"] != "100.64.0.42" ||
+					doc.Endpoints[0]["auth_key"] != nil || resolver["detour"] != doc.Route.Final {
+					t.Fatal("Tailscale cold fetch did not own DNS, exit and identity")
+				}
+				for _, outbound := range doc.Outbounds {
+					if outbound["type"] == "vpn" {
+						t.Fatal("unrelated AnyConnect line activated")
+					}
+				}
+			}
+		})
+	}
+	profile.Lines[1].TailscaleExitNode = ""
+	if _, err := GenerateAppleColdRuleAcquisition(profile, "tail", t.TempDir(), []string{"192.0.2.53"}); err == nil {
+		t.Fatal("cold Tailscale fetch accepted a missing exit node")
+	}
+}
