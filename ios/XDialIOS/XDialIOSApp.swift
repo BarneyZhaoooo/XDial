@@ -7,6 +7,7 @@ struct XDialIOSApp: App {
         UNUserNotificationCenter.current().delegate = ConnectionNoticePresenter.shared
         // 快捷指令和控制中心会在无窗口时后台启动 App，宿主必须在 App 初始化时注册。
         ConnectionNotice.preferences.set(MobileAppRuntime.state.language.rawValue, forKey: "xdial.language")
+        LocationScenarios.shared.attach(MobileAppRuntime.state)
         XDialIntentHost.current = MobileIntentHost(app: MobileAppRuntime.state)
         MobileAppRuntime.connectionActivity = ConnectionActivityController(app: MobileAppRuntime.state)
     }
@@ -32,7 +33,9 @@ struct MobileRootView: View {
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .background: MobileAppRuntime.tailscaleSetupBackgroundGuard.enteredBackground()
-                case .active: MobileAppRuntime.tailscaleSetupBackgroundGuard.becameActive()
+                case .active:
+                    LocationScenarios.shared.reconcile()
+                    MobileAppRuntime.tailscaleSetupBackgroundGuard.becameActive()
                 case .inactive: MobileAppRuntime.tailscaleSetupBackgroundGuard.becameInactive()
                 @unknown default: break
                 }

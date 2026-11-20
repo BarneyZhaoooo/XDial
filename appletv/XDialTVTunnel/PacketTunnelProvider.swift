@@ -376,7 +376,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         }
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
-                        self.startActivityUpdates()
                         #if os(iOS)
                         self.recordRunningScenario(bundle, remoteAddress: remoteIPv4)
                         #endif
@@ -443,7 +442,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                         try self.startEngine(engine, bundle: bundle, dialAddress: "")
                         guard self.completeAttempt(generation) else { return }
                         self.recordDiagnostic("engine_started")
-                        self.startActivityUpdates()
                         #if os(iOS)
                         self.recordRunningScenario(bundle, remoteAddress: "127.0.0.1")
                         #endif
@@ -787,19 +785,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let activityUpdater = TunnelActivityUpdater()
     #endif
 
-    /// 连上以后开始往实时活动（锁屏、灵动岛）里写网速。只有 iOS 有实时活动。
-    private func startActivityUpdates() {
-        #if os(iOS)
-        activityUpdater.start { [weak self] in
-            guard let engine = self?.currentEngine(), engine.isRunning() else { return nil }
-            return engine.trafficTotals()
-        }
-        #endif
-    }
-
     private func stopActivityUpdates() {
         #if os(iOS)
-        activityUpdater.stopAndEndActivities()
+        activityUpdater.endActivities()
         #endif
     }
 
@@ -1877,6 +1865,7 @@ extension PacketTunnelProvider {
         origin: TunnelScenarioState.SwitchRecord.Origin,
         expectedRevision: String?,
         reapply: Bool = false,
+        decisionNetwork: String? = nil,
         automaticValidation: (@Sendable () -> Bool)? = nil,
         completion: @escaping @Sendable (Result<TunnelScenarioState, Error>) -> Void
     ) {
@@ -1928,6 +1917,7 @@ extension PacketTunnelProvider {
                 from: source,
                 to: scenarioID,
                 origin: origin,
+                decisionNetwork: decisionNetwork,
                 outcome: outcome
             )
             switch outcome {
@@ -1944,6 +1934,7 @@ extension PacketTunnelProvider {
         from source: StartBundle,
         to scenarioID: String,
         origin: TunnelScenarioState.SwitchRecord.Origin,
+        decisionNetwork: String?,
         outcome: Result<ScenarioSwitchOutcome, Error>
     ) -> TunnelScenarioState {
         scenarioLock.lock()
@@ -1952,7 +1943,6 @@ extension PacketTunnelProvider {
             runningRemoteAddress = switched.remoteAddress
         }
         scenarioSwitchActive = false
-        let network = lastPathSignature
         scenarioLock.unlock()
 
         if case .success(let switched) = outcome {
@@ -1982,7 +1972,7 @@ extension PacketTunnelProvider {
                     at: Date(), succeeded: true, failure: nil
                 )
                 if origin == .automatic {
-                    state.guardState.note(from: source.scenarioID, to: scenarioID, network: ScenarioNetworkIdentity.key(path: network, ssid: readCurrentSSID()))
+                    state.guardState.note(from: source.scenarioID, to: scenarioID, network: decisionNetwork)
                 }
                 if state.suggestedScenarioID == scenarioID {
                     state.suggestedScenarioID = nil
@@ -2421,7 +2411,9 @@ extension PacketTunnelProvider {
         let previousSwitch = currentScenarioState().lastSwitch
         let policy = catalog.policy
         let ssid = readCurrentSSID()
+        let place = policy.placePick()
         let decisionNetwork = ScenarioNetworkIdentity.key(path: network, ssid: ssid)
+            + (place.map { ":place:" + $0.scenarioID } ?? "")
         let context = ScenarioSurveyContext(network: decisionNetwork, revision: catalog.revision,
                                             policy: policy, runningID: runningID)
         scenarioLock.lock()
@@ -2435,7 +2427,7 @@ extension PacketTunnelProvider {
             return
         }
         let ssidRead = !(ssid?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        var pick = ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
+        var pick = place ?? ScenarioAutoDecision.wifiPick(ssid: ssid, rules: policy.wifiRules)
         var exit: ScenarioSurveyRecord.ExitLookup = .notNeeded
         let networkToken = ScenarioNetworkIdentity.diagnosticToken(path: network, ssid: ssid)
         var evidence = RegionProbeEvidence()
@@ -2493,7 +2485,7 @@ extension PacketTunnelProvider {
 
         let validation: @Sendable () -> Bool = { [weak self] in
             guard let self, case .available(let latest) = ScenarioSwitchCatalogStore.load(),
-                  latest.revision == catalog.revision, latest.policy == policy, latest.policy.enabled,
+                  latest.revision == catalog.revision, latest.policy.hasSameRules(as: policy), latest.policy.enabled, latest.policy.placePick() == place,
                   self.currentEngine()?.isRunning() == true else { return false }
             self.scenarioLock.lock()
             let valid = self.runningBundle?.scenarioID == runningID && self.lastPathSignature == network
@@ -2538,7 +2530,7 @@ extension PacketTunnelProvider {
         let finished = DispatchSemaphore(value: 0)
         // 判断与提交必须使用同一份目录和规则。
         switchScenario(to: pick.scenarioID, origin: .automatic, expectedRevision: catalog.revision,
-                       automaticValidation: validation) { _ in
+                       decisionNetwork: decisionNetwork, automaticValidation: validation) { _ in
             finished.signal()
         }
         finished.wait()

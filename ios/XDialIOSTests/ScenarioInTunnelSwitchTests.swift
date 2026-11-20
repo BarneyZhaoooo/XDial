@@ -290,6 +290,26 @@ final class ScenarioInTunnelSwitchTests: XCTestCase {
         XCTAssertEqual(build?.policy.enabled, true)
     }
 
+    func testPlaceCanActivateAnOtherwiseManualScenarioWithoutDisconnecting() async {
+        let (app, _, manager) = makeApp()
+        app.connect()
+        await settle()
+        let initial = app.scenarioAutoPolicyProvider!
+        app.scenarioAutoPolicyProvider = { profile in
+            var policy = initial(profile)
+            policy.placeMatch = .init(scenarioID: "manual", expires: Date().addingTimeInterval(600))
+            return policy
+        }
+        manager.evaluationState = state(running: "manual")
+        app.updateScenarioAutoPolicy()
+        app.refreshScenarioCatalog()
+        await settle()
+        XCTAssertEqual(manager.policyUpdates.last?.placePick()?.scenarioID, "manual")
+        XCTAssertTrue(manager.catalogBuilds.last?.ids.contains("manual") == true)
+        XCTAssertEqual(app.profile.activeScenarioID, "manual")
+        XCTAssertEqual(manager.stopCallCount, 0)
+    }
+
     func testConnectingAsksTheExtensionOnceTheCatalogIsReady() async {
         let (app, _, manager) = makeApp()
         // 连接前 App 自己没查到出口；连上后由扩展经 Direct 线路重新判断。

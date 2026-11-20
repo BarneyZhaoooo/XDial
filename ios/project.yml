@@ -182,6 +182,8 @@ targets:
         XDialSharedKeychainAccessGroup: $(XDIAL_SHARED_KEYCHAIN_GROUP)
         XDialAppGroupIdentifier: $(XDIAL_APP_GROUP)
         XDialTunnelBundleIdentifier: $(XDIAL_BUNDLE_ID).tunnel
+        UIBackgroundModes: [location]
+        NSLocationWhenInUseUsageDescription: XDial uses your location to match saved places and switch VPN scenarios, including while connected in the background.
         # 与 App Store Connect 填写的隐私政策一致；数据使用说明和设置里链接到这里。
         XDialPrivacyPolicyURL: https://xindong.github.io/XDial/privacy/
     entitlements:

@@ -2,7 +2,7 @@ import ActivityKit
 import Foundation
 
 /// 连接状态的实时活动：锁屏横幅和灵动岛共用这一份数据。
-/// 状态文案由主 App 按当前语言写进来；网速由一直在运行的 VPN 扩展刷新。
+/// 状态文案由主 App 按当前语言写进来；主 App 用 VPN 的流量计数更新网速。
 struct XDialConnectionAttributes: ActivityAttributes {
     enum Phase: String, Codable, Hashable, Sendable {
         /// 正在连接、检查线路或重连。
@@ -23,6 +23,7 @@ struct XDialConnectionAttributes: ActivityAttributes {
         /// 实时网速（字节/秒）；还没有采样时为空。
         var downloadBytesPerSecond: Double?
         var uploadBytesPerSecond: Double?
+        var speedSampledAt: Date? = nil
         /// 需要留意时的第二行，例如「自检未通过，正在重新检测」。旧版本没有这个字段。
         var detail: String? = nil
     }
@@ -32,6 +33,22 @@ struct XDialConnectionAttributes: ActivityAttributes {
 }
 
 extension XDialConnectionAttributes.ContentState {
+    /// Allow three sampling intervals before ActivityKit invalidates the last reading.
+    static let speedLifetime: TimeInterval = 6
+
+    var speedExpiresAt: Date? { speedSampledAt?.addingTimeInterval(Self.speedLifetime) }
+
+    func displayed(isStale: Bool, at now: Date = Date()) -> Self {
+        guard !isStale, let expiry = speedExpiresAt, expiry > now else {
+            var copy = self
+            copy.downloadBytesPerSecond = nil
+            copy.uploadBytesPerSecond = nil
+            copy.speedSampledAt = nil
+            return copy
+        }
+        return self
+    }
+
     /// 灵动岛收起时，一个方向的网速到这个数才值得占地方；再小只是零星的后台流量。
     static let compactSpeedThreshold: Double = 1_000
 

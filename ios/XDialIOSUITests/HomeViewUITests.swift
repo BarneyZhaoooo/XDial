@@ -1,8 +1,64 @@
 import Darwin
+import CoreLocation
 import XCTest
 
 @MainActor
 final class HomeViewUITests: XCTestCase {
+    #if targetEnvironment(simulator)
+    func testBackgroundSpeedIsOptionalAndRemembered() {
+        let app = launchApp()
+        app.buttons["home-settings"].tap()
+        let display = app.switches["settings-live-activity"]
+        let speed = app.switches["settings-background-speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        XCTAssertEqual(display.value as? String, "1")
+        XCTAssertEqual(speed.value as? String, "0")
+        let toggle = CGVector(dx: 0.9, dy: 0.5)
+        speed.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertEqual(speed.value as? String, "1")
+        display.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertFalse(speed.isEnabled)
+
+        app.terminate()
+        let reopened = launchApp(reset: false)
+        reopened.buttons["home-settings"].tap()
+        let restoredSpeed = reopened.switches["settings-background-speed"]
+        XCTAssertFalse(restoredSpeed.isEnabled)
+        reopened.switches["settings-live-activity"].coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertTrue(restoredSpeed.isEnabled)
+        XCTAssertEqual(restoredSpeed.value as? String, "1")
+        restoredSpeed.coordinate(withNormalizedOffset: toggle).tap()
+        XCTAssertEqual(restoredSpeed.value as? String, "0")
+    }
+
+    func testSaveAndRemoveCurrentPlace() throws {
+        let app = launchApp(extraArguments: ["-XDialUITestingLocation"])
+        let previous = XCUIDevice.shared.location
+        defer { XCUIDevice.shared.location = previous }
+        XCUIDevice.shared.location = XCUILocation(location: CLLocation(latitude: 37.33, longitude: -122.03))
+        let consent = app.buttons["data-use-accept"]
+        if consent.isHittable { consent.tap() }
+        app.buttons["home-settings"].tap()
+        app.buttons["settings-place-scenarios"].tap()
+        let enabled = app.switches["place-enabled"]
+        XCTAssertEqual(enabled.value as? String, "0")
+        enabled.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = springboard.buttons.matching(NSPredicate(format: "label IN %@",
+            ["Allow While Using App", "While Using the App", "使用 App 时允许", "使用App时允许"])).firstMatch
+        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        let save = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'save-place-'")).firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 5), app.debugDescription + springboard.debugDescription)
+        save.tap()
+        let remove = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'remove-place-'")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 15))
+        remove.tap()
+        XCTAssertFalse(remove.exists)
+        enabled.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertFalse(save.exists)
+    }
+    #endif
+
     func testPhysicalDeviceDirectTCPBaseline() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("真实物理网络基线只在 iPhone 上验收")

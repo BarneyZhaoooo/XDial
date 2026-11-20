@@ -10,6 +10,7 @@ import UIKit
 @MainActor
 final class ConnectionActivityController {
     static let preferenceKey = "xdial.live-activity.enabled"
+    static let backgroundSpeedKey = "xdial.live-activity.background-speed"
 
     private let app: AppState
     private var subscriptions: Set<AnyCancellable> = []
@@ -31,30 +32,62 @@ final class ConnectionActivityController {
             .sink { [weak self] _ in self?.sync() }
             .store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .merge(with: NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification))
             .sink { [weak self] _ in self?.sync() }
             .store(in: &subscriptions)
-        sync()
-        startSamplingIfNeeded()
+        sync(force: !Self.isEnabledByUser)
     }
 
-    /// App 还在运行时由它每两秒采一次网速；App 被挂起后由 VPN 扩展接着刷新。
-    private func startSamplingIfNeeded() {
+    private var shouldSample: Bool {
+        app.isConnected && Self.isEnabledByUser
+            && (UIApplication.shared.applicationState != .background
+                || UserDefaults.standard.bool(forKey: Self.backgroundSpeedKey))
+    }
+
+    /// 退出允许采样的状态时取消整个任务，恢复后用两个新样本计算速率。
+    func refreshSampling() {
+        guard shouldSample else {
+            sampler?.cancel()
+            sampler = nil
+            return
+        }
         guard sampler == nil else { return }
         sampler = Task { [weak self] in
             var estimator = TrafficRateEstimator()
+            var lastSample: Date?
+            var connectionStart: Date?
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
-                guard self.app.isConnected, Self.isEnabledByUser else { continue }
+                guard self.shouldSample else {
+                    self.sampler = nil
+                    return
+                }
+                let start = self.app.engine.connectedAt
                 let totals = await self.app.trafficTotals()
-                guard let rate = estimator.update(totals, sampledAt: Date()),
+                guard !Task.isCancelled else { return }
+                guard self.shouldSample else {
+                    self.sampler = nil
+                    return
+                }
+                let now = Date()
+                let interval = lastSample.map { now.timeIntervalSince($0) }
+                let continuous = connectionStart == start && interval.map {
+                    $0 > 0 && $0 < XDialConnectionAttributes.ContentState.speedLifetime
+                } == true
+                connectionStart = start
+                lastSample = totals == nil ? nil : now
+                guard let rate = estimator.update(totals, sampledAt: now), continuous,
+                      self.app.engine.connectedAt == start,
                       rate.downloadBytesPerSecond != nil else { continue }
                 for activity in Activity<XDialConnectionAttributes>.activities {
+                    guard !Task.isCancelled else { return }
                     var state = activity.content.state
                     guard state.connectedAt != nil else { continue }
                     state.downloadBytesPerSecond = rate.downloadBytesPerSecond
                     state.uploadBytesPerSecond = rate.uploadBytesPerSecond
-                    await activity.update(ActivityContent(state: state, staleDate: nil))
+                    state.speedSampledAt = now
+                    await activity.update(ActivityContent(state: state, staleDate: state.speedExpiresAt))
                 }
             }
         }
@@ -62,8 +95,7 @@ final class ConnectionActivityController {
 
     /// 设置里的开关变化后调用。
     func preferenceChanged() {
-        lastState = nil
-        sync()
+        sync(force: true)
     }
 
     private var desiredState: XDialConnectionAttributes.ContentState? {
@@ -100,9 +132,10 @@ final class ConnectionActivityController {
         }
     }
 
-    private func sync() {
+    private func sync(force: Bool = false) {
+        refreshSampling()
         let desired = desiredState
-        guard desired != lastState else { return }
+        guard force || desired != lastState else { return }
         lastState = desired
         let disconnectTitle = app.tr("断开", "Disconnect")
         let previous = queue
@@ -128,12 +161,13 @@ final class ConnectionActivityController {
             return
         }
         var state = desired
-        if let current = activities.first, state.connectedAt != nil {
+        if let current = activities.first, state.connectedAt != nil, state.connectedAt == current.content.state.connectedAt {
             // 网速由采样单独刷新，这里更新状态时保留上一次的读数。
+            state.speedSampledAt = current.content.state.speedSampledAt
             state.downloadBytesPerSecond = current.content.state.downloadBytesPerSecond
             state.uploadBytesPerSecond = current.content.state.uploadBytesPerSecond
         }
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: state.speedExpiresAt)
         if let current = activities.first {
             // 只保留一个，多出来的（比如上次没来得及结束的）收掉。
             for extra in activities.dropFirst() {

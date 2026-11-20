@@ -3300,6 +3300,7 @@ extension AppState {
             ids.append(id)
         }
         add(base.activeScenarioID)
+        if let target = policy.placePick() { add(target.scenarioID) }
         policy.wifiRules.forEach { add($0.scenarioID) }
         policy.regionScenarios.values.sorted().forEach(add)
         return ids.prefix(ScenarioSwitchCatalog.maxEntries).compactMap {
