@@ -83,6 +83,7 @@ final class ConfigurationSync: ObservableObject {
     @Published private(set) var conflict = false
     @Published private(set) var message = ""
     private var conflictTag: String?
+    private var conflictChoice: Choice = .automatic
     private let defaults: UserDefaults
     private var capture: (() throws -> CloudConfiguration)?
     private var apply: ((CloudConfiguration) throws -> Void)?
@@ -135,6 +136,7 @@ final class ConfigurationSync: ObservableObject {
         message = ""
         conflict = false
         conflictTag = nil
+        conflictChoice = .automatic
         guard enabled, noticeAccepted, capture != nil else { return }
         accountChanges = Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: .CKAccountChanged) {
@@ -210,7 +212,12 @@ final class ConfigurationSync: ObservableObject {
                 message = "Cloud copy removed · 云端配置已删除，请重新开启同步"
                 return
             }
-            if tag != nil && changedHere && changedThere && (choice == .automatic || conflictTag != tag) {
+            if conflictTag != tag {
+                conflictChoice = .automatic
+            } else if choice != .automatic {
+                conflictChoice = choice
+            }
+            if tag != nil && changedHere && changedThere && conflictChoice == .automatic {
                 conflict = true
                 conflictTag = tag
                 message = "选择要保留的配置 · Choose the configuration to keep"
@@ -226,7 +233,7 @@ final class ConfigurationSync: ObservableObject {
                 remote = decoded
             } else { remote = nil }
 
-            if let remote, choice == .cloud || (changedThere && !changedHere) {
+            if let remote, conflictChoice == .cloud || (changedThere && !changedHere) {
                 try apply(remote)
                 marker = ["owner": owner, "tag": tag!, "hash": try digest(capture())]
             } else if tag == nil || changedHere {
@@ -250,6 +257,8 @@ final class ConfigurationSync: ObservableObject {
                 marker = ["owner": owner, "tag": newTag, "hash": localHash]
             }
             conflict = false
+            conflictTag = nil
+            conflictChoice = .automatic
             message = "已同步 · Up to date"
         } catch {
             guard generation == request else { return }
