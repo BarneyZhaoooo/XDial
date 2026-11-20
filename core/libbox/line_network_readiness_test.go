@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -416,6 +417,24 @@ func (c *networkReadinessVPNClient) Disconnect() {
 	}
 }
 func (c *networkReadinessVPNClient) count() int { c.mu.Lock(); defer c.mu.Unlock(); return c.connects }
+
+func TestNetworkReadinessAnyConnectColdDialTimeout(t *testing.T) {
+	l := New(nil)
+	l.vpn = &networkReadinessVPNClient{fail: fmt.Errorf("AnyConnect connect: %w", context.DeadlineExceeded)}
+	defer l.Stop()
+	envelope := networkReadinessTestEnvelope(t, switchAnyConnectConfig, map[string]string{"company": "vpn"}, true)
+	err := l.StartForNetwork(envelope, networkReadinessTestContext("A"), "192.0.2.1")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cold start returned %v", err)
+	}
+	var report lineReadinessReport
+	if err := json.Unmarshal([]byte(l.LineReadiness()), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.State != "failed" || report.Code != lineReadinessTransient {
+		t.Fatalf("dial timeout readiness = %+v", report)
+	}
+}
 
 func TestNetworkReadinessCandidateCancelPreservesOwnerRecovery(t *testing.T) {
 	vpn := &networkReadinessVPNClient{blockAfterFirst: true, entered: make(chan struct{}), release: make(chan struct{})}

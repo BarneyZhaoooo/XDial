@@ -324,7 +324,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         automaticReconnectInProgress = false
         automaticReconnectTrigger = nil
         automaticReconnectAttemptKind = nil
-        pendingInitialRetryTrigger = automaticRetryTrigger
+        pendingInitialRetryTrigger = automaticRetryTrigger ?? .userConnection
         automaticReconnectTransactionID = nil
         automaticReconnectUnderlayWaitEvidence = nil
         connectedSessionTransactionID = nil
@@ -351,22 +351,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                 appLog(
                     "Transparent Proxy underlay default=\(snapshot.defaultInterface.name)"
                 )
-                self.checkExtensionReadiness(purpose: .connection) {
-                    [weak self] result in
-                    guard let self else { return }
-                    guard self.startIntentID == intentID else { return }
-                    switch result {
-                    case .success:
-                        self.configureAndStart(
-                            profileJSON: profileJSON,
-                            underlay: snapshot,
-                            intentID: intentID,
-                            debugFailureStage: failureStage
-                        )
-                    case let .failure(error):
-                        self.publishFailure(error)
-                    }
-                }
+                self.checkReadinessAndConfigure(
+                    profileJSON: profileJSON,
+                    underlay: snapshot,
+                    intentID: intentID,
+                    debugFailureStage: failureStage
+                )
             case let .failure(error):
                 self.publishFailure(error)
             }
@@ -1362,6 +1352,30 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             }
         }
         completion?(result)
+    }
+
+    /// Initial starts and recovery before a manager exists share the same
+    /// extension readiness and preferences preparation, including cancellation.
+    private func checkReadinessAndConfigure(
+        profileJSON: String,
+        underlay: HostUnderlaySnapshot,
+        intentID: UUID,
+        debugFailureStage: String?
+    ) {
+        checkExtensionReadiness(purpose: .connection) { [weak self] result in
+            guard let self, self.startIntentID == intentID else { return }
+            switch result {
+            case .success:
+                self.configureAndStart(
+                    profileJSON: profileJSON,
+                    underlay: underlay,
+                    intentID: intentID,
+                    debugFailureStage: debugFailureStage
+                )
+            case let .failure(error):
+                self.publishFailure(error)
+            }
+        }
     }
 
     private func configureAndStart(
@@ -2886,12 +2900,13 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         report: ConnectionReport?
     ) -> Bool {
         guard
-            pendingInitialRetryTrigger == .automaticConnection,
+            let trigger = pendingInitialRetryTrigger,
             let report,
             report.transactionID == currentTransactionID,
             report.state == .failed,
             report.rollbackComplete,
             report.systemTakeoverRemoved,
+            trigger != .userConnection || AutomaticReconnectFailurePolicy.isTransient(report.error),
             requestedProfileJSON != nil,
             startIntentID != nil
         else {
@@ -2899,9 +2914,9 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         }
         pendingInitialRetryTrigger = nil
         automaticReconnectInProgress = true
-        automaticReconnectTrigger = .automaticConnection
+        automaticReconnectTrigger = trigger
         automaticReconnectAttemptKind = nil
-        // The failed launch transaction opens the episode and is awaited as
+        // The failed initial transaction opens the episode and is awaited as
         // its first outcome, but it is no attempt: it can never prove recovery.
         automaticReconnectTransactionID = nil
         automaticRecoveryOutcomeGate.await(report.transactionID)
@@ -2912,12 +2927,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             ),
             at: Date()
         )
-        let reasonCode = report.error?.code ?? "launch-auto-connect-failed"
+        let reasonCode = report.error?.code ?? "initial-connection-failed"
         let reasonMessage = report.error?.message
-            ?? "Launch auto-connect failed"
+            ?? "Initial connection failed"
         let incidentID = ReconnectIncidentJournal.begin(
             at: Date(),
-            trigger: .automaticConnection,
+            trigger: trigger,
             report: report,
             reasonCode: reasonCode,
             reasonMessage: reasonMessage
@@ -2926,7 +2941,7 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
             ? nil
             : incidentID
         appLog(
-            "Transparent Proxy launch auto-connect failed "
+            "Transparent Proxy initial connection failed trigger=\(trigger.rawValue) "
                 + "transaction=\(report.transactionID) code="
                 + ReconnectIncidentFailureCode.recordable(reasonCode)
         )
@@ -4388,7 +4403,6 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
         guard
             currentTransactionID == failedTransactionID,
             requestedProfileJSON != nil,
-            let manager,
             startIntentID != nil
         else {
             abandonScheduledAttempt(scheduledKind)
@@ -4524,13 +4538,25 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                             + stableSnapshot.defaultInterface.name
                     )
                     self.publishRuntimeStatus("reconnecting", error: nil)
-                    self.startConnection(
-                        manager,
-                        profileJSON: prepared.profileJSON,
-                        underlay: stableSnapshot,
-                        intentID: intentID,
-                        debugFailureStage: nil
-                    )
+                    if let manager = self.manager {
+                        self.startConnection(
+                            manager,
+                            profileJSON: prepared.profileJSON,
+                            underlay: stableSnapshot,
+                            intentID: intentID,
+                            debugFailureStage: nil
+                        )
+                    } else {
+                        // Underlay capture may have failed before the first
+                        // manager was created. The attempt is already counted;
+                        // prepare it exactly like an initial connection.
+                        self.checkReadinessAndConfigure(
+                            profileJSON: prepared.profileJSON,
+                            underlay: stableSnapshot,
+                            intentID: intentID,
+                            debugFailureStage: nil
+                        )
+                    }
                 }
             case let .failure(error):
                 guard self.automaticReconnectPreparationGate
