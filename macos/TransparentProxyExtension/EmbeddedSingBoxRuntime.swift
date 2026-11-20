@@ -326,6 +326,7 @@ final class EmbeddedSingBoxRuntime {
     }
 
     private let logger: Logger
+    private let dataPlaneLogSink = DataPlaneLogSink()
     private let callback: EngineCallback
     private let engineLock = NSLock()
     private var engine: LibboxLibbox?
@@ -433,6 +434,7 @@ final class EmbeddedSingBoxRuntime {
         guard let instance = LibboxNew(callback) else {
             throw RuntimeError.unavailable
         }
+        instance.setDataPlaneLogSink(dataPlaneLogSink)
         // Before any Line can start its local recovery, so a sleep report that
         // arrived during preparation already gates it.
         lineRecoveryConditions?.attach { [weak instance, logger = self.logger] json in
@@ -1871,6 +1873,7 @@ final class EmbeddedSingBoxRuntime {
         guard let instance = LibboxNew(bootstrapCallback) else {
             throw RuntimeError.unavailable
         }
+        instance.setDataPlaneLogSink(dataPlaneLogSink)
         engineLock.lock()
         acquisitionEngine = instance
         engineLock.unlock()
@@ -2989,6 +2992,14 @@ private final class EngineCallback: NSObject, LibboxCallbackProtocol {
                 currentReporter.note(
                     code: "anyconnect-line-reconnected",
                     message: "AnyConnect 线路已恢复，其他线路未重启",
+                    taskID: currentTaskID
+                )
+            case .idle:
+                // Dormant is not a recovery: the Line keeps its ready task and
+                // re-establishes its session when something needs it.
+                currentReporter.note(
+                    code: "anyconnect-line-idle",
+                    message: "服务器按空闲策略结束了 AnyConnect 会话，有流量时再连接",
                     taskID: currentTaskID
                 )
             case .waiting:

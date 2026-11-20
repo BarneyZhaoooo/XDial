@@ -71,6 +71,13 @@ IPv6 接口地址（临时地址在稳定网络上轮换）不进入比较；Pro
 macOS 已绑定 flow 的接口是系统既有裁决，经认证且有长度上限的 metadata 传给 sing-box；
 Scenario 先选 Line，仅最终属于 Direct 的 flow 恢复该绑定，其他 Line 不继承它。
 
+TCP flow 的结束方式如实传给应用：上游正常结束是半关闭，应用读到流的结尾；应用先结束
+发送方向时同样只半关闭上游，应答照常送回，不因出站连接外面的跟踪、计数包装而变成整条
+关闭。上游被重置、超时或以其他错误结束，数据面把回环上的入站连接按重置关闭，Provider
+再把它作为对端重置交给 flow，不把被打断的流说成正常结束。入站连接自己先出错的（应用
+已经结束这条流）照常关闭。
+数据面 warn 及以上的日志经 Provider 进统一日志，公开部分不含地址、域名和凭据。
+
 本机 SOCKS5 由 Provider 持有 `127.0.0.1:<port>`，只接受本机无认证 TCP CONNECT，不设置
 系统代理、不监听其他地址。每条连接在接入时取得当前 generation 的会话入口，与系统 flow
 共用 relay 登记、换代排空和停止关闭；端口不随 Switch 重建。客户端主机名只放行可打印字节，
@@ -88,7 +95,10 @@ Scenario 先选 Line，仅最终属于 Direct 的 flow 恢复该绑定，其他 
 入口：[宿主](macos/Sources/XDial/TransparentProxyManager.swift)、
 [Provider](macos/TransparentProxyExtension/TransparentProxyProvider.swift)、
 [flow metadata](macos/Shared/TransparentProxyFlowMetadata.swift)、
-[本机 SOCKS5](macos/TransparentProxyExtension/LocalSOCKSShareListener.swift)。
+[本机 SOCKS5](macos/TransparentProxyExtension/LocalSOCKSShareListener.swift)、
+流结束补丁（[重置](patches/sing-box/0017-reset-inbound-when-upstream-fails.patch)、
+[半关闭](patches/sing-box/0018-forward-half-close-through-transparent-wrappers.patch)）、
+[数据面日志](core/libbox/dataplane_log.go)。
 
 ### 3.2 Tailscale 与 MagicDNS（D33）
 
@@ -144,6 +154,13 @@ sslcon 是进程级单例；active Scenario 的有效依赖中至多有一条 An
 同配置的运行能力可以被新旧 Box 共享，认证与恢复由 Line 自己持有，不因 Scenario 切换重做。
 不同配置的单例不能并发准备：Switch 候选拒绝后，宿主断开旧连接并完整连接目标场景，
 期间短暂断流，不伪装成无中断切换。
+
+服务器按空闲策略结束会话不是线路故障：服务器的断开帧说明是空闲超时，或它下发过空闲超时且
+断开前两个方向都至少这么久没有数据帧（DPD 与 keepalive 不算），线路就进入休眠而不重连。
+休眠的线路保留租约、所在 generation 和就绪状态，只是没有传输；第一个路由到它的连接或 DNS
+查询经同一个恢复所有者重新建立会话并等待结果，最多等 15 秒，期间到达的其他使用共用这一次
+登录。Switch 的所有权检查把休眠视为可用，就绪证明会唤醒它。其他任何方式结束的会话仍立即
+局部恢复，恢复期间新的使用照旧立即失败（REJECT / SERVFAIL）。
 
 局部恢复的三次预算只计宿主报告“已完整唤醒且 Underlay 可用”时的尝试。系统休眠
 （含 Dark Wake）或宿主 NWPath 不可用期间，线路保持不可用（REJECT / SERVFAIL）并等待，

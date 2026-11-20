@@ -1,0 +1,168 @@
+--- a/route/conn.go
++++ b/route/conn.go
+@@ -275,10 +275,10 @@
+ 	var xdialUpstreamFailed bool
+ 	if err != nil {
+ 		xdialUpstreamFailed = xdialCloseFailedRelay(source, destination, direction, err)
+-	} else if duplexDst, isDuplex := destination.(N.WriteCloser); isDuplex {
++	} else if duplexDst, isDuplex := xdialWriteCloser(destination); isDuplex {
+ 		err = duplexDst.CloseWrite()
+ 		if err != nil {
+-			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err)
++			xdialUpstreamFailed = xdialCloseAfterFailedHalfClose(source, destination, direction, err, done.Load())
+ 		}
+ 	} else {
+ 		destination.Close()
+--- a/route/xdial_relay_close.go
++++ b/route/xdial_relay_close.go
+@@ -45,7 +45,10 @@
+ // a clean end, so a destination that was already dead surfaces here. The
+ // failing connection is known: it is the upstream exactly when relaying the
+ // upload direction, where the application is still waiting for an answer.
+-func xdialCloseAfterFailedHalfClose(source net.Conn, destination net.Conn, download bool, err error) bool {
++func xdialCloseAfterFailedHalfClose(source net.Conn, destination net.Conn, download bool, err error, peerFinished bool) bool {
++	if peerFinished {
++		return xdialHalfCloseFailureAfterPeerFinished(source, destination)
++	}
+ 	if download {
+ 		common.Close(source, destination)
+ 		return false
+--- /dev/null
++++ b/route/xdial_half_close.go
+@@ -0,0 +1,36 @@
++package route
++
++import (
++	"net"
++
++	"github.com/sagernet/sing/common"
++	N "github.com/sagernet/sing/common/network"
++)
++
++// xdialWriteCloser finds the half-close of a connection behind wrappers that
++// add nothing to the byte stream: the connection manager's tracking wrapper on
++// every dialed connection, and the traffic counters and deferred handshake
++// replies on the inbound side. None of them forwards CloseWrite, so a clean EOF
++// used to close such a connection entirely, and an application that finished
++// sending and then waited for the answer lost it. Wrappers that frame or
++// encrypt the stream are not looked through: a FIN on the socket beneath them
++// is not the end of their stream.
++func xdialWriteCloser(conn net.Conn) (N.WriteCloser, bool) {
++	if writeCloser, isDuplex := conn.(N.WriteCloser); isDuplex {
++		return writeCloser, true
++	}
++	writer, _ := N.UnwrapCountWriter(conn, nil)
++	writeCloser, isDuplex := writer.(N.WriteCloser)
++	return writeCloser, isDuplex
++}
++
++// xdialHalfCloseFailureAfterPeerFinished closes both ends quietly when a
++// half-close failed after the other relay direction had already finished. That
++// direction either delivered the upstream's end of stream in full or reported
++// its own failure, so the application has nothing more to learn: an upstream
++// that sent its FIN and was then torn down refuses the half-close, and that is
++// not an interruption of anything.
++func xdialHalfCloseFailureAfterPeerFinished(source net.Conn, destination net.Conn) bool {
++	common.Close(source, destination)
++	return false
++}
+--- /dev/null
++++ b/route/xdial_half_close_test.go
+@@ -0,0 +1,97 @@
++package route
++
++import (
++	"io"
++	"net"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing/common/bufio"
++	N "github.com/sagernet/sing/common/network"
++
++	"github.com/stretchr/testify/require"
++)
++
++// An application that finishes sending and then waits for the answer must get
++// it. Every connection sing-box dials is wrapped for tracking, and that wrapper
++// does not forward CloseWrite.
++func TestXDialRelayForwardsApplicationHalfCloseToTrackedUpstream(t *testing.T) {
++	fixture := newXDialTrackedRelayFixture(t)
++
++	require.NoError(t, fixture.application.CloseWrite())
++	_, err := fixture.origin.Read(make([]byte, 1))
++	require.ErrorIs(t, err, io.EOF)
++
++	_, err = fixture.origin.Write([]byte("reply"))
++	require.NoError(t, err, "the upstream must still be open for the answer")
++	require.NoError(t, fixture.origin.Close())
++
++	received, err := io.ReadAll(fixture.application)
++	require.NoError(t, err)
++	require.Equal(t, "reply", string(received))
++	require.Empty(t, fixture.logs.warnings())
++}
++
++// A wrapper that frames the stream must keep its own end-of-stream handling.
++func TestXDialWriteCloserLooksThroughTransparentWrappersOnly(t *testing.T) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	require.NoError(t, err)
++	defer listener.Close()
++	conn, err := net.Dial("tcp", listener.Addr().String())
++	require.NoError(t, err)
++	defer conn.Close()
++
++	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
++	var upload, download atomic.Int64
++	transparent := bufio.NewInt64CounterConn(
++		manager.TrackConn(conn),
++		[]*atomic.Int64{&upload},
++		[]*atomic.Int64{&download},
++	)
++	_, isDirect := net.Conn(transparent).(N.WriteCloser)
++	require.False(t, isDirect, "the wrappers themselves do not forward CloseWrite")
++	writeCloser, found := xdialWriteCloser(transparent)
++	require.True(t, found)
++	require.Same(t, conn.(*net.TCPConn), writeCloser)
++
++	_, found = xdialWriteCloser(&xdialFramingConn{Conn: conn})
++	require.False(t, found)
++}
++
++// xdialFramingConn stands for a protocol connection: it exposes what it wraps
++// but does not allow its writer to be replaced by it.
++type xdialFramingConn struct {
++	net.Conn
++}
++
++func (c *xdialFramingConn) Upstream() any {
++	return c.Conn
++}
++
++// The upstream finished sending and was then torn down (a FIN followed by a
++// reset is common when a server closes with input still unread). The answer
++// already reached the application in full, so when the application finishes in
++// turn there is nothing left to signal: the failed half-close of the dead
++// upstream is not reported and does not reset the application.
++func TestXDialRelayHalfCloseOfAFinishedUpstreamIsQuiet(t *testing.T) {
++	fixture := newXDialTrackedRelayFixture(t)
++
++	_, err := fixture.origin.Write([]byte("answer"))
++	require.NoError(t, err)
++	require.NoError(t, fixture.origin.CloseWrite())
++	received, err := io.ReadAll(fixture.application)
++	require.NoError(t, err)
++	require.Equal(t, "answer", string(received))
++
++	require.NoError(t, fixture.origin.SetLinger(0))
++	require.NoError(t, fixture.origin.Close())
++	time.Sleep(50 * time.Millisecond)
++
++	require.NoError(t, fixture.application.CloseWrite())
++	_, err = fixture.application.Read(make([]byte, 1))
++	require.ErrorIs(t, err, io.EOF, "a finished exchange must not end in a reset")
++	time.Sleep(50 * time.Millisecond)
++	require.Empty(t, fixture.logs.warnings())
++}

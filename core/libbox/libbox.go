@@ -126,6 +126,8 @@ type Libbox struct {
 	switchCleanupMu          sync.Mutex
 	debugRoutingProbeEnabled bool
 	routingProbe             *routingProbeTracker
+	// dataPlaneLogSink 是之后启动的每一代 Box 的日志出口，见 dataplane_log.go。
+	dataPlaneLogSink DataPlaneLogSink
 	// traffic 是跨 Box 代共享的全线路累计流量，见 traffic_counter.go。
 	traffic               trafficCounter
 	stateLocks            []*os.File
@@ -1215,6 +1217,7 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Add(1)
 	platform := l.platform
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	dataPlaneLogSink := l.dataPlaneLogSink
 	l.lastError = ""
 	l.dnsJSON = ""
 	l.anyConnectDiagnostics = nil
@@ -1341,6 +1344,7 @@ func (l *Libbox) coldStart(
 			if startErr != nil {
 				startErr = fmt.Errorf("construct sing-box: %w", startErr)
 			} else {
+				attachDataPlaneLog(instance, dataPlaneLogSink)
 				instance.Router().AppendTracker(&l.traffic)
 				if debugRoutingProbeEnabled {
 					routingProbe = newRoutingProbeTracker()
@@ -1540,6 +1544,7 @@ func (l *Libbox) createAnyConnectRuntimeCapability(
 		dnsJSON:  string(dnsData),
 		revision: 1,
 	}
+	capability.line.setWake(capability.wakeForUse)
 	capability.attachOwner(l, false)
 	return capability, nil
 }
@@ -1829,6 +1834,7 @@ func (l *Libbox) prepareSwitch(
 	baseCtx, cancel := context.WithCancel(context.Background())
 	l.switchPreparationCancel = cancel
 	debugRoutingProbeEnabled := l.debugRoutingProbeEnabled
+	dataPlaneLogSink := l.dataPlaneLogSink
 	// Stop cancels preparation and waits for this borrower before it closes any
 	// Box or invokes the pool-wide StopAll teardown boundary.
 	l.switchPreparationUsers.Add(1)
@@ -1972,6 +1978,7 @@ func (l *Libbox) prepareSwitch(
 			if err != nil {
 				err = fmt.Errorf("construct switch sing-box: %w", err)
 			} else {
+				attachDataPlaneLog(instance, dataPlaneLogSink)
 				instance.Router().AppendTracker(&l.traffic)
 				var routingProbe *routingProbeTracker
 				if debugRoutingProbeEnabled {
@@ -2774,9 +2781,19 @@ func (l *Libbox) monitorSession(generation uint64, cSess *session.ConnSession) {
 		ownerCtx := capability.attachOwner(l, l.activeNetworkReadiness != nil)
 		diagnostics := validAnyConnectDiagnostics(engine.AnyConnectSessionDiagnostics(cSess))
 		l.anyConnectDiagnostics = diagnostics
-		failureMessage := anyConnectFailureMessage(diagnostics)
-		l.lastError = failureMessage
+		endedIdle := anyConnectSessionEndedIdle(diagnostics)
+		if endedIdle {
+			// The server applied its idle policy; that is not a failure.
+			l.lastError = ""
+		} else {
+			l.lastError = anyConnectFailureMessage(diagnostics)
+		}
+		dataPlaneLogSink := l.dataPlaneLogSink
 		l.mu.Unlock()
+		reportAnyConnectSessionClose(dataPlaneLogSink, diagnostics)
+		if endedIdle && capability.parkDormant(cSess) {
+			return
+		}
 		_ = capability.ensureTransport(ownerCtx, false)
 		capability.waitRecoverySettlement()
 		return
@@ -2803,7 +2820,9 @@ func (l *Libbox) monitorSession(generation uint64, cSess *session.ConnSession) {
 	failureMessage := anyConnectFailureMessage(anyConnectDiagnostics)
 	l.lastError = failureMessage
 	l.runtimeUsers.Add(1)
+	dataPlaneLogSink := l.dataPlaneLogSink
 	l.mu.Unlock()
+	reportAnyConnectSessionClose(dataPlaneLogSink, anyConnectDiagnostics)
 
 	// Close only the failed Line's bridge. The sing-box instance, Tailscale
 	// endpoint, Transparent Proxy ingress and state locks remain owned by the

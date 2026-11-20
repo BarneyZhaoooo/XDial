@@ -22,9 +22,12 @@ ambiguous_phrase=$'\u6c61\u67d3'
 
 forbidden_regex="${policy_term}|${policy_list}|${policy_geo}|${community_source}|${enterprise_domain}|${enterprise_address}|${restricted_phrase}|${misleading_phrase}|${ambiguous_phrase}"
 
+# go.sum is excluded: the Go tool writes it, and its base64 checksums can spell
+# a short term by chance. Direct requirements are still scanned in go.mod.
 set +e
 matched_files="$(
-  git grep -I -l -i -E -e "$forbidden_regex" -- . ':(exclude)third_party/**'
+  git grep -I -l -i -E -e "$forbidden_regex" -- . ':(exclude)third_party/**' \
+    ':(exclude,glob)**/go.sum'
 )"
 grep_status=$?
 set -e
