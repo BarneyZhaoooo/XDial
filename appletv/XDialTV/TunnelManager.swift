@@ -2500,7 +2500,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             // leave a suppression flag behind if a newer probe supersedes it.
             engine?.suppressNextAutomaticReconnect()
             engine?.applySystemStatus("disconnecting")
-            suspendSystemOnDemand(clearEnvelope: true) {
+            stopAfterSuspendingOnDemand {
                 connection.stopVPNTunnel()
             }
         }
@@ -2847,7 +2847,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             } ?? message
                             self.engine?.suppressNextAutomaticReconnect()
                             self.engine?.applySystemStatus("disconnecting")
-                            self.suspendSystemOnDemand(clearEnvelope: true) {
+                            self.stopAfterSuspendingOnDemand {
                                 session?.stopVPNTunnel()
                             }
                             self.startWatchdogTask = nil
@@ -3096,9 +3096,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
     }
     #endif
 
+    private func stopAfterSuspendingOnDemand(_ stop: @escaping @MainActor () -> Void) {
+        timeline?.recordAppStopRequest(fallbackSession: timelineSessionID ?? "")
+        suspendSystemOnDemand(clearEnvelope: true, completion: stop)
+    }
+
     /// 停止系统级隧道。manager/connection 不可用时静默返回(语义等价「本来就没在跑」)。
     func stopTunnel() {
-        recordTimeline("stop_requested")
         let cancelledCompletion = startOperationState.cancel()
         activeStartAttemptID = nil
         startWatchdogTask?.cancel()
@@ -3113,7 +3117,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         scenarioCatalogBuildState.clear()
         ScenarioSwitchCatalogStore.clear()
         #endif
-        suspendSystemOnDemand(clearEnvelope: true) {
+        stopAfterSuspendingOnDemand {
             connection?.stopVPNTunnel()
         }
         cancelledCompletion?(.failure(CancellationError()))

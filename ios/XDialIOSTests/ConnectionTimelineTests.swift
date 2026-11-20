@@ -37,6 +37,25 @@ final class ConnectionTimelineTests: XCTestCase {
         XCTAssertNil(app.snapshot().activeSessionID)
     }
 
+    func testConfigurationDisabledNoticeUsesOnlyTheStoppedSession() {
+        let app = ConnectionTimelineStore(directory: directory, writer: .app)
+        let tunnel = ConnectionTimelineStore(directory: directory, writer: .tunnel)
+        tunnel.beginSession("manual", markActive: true)
+        app.recordAppStopRequest(fallbackSession: "stale")
+        XCTAssertTrue(tunnel.appRequestedStop(session: "manual"))
+        XCTAssertNil(ConnectionNotice.forTunnelStop(.configurationDisabled, wasRunning: true,
+                                                     appRequestedStop: tunnel.appRequestedStop(session: "manual")))
+        tunnel.beginSession("system", markActive: true)
+        XCTAssertEqual(ConnectionNotice.forTunnelStop(.configurationDisabled, wasRunning: true,
+                                                     appRequestedStop: tunnel.appRequestedStop(session: "system")),
+                       .configurationDisabled)
+        XCTAssertEqual(ConnectionNotice.configurationDisabled.preferenceKey, ConnectionNotice.disconnect.preferenceKey)
+        XCTAssertNil(ConnectionNotice.forTunnelStop(.configurationDisabled, wasRunning: false, appRequestedStop: false))
+        XCTAssertNil(ConnectionNotice.forTunnelStop(.userInitiated, wasRunning: true, appRequestedStop: false))
+        XCTAssertEqual(ConnectionNotice.forTunnelStop(.connectionFailed, wasRunning: true, appRequestedStop: false),
+                       .disconnect)
+    }
+
     func testSystemReconnectReassociatesEventsButPendingManualStartKeepsItsID() {
         let app = ConnectionTimelineStore(directory: directory, writer: .app)
         let tunnel = ConnectionTimelineStore(directory: directory, writer: .tunnel)

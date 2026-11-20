@@ -491,6 +491,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         let completion = StopCompletionGate(completionHandler)
+        diagnosticLock.lock()
+        let sessionID = timelineSessionID
+        diagnosticLock.unlock()
+        // Cleanup can finish before afterCleanupQueued runs. Keep this session
+        // alive until the notice result has been queued for its final snapshot.
+        let stopRecorded = DispatchGroup()
+        stopRecorded.enter()
         // 先原子失效所有启动回调并摘除资源，再等串行队列真正清理旧会话。
         // 极端情况下 StartResolved 可能长期不返回，兜底只放行系统 completion；
         // 引擎队列仍保持阻塞，后续 start 不会越过旧会话创建第二个 Libbox。
@@ -499,28 +506,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             afterCleanupQueued: { [weak self] wasRunning in
                 self?.stopActivityUpdates()
                 #if os(iOS)
-                if wasRunning {
-                    switch reason {
-                    case .providerFailed, .noNetworkAvailable, .unrecoverableNetworkChange,
-                         .connectionFailed, .internalError, .idleTimeout:
-                        ConnectionNotice.disconnect.post()
-                    default: break
-                    }
-                }
                 self?.clearRunningScenario()
                 #endif
                 self?.recordTimeline("stop_reason", detail: Self.stopDetail(reason))
                 self?.recordDiagnostic("stopping")
                 os_log("stopTunnel: reason=%d", log: self?.log ?? .default,
                        type: .info, reason.rawValue)
+                #if os(iOS)
+                if let notice = ConnectionNotice.forTunnelStop(reason, wasRunning: wasRunning,
+                    appRequestedStop: self?.timeline?.appRequestedStop(session: sessionID) == true) {
+                    notice.post { [timeline = self?.timeline] outcome in
+                        timeline?.append(session: sessionID, source: .tunnel, stage: "tunnel.disconnect_notice",
+                                         result: outcome == .failed ? .failed : (outcome == .disabled ? .notRun : .ok),
+                                         detail: outcome.rawValue)
+                        stopRecorded.leave()
+                    }
+                    return
+                }
+                #endif
+                stopRecorded.leave()
             },
             cleanupCompletion: { [weak self] in
                 self?.recordDiagnostic("stopped")
                 os_log("stopTunnel: cleanup done", log: self?.log ?? .default, type: .info)
-                if let self {
-                    self.endTimelineSession { _ = completion.finish() }
-                } else {
-                    completion.finish()
+                stopRecorded.notify(queue: .global(qos: .utility)) { [timeline = self?.timeline] in
+                    guard let timeline, !sessionID.isEmpty else { completion.finish(); return }
+                    timeline.endActiveSession(sessionID) { _ = completion.finish() }
                 }
             }
         )
@@ -1499,14 +1510,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if tag.hasPrefix("tailscale-") { return "tailscale" }
         if tag.hasPrefix("proxy-") { return "proxy" }
         return "subscription"
-    }
-
-    private func endTimelineSession(completion: @escaping @Sendable () -> Void) {
-        diagnosticLock.lock()
-        let sessionID = timelineSessionID
-        diagnosticLock.unlock()
-        guard !sessionID.isEmpty, let timeline else { completion(); return }
-        timeline.endActiveSession(sessionID, completion: completion)
     }
 
     private func setLastError(_ value: String?) {
