@@ -5,6 +5,10 @@ on:
     branches: [main, xdial-beta]
   pull_request:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   android:
     name: Android (dual ABI + inspected APK artifacts)
@@ -33,9 +37,12 @@ jobs:
       - name: build and inspect debug and unsigned release APKs
         run: python3 scripts/build-android.py --mode ci
       - name: version, artifact and real signing contract tests
-        env:
-          XDIAL_ANDROID_TEST_APK: ${{ github.workspace }}/android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
-        run: python3 -m unittest discover -s scripts/tests -p 'test_android_build.py'
+        run: |
+          for abi in arm64-v8a x86_64; do
+            XDIAL_ANDROID_TEST_ABI="$abi" \
+            XDIAL_ANDROID_TEST_APK="$PWD/android/app/build/outputs/apk/release/app-$abi-release-unsigned.apk" \
+              python3 -m unittest discover -s scripts/tests -p 'test_android_build.py'
+          done
       - uses: ./.github/actions/package-size
         with:
           group: android
@@ -108,6 +115,8 @@ jobs:
           echo "$PWD/build/tools" >> "$GITHUB_PATH"
       - name: go test
         run: make test
+      - name: package size report contract tests
+        run: python3 -m unittest discover -s scripts/tests -p test_package_size.py -v
       - name: tvOS preset acceptance gates
         run: python3 -m unittest discover -s scripts/tests -p test_tvos_store_app.py -v
 
@@ -147,9 +156,11 @@ jobs:
 
   apple-store-size:
     name: Store package size (${{ matrix.platform }})
-    runs-on: macos-26
+    # Xcode 26.6 crashes emitting tvOS Swift IR; Xcode 27 matches local archives.
+    runs-on: xcode-27
     timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         include:
           - {platform: iOS, make: libbox-ios-xcframework, spec: ios/project.yml, project: ios/XDialIOS, scheme: XDialIOS, app: XDial}

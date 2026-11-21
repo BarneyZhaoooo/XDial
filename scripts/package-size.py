@@ -10,8 +10,12 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 def measure(path):
     if path.suffix == ".app":
+        if not path.is_dir():
+            raise ValueError(f"App directory does not exist: {path}")
         files = {p.relative_to(path).as_posix(): p for p in path.rglob("*")
                  if not p.is_symlink() and p.is_file()}
+        if not files:
+            raise ValueError(f"App contains no files: {path}")
         # An unencrypted ZIP estimate reproducible on CI. App Store thinning,
         # encryption, receipts and file-system allocation are measured by ASC.
         with tempfile.TemporaryFile() as temp:

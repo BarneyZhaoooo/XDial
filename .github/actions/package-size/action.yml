@@ -21,10 +21,13 @@ runs:
         out="build/size-reports/$SIZE_GROUP"
         mkdir -p "$out"
         if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
-          run=$(gh run list --workflow ci.yml --event push --commit "$BASE_SHA" --limit 10 --json databaseId,headBranch \
-            --jq 'map(select(.headBranch=="main" or .headBranch=="xdial-beta")) | first | .databaseId // empty')
+          if ! run=$(gh run list --workflow ci.yml --event push --commit "$BASE_SHA" --limit 10 --json databaseId,headBranch \
+            --jq 'map(select(.headBranch=="main" or .headBranch=="xdial-beta")) | first | .databaseId // empty'); then
+            run=""
+            echo "Base report lookup unavailable"
+          fi
           if [[ -n "$run" ]]; then
-            gh run download "$run" -n "sizes-$SIZE_GROUP" -D "$out/base" || echo "Base report unavailable"
+            gh run download "$run" -n "sizes-$SIZE_GROUP" -D "$out/base" || { echo "Base report unavailable"; rm -rf "$out/base"; }
           fi
         fi
         paths=()

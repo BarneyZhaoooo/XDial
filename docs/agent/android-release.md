@@ -92,8 +92,11 @@ APK 被修改均拒绝交付。日志只指向构建日志，不输出 signer �
 错误证书拒绝与签名后篡改拒绝；退出后删除，既不发布也不当作 XDial 的长期身份：
 
 ```sh
-XDIAL_ANDROID_TEST_APK="$PWD/android/app/build/outputs/apk/release/app-release-unsigned.apk" \
-  python3 -m unittest discover -s scripts/tests -p 'test_android_build.py'
+for abi in arm64-v8a x86_64; do
+  XDIAL_ANDROID_TEST_ABI="$abi" \
+  XDIAL_ANDROID_TEST_APK="$PWD/android/app/build/outputs/apk/release/app-$abi-release-unsigned.apk" \
+    python3 -m unittest discover -s scripts/tests -p 'test_android_build.py' || exit 1
+done
 ```
 
 若候选 code 有覆盖，同时传 `XDIAL_ANDROID_TEST_CODE=N`；CI 自动读取同一 run 规则。
