@@ -206,7 +206,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             os_log("startTunnel: missing credentials/config", log: log, type: .error)
             return
         }
-        setSecureEnvelopeUsage(bundle.fromSecureEnvelope, generation: generation)
+        setSecureEnvelopeUsage(bundle.fromSecureEnvelope || (options?["onDemandEnvelopeSaved"] as? NSNumber)?.boolValue == true,
+                               generation: generation)
         setDiagnosticSensitiveValues(from: bundle)
         recordDiagnostic("start_bundle_loaded")
 
@@ -711,7 +712,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         #if os(iOS)
         if OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: clearSecureEnvelope,
-            startupStage: diagnosticStage
+            startupStage: diagnosticStage,
+            message: error.localizedDescription
         ) {
             _ = OnDemandStartEnvelopeStore.clear()
         }
@@ -820,7 +822,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let error = providerError(20 + code, detail)
         switch phase(for: generation) {
         case .starting:
-            failAttempt(generation, error: error, diagnosticStage: "engine_failed")
+            let stage = code == LibboxErrCodeTransientNetwork ? "engine_network_unavailable" : "engine_failed"
+            failAttempt(generation, error: error, diagnosticStage: stage)
         case .running:
             terminateRunningAttempt(generation, error: error)
         case .idle, nil:

@@ -117,7 +117,18 @@ final class OnDemandReconnectTests: XCTestCase {
         ))
         XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: true,
-            startupStage: "remote_address_resolution_failed"
+            startupStage: "remote_address_resolution_failed", message: "server IPv4 lookup failed"
+        ))
+        XCTAssertTrue(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true,
+            startupStage: "remote_address_resolution_failed", message: "server endpoint is invalid"
+        ))
+        XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true, startupStage: "engine_network_unavailable"
+        ))
+        XCTAssertTrue(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true, startupStage: "engine_failed",
+            message: "tunnel negotiation failed 401 Cookie is not acceptable"
         ))
     }
 

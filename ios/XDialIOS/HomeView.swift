@@ -317,8 +317,11 @@ struct HomeView: View {
     // MARK: - 状态
 
     private var status: String { app.engine.status }
+    private var waitingForNetwork: Bool {
+        status == "disconnected" && app.systemOnDemandState == .active
+    }
     private var isWorking: Bool {
-        ["connecting", "disconnecting", "reconnecting"].contains(status)
+        waitingForNetwork || ["connecting", "disconnecting", "reconnecting"].contains(status)
     }
     private var isIdle: Bool { !isWorking && !app.hasActiveTunnel }
     private var isDegraded: Bool {
@@ -354,6 +357,7 @@ struct HomeView: View {
         case "action-required": return app.tr("需要登录 Tailscale", "Tailscale Sign-in Required")
         case "connected": return app.tr("已连接", "Connected")
         default:
+            if waitingForNetwork { return app.tr("等待网络恢复…", "Waiting for Network…") }
             if isPreparingConnection { return app.tr("正在判断网络…", "Checking the Network…") }
             if app.activeScenarioNeedsSignIn { return app.tr("还没登录", "Not Signed In") }
             return app.tr("未连接", "Not Connected")
@@ -494,7 +498,7 @@ struct HomeView: View {
 
     private func dialTapped() {
         guard !isPreparingConnection else { return }
-        if app.hasFormalTunnel || status == "connecting" || status == "reconnecting" {
+        if waitingForNetwork || app.hasFormalTunnel || status == "connecting" || status == "reconnecting" {
             app.disconnect()
         } else if app.tailscaleSetupLineID != nil {
             app.finishTailscaleSetup()

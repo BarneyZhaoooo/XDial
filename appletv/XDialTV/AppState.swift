@@ -1404,6 +1404,7 @@ final class AppState: ObservableObject {
         // transition finish this launch decision without racing the system start.
         guard engine.status != "connecting", engine.status != "disconnecting" else { return false }
         openConnectPending = false
+        guard tunnelManager?.systemOnDemandActive != true else { return false }
         guard AutomaticConnectionPolicy.shouldConnectOnLaunch(
             enabled: connectOnOpenEnabled,
             initialStatusSynchronized: true,

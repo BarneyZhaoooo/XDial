@@ -1456,6 +1456,10 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             appLog("TunnelManager.onDemand: secure envelope save failed status=\(keychainStatus)")
             return
         }
+        enableSystemOnDemand(manager)
+    }
+
+    private func enableSystemOnDemand(_ manager: NETunnelProviderManager) {
         let saveID = UUID()
         onDemandSaveID = saveID
         recordTimeline("on_demand.enabling")
@@ -1693,6 +1697,17 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             dataPathProbeID = nil
             dataPathVerified = false
             resetDegradedRecheck()
+            #if os(iOS)
+            // The provider revokes the secure start on terminal failures, even
+            // while the app is suspended. Retire the matching system rule too.
+            if (systemOnDemandActive || onDemandSaveID != nil),
+               case .missing = OnDemandStartEnvelopeStore.load() {
+                engine?.suppressNextAutomaticReconnect()
+                suspendSystemOnDemand(clearEnvelope: true) {}
+            } else if onDemandSaveID != nil {
+                engine?.suppressNextAutomaticReconnect()
+            }
+            #endif
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
             if previousStatus != connection.status, previousStatus != .invalid {
@@ -2818,6 +2833,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                     self.engine?.applySystemStatus("disconnected")
                     self.finishStartOperation(operationID, result: .failure(error))
                 case .success:
+                    var savedForNetworkRecovery = false
                     do {
                         guard self.isCurrentStartOperation(operationID) else { return }
                         guard let session = self.manager?.connection as? NETunnelProviderSession else {
@@ -2873,15 +2889,51 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             } ?? message
                             self.engine?.suppressNextAutomaticReconnect()
                             self.engine?.applySystemStatus("disconnecting")
+                            #if os(iOS)
+                            // Bound this start without cancelling the user's recovery
+                            // request. A terminal provider error revokes the envelope.
+                            if (self.systemOnDemandActive || self.onDemandSaveID != nil),
+                               case .available = OnDemandStartEnvelopeStore.load() {
+                                session?.stopVPNTunnel()
+                                self.startWatchdogTask = nil
+                                return
+                            }
+                            #endif
                             self.stopAfterSuspendingOnDemand {
                                 session?.stopVPNTunnel()
                             }
                             self.startWatchdogTask = nil
                         }
+                        #if os(iOS)
+                        // Persist before submitting the manual start so an immediate
+                        // failure can revoke it. Arm only after submission so iOS
+                        // cannot race the user's first start with a cold start.
+                        if allowSystemOnDemand, self.systemOnDemandRequested, !self.systemOnDemandSuspendedForSetup,
+                           let envelope = self.pendingOnDemandEnvelope {
+                            savedForNetworkRecovery = OnDemandStartEnvelopeStore.save(envelope) == errSecSuccess
+                            startOptions["onDemandEnvelopeSaved"] = NSNumber(value: savedForNetworkRecovery)
+                        }
+                        #endif
                         try session.startTunnel(options: startOptions)
+                        #if os(iOS)
+                        if savedForNetworkRecovery, let manager = self.manager {
+                            self.enableSystemOnDemand(manager)
+                        }
+                        #endif
                         self.finishStartOperation(operationID, result: .success(()))
                     } catch {
                         guard self.isCurrentStartOperation(operationID) else { return }
+                        #if os(iOS)
+                        let cause = error as NSError
+                        if savedForNetworkRecovery, let manager = self.manager,
+                           cause.domain == NEVPNConnectionErrorDomain,
+                           cause.code == NEVPNConnectionError.noNetworkAvailable.rawValue {
+                            self.engine?.suppressNextAutomaticReconnect()
+                            self.enableSystemOnDemand(manager)
+                        } else {
+                            _ = OnDemandStartEnvelopeStore.clear()
+                        }
+                        #endif
                         self.activeStartAttemptID = nil
                         self.startWatchdogTask?.cancel()
                         self.startWatchdogTask = nil

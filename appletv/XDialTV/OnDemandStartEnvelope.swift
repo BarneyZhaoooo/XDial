@@ -46,11 +46,20 @@ struct OnDemandStartEnvelope: Codable, Equatable, Sendable {
 enum OnDemandStartEnvelopeFailurePolicy {
     static func shouldClear(
         startedFromSecureEnvelope: Bool,
-        startupStage: String
+        startupStage: String,
+        message: String = ""
     ) -> Bool {
-        // No change to credentials or configuration can repair a missing underlay or DNS.
-        startedFromSecureEnvelope && startupStage != "underlay_interface_failed"
-            && startupStage != "remote_address_resolution_failed"
+        guard startedFromSecureEnvelope else { return false }
+        switch startupStage {
+        case "underlay_interface_failed", "engine_network_unavailable":
+            return false
+        case "remote_address_resolution_failed":
+            // The resolver deliberately hides the hostname. Malformed and
+            // IPv6-only endpoints have distinct configuration errors.
+            return message != "server IPv4 lookup failed"
+        default:
+            return true
+        }
     }
 }
 
