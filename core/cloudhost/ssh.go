@@ -279,6 +279,13 @@ type commandResult struct {
 // run executes one shell script as the login user. The script is built only
 // from constants and validated values; user text never reaches the shell.
 func (s *Session) run(ctx context.Context, script string, stdin []byte) (commandResult, error) {
+	// Include channel opening and command startup in cancellation. Closing the
+	// transport unblocks SSH requests even when the peer silently disappears.
+	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
+	defer stop()
+	if err := ctx.Err(); err != nil {
+		return commandResult{}, err
+	}
 	sshSession, err := s.client.NewSession()
 	if err != nil {
 		return commandResult{}, newError("ssh_session_failed", "SSH 连接已断开", "The SSH connection was lost")
@@ -291,15 +298,9 @@ func (s *Session) run(ctx context.Context, script string, stdin []byte) (command
 	if stdin != nil {
 		sshSession.Stdin = bytes.NewReader(stdin)
 	}
-	done := make(chan error, 1)
-	go func() { done <- sshSession.Run("sh -c " + shellQuote(script)) }()
-	select {
-	case <-ctx.Done():
-		_ = sshSession.Signal(ssh.SIGTERM)
-		_ = sshSession.Close()
-		<-done
+	err = sshSession.Run("sh -c " + shellQuote(script))
+	if ctx.Err() != nil {
 		return commandResult{}, ctx.Err()
-	case err = <-done:
 	}
 	result := commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes()}
 	if err != nil {
@@ -323,7 +324,7 @@ func (s *Session) runPrivileged(ctx context.Context, script string, stdin []byte
 		return s.run(ctx, "sudo -n sh -c "+shellQuote(script), stdin)
 	case privilegeSudoPassword:
 		input := append([]byte(s.target.Password+"\n"), stdin...)
-		return s.run(ctx, "sudo -S -p '' sh -c "+shellQuote(script), input)
+		return s.run(ctx, "IFS= read -r password; printf '%s\n' \"$password\" | sudo -k -S -p '' -v && sudo -n sh -c "+shellQuote(script), input)
 	default:
 		return commandResult{}, newError("no_privilege", "这个账号没有 root 或 sudo 权限", "This account has no root or sudo access")
 	}

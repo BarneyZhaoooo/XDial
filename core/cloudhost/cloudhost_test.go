@@ -247,13 +247,15 @@ func TestShellQuoteKeepsValuesLiteral(t *testing.T) {
 
 // testServer is a minimal in-process SSH server that records commands and stdin.
 type testServer struct {
-	listener net.Listener
-	key      ssh.Signer
-	user     string
-	password string
-	mu       sync.Mutex
-	commands []string
-	stdin    []string
+	listener     net.Listener
+	key          ssh.Signer
+	user         string
+	password     string
+	mu           sync.Mutex
+	commands     []string
+	stdin        []string
+	respond      func(string, string) (string, int)
+	holdChannels bool
 }
 
 func newTestServer(t *testing.T, user, password string) *testServer {
@@ -302,6 +304,9 @@ func (s *testServer) serve() {
 			}
 			go ssh.DiscardRequests(requests)
 			for newChannel := range channels {
+				if s.holdChannels {
+					continue
+				}
 				channel, channelRequests, err := newChannel.Accept()
 				if err != nil {
 					continue
@@ -333,6 +338,11 @@ func (s *testServer) handle(channel ssh.Channel, requests <-chan *ssh.Request) {
 		}
 		if strings.Contains(payload.Command, "sudo -n true") {
 			status = 1
+		}
+		if s.respond != nil {
+			output, code := s.respond(payload.Command, string(input))
+			status = code
+			channel.Write([]byte(output))
 		}
 		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(status)}))
 		return

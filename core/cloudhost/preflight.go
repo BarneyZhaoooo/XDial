@@ -60,11 +60,11 @@ type Report struct {
 	UFWActive       bool      `json:"ufw_active"`
 	// Interrupted means an earlier setup stopped mid-way (connection lost or
 	// app closed); the next run undoes what it left before continuing.
-	Interrupted bool `json:"interrupted"`
-	ListeningPorts  []int     `json:"listening_ports"`
-	SuggestedPort   int       `json:"suggested_port"`
-	Blocking        []Issue   `json:"blocking"`
-	Notes           []Issue   `json:"notes"`
+	Interrupted    bool    `json:"interrupted"`
+	ListeningPorts []int   `json:"listening_ports"`
+	SuggestedPort  int     `json:"suggested_port"`
+	Blocking       []Issue `json:"blocking"`
+	Notes          []Issue `json:"notes"`
 }
 
 type facts map[string]string

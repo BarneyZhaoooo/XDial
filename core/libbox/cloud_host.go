@@ -14,8 +14,8 @@ import (
 
 	"github.com/kafeifei/xdial/core/cloudhost"
 	"github.com/kafeifei/xdial/core/config"
-	"github.com/sagernet/sing-box/adapter"
 	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/urltest"
 	"github.com/sagernet/sing-box/option"
 	jsonext "github.com/sagernet/sing/common/json"

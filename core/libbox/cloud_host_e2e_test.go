@@ -120,8 +120,8 @@ func (e e2eEnv) assertClean(t *testing.T, stage string) {
 }
 
 type recorder struct {
-	mu     sync.Mutex
-	events []map[string]string
+	mu      sync.Mutex
+	events  []map[string]string
 	onEvent func(map[string]string)
 }
 

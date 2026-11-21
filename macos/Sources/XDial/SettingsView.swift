@@ -3035,10 +3035,16 @@ struct MacCloudHostSetupSheet: View {
                 chinese: state.tr("zh", "en") == "zh",
                 onSave: { draft in
                     let line = Line(cloudHost: draft)
+                    let previous = state.editingProfile
                     state.editingProfile.lines.append(line)
                     state.saveEditingProfile()
+                    guard state.profileLibraryLoaded, state.profilePersistenceError == nil else {
+                        state.editingProfile = previous
+                        state.profile = state.profileLibrary.snapshot()
+                        return false
+                    }
                     state.editorPosition.expandedLineIDs.insert(line.id)
-                    return state.editingProfile.lines.contains(where: { $0.id == line.id })
+                    return true
                 },
                 onClose: { dismiss() }
             )

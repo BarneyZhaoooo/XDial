@@ -159,6 +159,9 @@ type state struct {
 	// so the next run can undo exactly those resources first.
 	InProgress bool     `json:"in_progress,omitempty"`
 	Created    []string `json:"created,omitempty"`
+	Baseline   *state   `json:"baseline,omitempty"`
+	WasActive  bool     `json:"was_active,omitempty"`
+	OwnedUFW   []string `json:"owned_ufw,omitempty"`
 }
 
 func (st state) created(resource string) bool {
@@ -188,35 +191,40 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 	if err != nil {
 		return Result{}, err
 	}
-	if plan.Reuse {
-		return s.reuse(ctx, report, plan, progress)
+	if plan.Recover {
+		progress(Event{Step: "recover", Status: "running"})
+		if _, err := s.recoverInterrupted(ctx, previousState(facts)); err != nil {
+			return Result{}, incompleteUndo()
+		}
+		// Recovery changes the resource baseline. Never deploy from the stale inspection.
+		if report, err = s.Inspect(ctx); err != nil {
+			return Result{}, err
+		}
+		facts = s.facts
+		if plan, err = BuildPlan(report, facts, port); err != nil {
+			return Result{}, err
+		}
+		progress(Event{Step: "recover", Status: "done"})
 	}
+
 	password, err := newShadowsocksKey()
 	if err != nil {
 		return Result{}, newError("random_failed", "无法生成密钥", "Could not generate a key")
+	}
+	if plan.Reuse {
+		password = report.Existing.Password
 	}
 	var undos []undo
 	previous := previousState(facts)
 	current := previous
 	current.Version = 1
+	current.Baseline = &previous
+	current.WasActive = report.Existing != nil && report.Existing.Active
+	current.Created = nil
 	if current.CreatedAt == 0 {
 		current.CreatedAt = time.Now().Unix()
 	}
 	dirExisted := report.Existing != nil || facts["xdial_state"] != ""
-	if plan.Recover {
-		progress(Event{Step: "recover", Status: "running"})
-		recovered, err := s.recoverInterrupted(ctx, previous)
-		if err != nil {
-			progress(Event{Step: "recover", Status: "failed", Message: AsError(err).Message})
-			return Result{}, incompleteUndo()
-		}
-		if previous.created("config_dir") {
-			dirExisted = false
-		}
-		previous, current = recovered, recovered
-		current.Version = 1
-		progress(Event{Step: "recover", Status: "done"})
-	}
 	fail := func(stepID string, cause error) (Result, error) {
 		progress(Event{Step: stepID, Status: "failed", Message: AsError(cause).Message})
 		if !s.rollback(context.WithoutCancel(ctx), undos, progress) {
@@ -224,7 +232,9 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 		}
 		if dirExisted {
 			// The run is fully undone; the record goes back to what it was.
-			s.saveState(context.WithoutCancel(ctx), previous)
+			if err := s.saveState(context.WithoutCancel(ctx), previous); err != nil {
+				return Result{}, incompleteUndo()
+			}
 		}
 		if errors.Is(cause, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return Result{}, newError("cancelled", "已取消，本次改动已撤销", "Cancelled; this run's changes were undone")
@@ -236,15 +246,18 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			return err
 		}
 		progress(Event{Step: id, Status: "running"})
-		if err := do(); err != nil {
-			return err
+		// Persist intent and register compensation before the first possible mutation.
+		if resource != "" {
+			current.Created = append(current.Created, resource)
+			if err := s.saveState(ctx, current); err != nil {
+				return err
+			}
 		}
 		if undoFn != nil {
 			undos = append(undos, undo{step: id, run: undoFn})
 		}
-		if resource != "" {
-			current.Created = append(current.Created, resource)
-			s.saveState(ctx, current)
+		if err := do(); err != nil {
+			return err
 		}
 		progress(Event{Step: id, Status: "done"})
 		return nil
@@ -259,14 +272,12 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 		if !dirExisted {
 			current.Created = append(current.Created, "config_dir")
 		}
-		s.saveState(ctx, current)
-		return nil
+		return s.saveState(ctx, current)
 	}, func(c context.Context) error {
 		if dirExisted {
 			return nil
 		}
-		_, err := s.runPrivileged(c, "rm -rf "+configDir, nil)
-		return err
+		return s.mustPrivileged(c, "rm -rf "+configDir, "无法撤销目录")
 	}); err != nil {
 		return fail("prepare", err)
 	}
@@ -291,19 +302,9 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			if source == "" {
 				source = aptSourcePath
 			}
-			// Recorded before installing: an interrupted install can leave a half-configured package.
-			current.Created = append(current.Created, "package")
-			s.saveState(ctx, current)
-			err = step(planned.ID, "", func() error { return s.installSingBox(ctx, source) }, func(c context.Context) error {
-				_, err := s.runPrivileged(c, purgePackage, nil)
-				return err
+			err = step(planned.ID, "package", func() error { return s.installSingBox(ctx, source) }, func(c context.Context) error {
+				return s.mustPrivileged(c, purgePackage, "无法撤销软件包安装")
 			})
-			if err != nil {
-				undos = append(undos, undo{step: planned.ID, run: func(c context.Context) error {
-					_, err := s.runPrivileged(c, purgePackage, nil)
-					return err
-				}})
-			}
 			current.InstalledPackage = err == nil || previous.InstalledPackage
 		case "config":
 			config, buildErr := serverConfigJSON(plan.Port, password)
@@ -316,91 +317,68 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			if hadConfig {
 				resource = "config_moved"
 			}
-			err = step(planned.ID, resource, func() error {
-				if hadConfig {
-					if err := s.mustPrivileged(ctx, "cp -p "+configPath+" "+configPath+".previous", "无法备份原配置"); err != nil {
-						return err
-					}
+			if hadConfig {
+				if err = s.mustPrivileged(ctx, "cp -p "+configPath+" "+configPath+".previous.tmp && mv -f "+configPath+".previous.tmp "+configPath+".previous", "无法备份原配置"); err != nil {
+					break
 				}
+			}
+			err = step(planned.ID, resource, func() error {
 				if err := s.writeFile(ctx, configPath, "600", config); err != nil {
 					return err
 				}
 				return s.checkConfig(ctx, plan.binary)
-			}, func(c context.Context) error {
-				if hadConfig {
-					// Put the working proxy back exactly as it was.
-					restart := "true"
-					if report.Existing.Active {
-						restart = "systemctl restart " + serviceName
-					}
-					_, err := s.runPrivileged(c, "mv -f "+configPath+".previous "+configPath+" && "+restart, nil)
-					return err
-				}
-				_, err := s.runPrivileged(c, "rm -f "+configPath, nil)
-				return err
-			})
+			}, func(c context.Context) error { return s.undoResource(c, resource, current) })
 		case "unit":
 			err = step(planned.ID, "unit", func() error {
 				return s.writeFile(ctx, unitPath, "644", []byte(unitFile(plan.binary)))
-			}, func(c context.Context) error {
-				_, err := s.runPrivileged(c, "systemctl disable --now "+serviceName+" >/dev/null 2>&1; rm -f "+unitPath+"; systemctl daemon-reload", nil)
-				return err
-			})
+			}, func(c context.Context) error { return s.undoResource(c, "unit", current) })
 		case "ufw":
-			p := strconv.Itoa(plan.Port)
-			err = step(planned.ID, "ufw:"+p, func() error {
-				return s.mustPrivileged(ctx, "ufw allow "+p+"/tcp comment "+serviceName+" && ufw allow "+p+"/udp comment "+serviceName, "无法添加 ufw 放行规则")
-			}, func(c context.Context) error {
-				_, err := s.runPrivileged(c, "ufw delete allow "+p+"/tcp; ufw delete allow "+p+"/udp", nil)
-				return err
-			})
-			if err == nil {
-				current.UFWRule = plan.Port
-			}
-		case "start":
-			var stop func(context.Context) error
-			if report.Existing == nil {
-				stop = func(c context.Context) error {
-					_, err := s.runPrivileged(c, "systemctl disable --now "+serviceName+" >/dev/null 2>&1; true", nil)
-					return err
+			for _, proto := range []string{"tcp", "udp"} {
+				rule := strconv.Itoa(plan.Port) + "/" + proto
+				var exists bool
+				exists, err = s.hasUFWRule(ctx, rule)
+				if err != nil {
+					break
 				}
+				if exists {
+					continue
+				}
+				resource := "ufw_rule:" + rule
+				err = step(planned.ID, resource, func() error {
+					return s.mustPrivileged(ctx, "ufw allow "+rule+" comment "+serviceName, "无法添加 ufw 放行规则")
+				}, func(c context.Context) error { return s.undoResource(c, resource, current) })
+				if err != nil {
+					break
+				}
+				current.OwnedUFW = append(current.OwnedUFW, rule)
 			}
-			err = step(planned.ID, "service", func() error { return s.startService(ctx, plan.Port) }, stop)
+
+		case "start":
+			err = step(planned.ID, "service", func() error { return s.startService(ctx, plan.Port) }, func(c context.Context) error {
+				return s.undoResource(c, "service", current)
+			})
 		}
 		if err != nil {
 			return fail(planned.ID, err)
 		}
 	}
-	if previous.UFWRule != 0 && previous.UFWRule != plan.Port {
-		p := strconv.Itoa(previous.UFWRule)
-		_, _ = s.runPrivileged(ctx, "ufw delete allow "+p+"/tcp; ufw delete allow "+p+"/udp", nil)
+	// Commit the durable result before deleting the rollback backup. Keep existing
+	// firewall rules: only resources with recorded ownership may ever be removed.
+	committed := current
+	committed.InProgress = false
+	committed.Created = nil
+	committed.Baseline = nil
+	if err := s.saveState(ctx, committed); err != nil {
+		return fail("commit", err)
+	}
+	for _, rule := range previous.OwnedUFW {
+		if !strings.HasPrefix(rule, strconv.Itoa(plan.Port)+"/") {
+			// Cleanup follows commit so a failed deployment never loses its old access.
+			_ = s.undoResource(ctx, "ufw_rule:"+rule, previous)
+		}
 	}
 	_, _ = s.runPrivileged(ctx, "rm -f "+configPath+".previous", nil)
-	current.InProgress = false
-	current.Created = nil
-	s.saveState(ctx, current)
-	return Result{Server: strings.Trim(strings.TrimSpace(s.target.Host), "[]"), Port: plan.Port, Method: plan.Method, Password: password}, nil
-}
-
-func (s *Session) reuse(ctx context.Context, report Report, plan Plan, progress func(Event)) (Result, error) {
-	for _, planned := range plan.Steps {
-		progress(Event{Step: planned.ID, Status: "running"})
-		var err error
-		switch planned.ID {
-		case "start":
-			err = s.startService(ctx, plan.Port)
-		case "ufw":
-			p := strconv.Itoa(plan.Port)
-			err = s.mustPrivileged(ctx, "ufw allow "+p+"/tcp comment "+serviceName+" && ufw allow "+p+"/udp comment "+serviceName, "无法添加 ufw 放行规则")
-		}
-		if err != nil {
-			progress(Event{Step: planned.ID, Status: "failed", Message: AsError(err).Message})
-			return Result{}, err
-		}
-		progress(Event{Step: planned.ID, Status: "done"})
-	}
-	existing := report.Existing
-	return Result{Server: strings.Trim(strings.TrimSpace(s.target.Host), "[]"), Port: existing.Port, Method: existing.Method, Password: existing.Password, Reused: true}, nil
+	return Result{Server: strings.Trim(strings.TrimSpace(s.target.Host), "[]"), Port: plan.Port, Method: plan.Method, Password: password, Reused: plan.Reuse}, nil
 }
 
 // rollback undoes this run in reverse order and reports whether every step
@@ -415,7 +393,7 @@ func (s *Session) rollback(ctx context.Context, undos []undo, progress func(Even
 		if err := undos[i].run(ctx); err != nil {
 			complete = false
 			progress(Event{Step: undos[i].step, Status: "failed", Message: "这一步没能撤销"})
-			continue
+			break
 		}
 		progress(Event{Step: undos[i].step, Status: "rolled_back"})
 	}
@@ -433,62 +411,112 @@ const purgePackage = "export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a
 // recoverInterrupted undoes, newest first, what an interrupted run recorded,
 // and returns the record as it stands afterwards.
 func (s *Session) recoverInterrupted(ctx context.Context, interrupted state) (state, error) {
-	recovered := interrupted
-	for i := len(interrupted.Created) - 1; i >= 0; i-- {
+	dirRemoved := interrupted.created("config_dir")
+	for len(interrupted.Created) > 0 {
+		i := len(interrupted.Created) - 1
 		resource := interrupted.Created[i]
-		var script string
-		switch {
-		case resource == "service":
-			script = "systemctl disable --now " + serviceName + " >/dev/null 2>&1; true"
-		case strings.HasPrefix(resource, "ufw:"):
-			port, err := strconv.Atoi(strings.TrimPrefix(resource, "ufw:"))
-			if err != nil {
-				continue
-			}
-			p := strconv.Itoa(port)
-			script = "ufw delete allow " + p + "/tcp >/dev/null 2>&1; ufw delete allow " + p + "/udp >/dev/null 2>&1; true"
-			if recovered.UFWRule == port {
-				recovered.UFWRule = 0
-			}
-		case resource == "unit":
-			script = "systemctl disable --now " + serviceName + " >/dev/null 2>&1; rm -f " + unitPath + "; systemctl daemon-reload"
-		case resource == "config":
-			script = "rm -f " + configPath
-		case resource == "config_moved":
-			script = "if [ -f " + configPath + ".previous ]; then mv -f " + configPath + ".previous " + configPath + "; fi"
-		case resource == "package":
-			script = purgePackage
-			recovered.InstalledPackage = false
-		case resource == "apt_source":
-			script = "rm -f " + aptSourcePath
-			recovered.AddedSource = false
-		case resource == "apt_key":
-			script = "rm -f " + aptKeyPath
-		case resource == "config_dir":
-			script = "rm -rf " + configDir
-		default:
-			continue
-		}
-		result, err := s.runPrivileged(ctx, script, nil)
-		if err != nil {
+		if err := s.undoResource(ctx, resource, interrupted); err != nil {
 			return interrupted, err
 		}
-		if resource == "package" && result.code != 0 {
-			return interrupted, newError("recover_failed", "无法移除上次中断时安装了一半的 sing-box", "Could not remove the sing-box package an interrupted setup left half installed")
+		interrupted.Created = interrupted.Created[:i]
+		if resource != "config_dir" {
+			if err := s.saveState(ctx, interrupted); err != nil {
+				return interrupted, err
+			}
 		}
 	}
-	recovered.InProgress = false
-	recovered.Created = nil
-	if !interrupted.created("config_dir") {
-		s.saveState(ctx, recovered)
+	recovered := state{Version: 1}
+	if interrupted.Baseline != nil {
+		recovered = *interrupted.Baseline
+	}
+	// A fresh run removed its directory; a move retains the original record.
+	if !dirRemoved {
+		if err := s.saveState(ctx, recovered); err != nil {
+			return interrupted, err
+		}
 	}
 	return recovered, nil
 }
 
-func (s *Session) saveState(ctx context.Context, st state) {
-	if raw, err := json.Marshal(st); err == nil {
-		_ = s.writeFile(ctx, statePath, "600", raw)
+// undoResource is the shared live-rollback and crash-recovery path. Each action
+// is repeatable until its journal entry has been durably removed.
+func (s *Session) undoResource(ctx context.Context, resource string, st state) error {
+	var script string
+	switch {
+	case resource == "service":
+		if st.Baseline != nil && !st.created("unit") {
+			if st.WasActive {
+				return nil
+			}
+			script = "systemctl stop " + serviceName
+		} else {
+			script = "if systemctl cat " + serviceName + " >/dev/null 2>&1; then systemctl disable --now " + serviceName + "; fi"
+		}
+	case resource == "unit":
+		script = "if [ -f " + unitPath + " ]; then systemctl disable --now " + serviceName + " && rm -f " + unitPath + "; fi && systemctl daemon-reload"
+	case resource == "config":
+		script = "rm -f " + configPath
+	case resource == "config_moved":
+		script = "cp -p " + configPath + ".previous " + configPath
+		if st.WasActive {
+			script += " && systemctl restart " + serviceName
+		}
+	case resource == "package":
+		script = purgePackage
+	case resource == "apt_source":
+		script = "rm -f " + aptSourcePath
+	case resource == "apt_key":
+		script = "rm -f " + aptKeyPath
+	case resource == "config_dir":
+		script = "rm -rf " + configDir
+	case strings.HasPrefix(resource, "ufw_rule:"):
+		rule := strings.TrimPrefix(resource, "ufw_rule:")
+		parts := strings.Split(rule, "/")
+		if len(parts) != 2 || (parts[1] != "tcp" && parts[1] != "udp") {
+			return incompleteUndo()
+		}
+		port, err := strconv.Atoi(parts[0])
+		if err != nil || port < 1024 || port > 65535 {
+			return incompleteUndo()
+		}
+		exists, err := s.hasUFWRule(ctx, rule)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+		script = "ufw delete allow " + rule
+	default:
+		return incompleteUndo() // Never guess ownership for legacy entries.
 	}
+	return s.mustPrivileged(ctx, script, "无法撤销服务器改动")
+}
+
+func (s *Session) hasUFWRule(ctx context.Context, rule string) (bool, error) {
+	result, err := s.runPrivileged(ctx, "ufw show added", nil)
+	if err != nil {
+		return false, err
+	}
+	if result.code != 0 {
+		return false, incompleteUndo()
+	}
+	for _, line := range strings.Split(string(result.stdout), "\n") {
+		line = strings.TrimSpace(line)
+		want := "ufw allow " + rule
+		if line == want || strings.HasPrefix(line, want+" comment ") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Session) saveState(ctx context.Context, st state) error {
+	raw, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return s.writeFile(ctx, statePath, "600", raw)
 }
 
 func previousState(f facts) state {
@@ -530,8 +558,7 @@ func (s *Session) writeFile(ctx context.Context, path, mode string, content []by
 
 func (s *Session) removeFiles(paths ...string) func(context.Context) error {
 	return func(ctx context.Context) error {
-		_, err := s.runPrivileged(ctx, "rm -f "+strings.Join(paths, " "), nil)
-		return err
+		return s.mustPrivileged(ctx, "rm -f "+strings.Join(paths, " "), "无法撤销文件")
 	}
 }
 
@@ -553,11 +580,11 @@ func (s *Session) installSingBox(ctx context.Context, source string) error {
 	if strings.HasSuffix(source, "/sources.list") {
 		sourceOptions = ""
 	}
-	script := "export DEBIAN_FRONTEND=noninteractive; " +
-		"apt-get update -o DPkg::Lock::Timeout=120 " + sourceOptions + " >/tmp/xdial-apt.log 2>&1 && " +
-		"apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 sing-box >>/tmp/xdial-apt.log 2>&1 && " +
+	script := "log=$(mktemp) || exit 1; trap 'rm -f \"$log\"' EXIT; export DEBIAN_FRONTEND=noninteractive; " +
+		"apt-get update -o DPkg::Lock::Timeout=120 " + sourceOptions + " >\"$log\" 2>&1 && " +
+		"apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120 sing-box >>\"$log\" 2>&1 && " +
 		"test -x " + defaultBinary + " && " + defaultBinary + " version >/dev/null; status=$?; " +
-		"if [ $status -ne 0 ]; then tail -n 5 /tmp/xdial-apt.log >&2; fi; rm -f /tmp/xdial-apt.log; exit $status"
+		"if [ $status -ne 0 ]; then tail -n 5 \"$log\" >&2; fi; rm -f \"$log\"; exit $status"
 	result, err := s.runPrivileged(ctx, script, nil)
 	if err != nil {
 		return err
