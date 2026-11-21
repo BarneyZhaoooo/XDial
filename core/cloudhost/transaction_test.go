@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"golang.org/x/crypto/ssh"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func deploymentSession(t *testing.T, server *testServer) *Session {
@@ -469,5 +471,81 @@ func TestCancelDuringExecStartupSignalsOnlyAfterAcknowledgement(t *testing.T) {
 	s.mu.Unlock()
 	if closed {
 		t.Fatal("responsive startup destroyed rollback connection")
+	}
+}
+
+func TestExistingServiceBootPolicyPreserved(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		for _, active := range []bool{true, false} {
+			for _, outcome := range []string{"success", "start failure", "commit failure", "cancel", "recovery"} {
+				t.Run(fmt.Sprintf("enabled=%v/active=%v/%s", enabled, active, outcome), func(t *testing.T) {
+					server := newTestServer(t, "root", "secret")
+					boot, running := enabled, active
+					commitFailed := false
+					server.respond = func(cmd, input string) (string, int) {
+						if strings.Contains(cmd, "systemctl enable "+serviceName) {
+							boot = true
+						}
+						if strings.Contains(cmd, "systemctl disable ") {
+							boot = false
+						}
+						if strings.Contains(cmd, "systemctl restart "+serviceName) {
+							running = true
+						}
+						if strings.Contains(cmd, "systemctl stop "+serviceName) {
+							running = false
+						}
+						if outcome == "start failure" && strings.Contains(cmd, "NRestarts") {
+							return "", 1
+						}
+						if outcome == "commit failure" && strings.Contains(cmd, statePath+".xdial-tmp") && input != "" {
+							var st state
+							json.Unmarshal([]byte(input), &st)
+							if !st.InProgress && !commitFailed {
+								commitFailed = true
+								return "", 1
+							}
+						}
+						return "", 0
+					}
+					s := deploymentSession(t, server)
+					baseline := state{Version: 1, CreatedAt: 10}
+					if outcome == "recovery" {
+						running = true // interrupted start changed the running state
+						if _, err := s.recoverInterrupted(context.Background(), state{Version: 1, InProgress: true, Baseline: &baseline, WasActive: active, Created: []string{"config_moved", "service"}}); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						f := ubuntuFacts()
+						f["singbox_path"] = "/usr/bin/sing-box"
+						config, _ := serverConfigJSON(31000, "AAAAAAAAAAAAAAAAAAAAAA==")
+						f["xdial_config"] = encodeTestConfig(config)
+						f["xdial_service"] = "inactive"
+						if active {
+							f["xdial_service"] = "active"
+						}
+						raw, _ := json.Marshal(baseline)
+						f["xdial_state"] = encodeTestConfig(raw)
+						s.facts = f
+						r := evaluate(f, privilegeRoot)
+						s.report = &r
+						ctx, cancel := context.WithCancel(context.Background())
+						defer cancel()
+						_, err := s.Deploy(ctx, 32000, func(e Event) {
+							if outcome == "cancel" && e.Step == "start" && e.Status == "done" {
+								cancel()
+							}
+						})
+						if (err == nil) != (outcome == "success") {
+							t.Fatalf("outcome=%s err=%v", outcome, err)
+						}
+					}
+					wantRunning := active || outcome == "success"
+					if boot != enabled || running != wantRunning {
+						t.Fatalf("boot=%v want=%v running=%v want=%v", boot, enabled, running, wantRunning)
+					}
+				})
+			}
+		}
 	}
 }

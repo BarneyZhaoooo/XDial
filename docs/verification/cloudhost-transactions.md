@@ -29,3 +29,15 @@
 Linux sudo 路径先用独立 stdin 执行 `sudo -S -v`，再执行 `sudo -n`；不与 `-k` 合用（会禁止更新缓存），并保留共同父 shell 以匹配非 TTY 的凭据时间戳。缓存不消费密码、父进程一致性和真实容器端到端分别验证，认证输入不能进入后续文件内容。
 
 2026-11-21 第二轮验证：`go test -race ./core/cloudhost`、`make public-content-gate go-vet go-build test`、Debug 编译与签名身份校验通过；`scripts/test-cloudhost-e2e.sh ubuntu:24.04` 的 12 项隔离容器测试通过，含密码 sudo、取消回滚、断连恢复、HTTPS 流量、复用和改端口。本轮没有验证真实云主机或真机。
+
+服务生命周期约束：只有创建 `unit` 的事务能执行 `systemctl enable`，该资源的统一撤销负责 disable 和删除。`startService` 只负责运行与监听，不改变已有服务的启动策略。这样移除“启动时修改启动策略”的副作用，不增加 enabled 状态日志。运行状态 × 自启动策略分别覆盖 active/inactive、enabled/disabled；成功时保留原启动策略，启动失败、最终提交失败、取消、中断恢复时还原原运行状态并保留启动策略。新服务创建成功仍开启自启动，失败及恢复由 unit 补偿关闭。
+
+| 服务基线 | 成功 | 启动／提交失败及取消 | 中断恢复 |
+|---|---|---|---|
+| 已有 active + enabled/disabled | active，原启动策略 | active，原启动策略 | active，原启动策略 |
+| 已有 inactive + enabled/disabled | active，原启动策略 | inactive，原启动策略 | inactive，原启动策略 |
+| 没有 unit | 创建并 enable，再启动 | stop、disable 并移除新 unit | stop、disable 并移除新 unit |
+
+`TestExistingServiceBootPolicyPreserved` 覆盖全部已有服务组合和终态；Linux 容器额外验证新服务自启动，以及 disabled/inactive 服务改端口失败后的运行／启动策略恢复。此约束由 unit 创建事务和既有 `undoResource` 持有，不散落 enabled 状态判断或新增持久化字段。
+
+2026-11-21 第三轮验证：新增服务策略组合测试在 `bf01004` 上复现 disabled 被开启的问题，在修复后及 race 模式通过。合入 main `4594c32` 后，`make public-content-gate go-vet go-build test` 和 Debug 编译／签名检查通过；Ubuntu 24.04 隔离容器的 13 项端到端测试通过，含新增 disabled/inactive 服务失败后的启动策略验证。

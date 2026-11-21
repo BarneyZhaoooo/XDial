@@ -266,11 +266,45 @@ func TestCloudHostEndToEnd(t *testing.T) {
 		if result.Port != env.ports[0] || result.Method != "2022-blake3-aes-128-gcm" || len(result.Password) != 24 || result.Reused {
 			t.Fatalf("result = %+v", result)
 		}
-		if out, code := env.exec(t, "systemctl is-active xdial-proxy && stat -c %a /etc/xdial-proxy/config.json && ! systemctl is-enabled --quiet sing-box"); code != 0 {
+		if out, code := env.exec(t, "systemctl is-active xdial-proxy && systemctl is-enabled --quiet xdial-proxy && stat -c %a /etc/xdial-proxy/config.json && ! systemctl is-enabled --quiet sing-box"); code != 0 {
 			t.Fatalf("service state: %s", out)
 		}
 		if out, _ := env.exec(t, "journalctl -u xdial-proxy --no-pager | grep -c '"+result.Password+"' || true"); out != "0" {
 			t.Fatal("the proxy key appeared in the service log")
+		}
+	})
+
+	t.Run("failed move preserves a disabled service", func(t *testing.T) {
+		if out, code := env.exec(t, "systemctl disable --now xdial-proxy"); code != 0 {
+			t.Fatalf("disable: %s", out)
+		}
+		defer func() {
+			if out, code := env.exec(t, "systemctl daemon-reload && systemctl enable --now xdial-proxy"); code != 0 {
+				t.Fatalf("restore fixture: %s", out)
+			}
+			for i := 0; i < 20; i++ {
+				if _, code := env.exec(t, "systemctl is-active --quiet xdial-proxy && ss -Hltn 'sport = :"+strconv.Itoa(result.Port)+"' | grep -q ."); code == 0 {
+					return
+				}
+				time.Sleep(250 * time.Millisecond)
+			}
+			t.Fatal("restored fixture did not start listening")
+		}()
+		again := NewCloudHostSetup()
+		defer again.Close()
+		mustOK(t, again.ConnectAndInspect(env.target("deploy", key.Fingerprint)), nil)
+		port := strconv.Itoa(env.ports[1])
+		exec.Command("docker", "exec", "-d", env.container, "nc", "-lk", port).Run()
+		defer env.exec(t, "pkill -x nc || true")
+		for i := 0; i < 20; i++ {
+			if _, code := env.exec(t, "ss -Hltn 'sport = :"+port+"' | grep -q ."); code == 0 {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		mustFail(t, again.Deploy(env.ports[1], &recorder{}), "service_not_listening")
+		if out, code := env.exec(t, "test \"$(systemctl is-enabled xdial-proxy)\" = disabled && ! systemctl is-active --quiet xdial-proxy && ! grep -q in_progress /etc/xdial-proxy/state.json"); code != 0 {
+			t.Fatalf("boot policy changed after rollback: %s", out)
 		}
 	})
 

@@ -330,7 +330,12 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			}, func(c context.Context) error { return s.undoResource(c, resource, current) })
 		case "unit":
 			err = step(planned.ID, "unit", func() error {
-				return s.writeFile(ctx, unitPath, "644", []byte(unitFile(plan.binary)))
+				if err := s.writeFile(ctx, unitPath, "644", []byte(unitFile(plan.binary))); err != nil {
+					return err
+				}
+				// Only creation owns boot enablement. Existing units retain the
+				// administrator's boot policy, so rollback never has to guess it.
+				return s.mustPrivileged(ctx, "systemctl daemon-reload && systemctl enable "+serviceName+" >/dev/null 2>&1", "无法启用新服务")
 			}, func(c context.Context) error { return s.undoResource(c, "unit", current) })
 		case "ufw":
 			for _, proto := range []string{"tcp", "udp"} {
@@ -636,7 +641,7 @@ func (s *Session) startService(ctx context.Context, port int) error {
 	// stay up: another program on the port would otherwise look like success.
 	owned := "pid=$(systemctl show -p MainPID --value " + serviceName + "); [ \"${pid:-0}\" -gt 0 ] && " +
 		"ss -Hltnp 'sport = :" + p + "' | grep -q \"pid=$pid,\""
-	script := "systemctl daemon-reload && systemctl enable " + serviceName + " >/dev/null 2>&1 && systemctl restart " + serviceName + " && " +
+	script := "systemctl daemon-reload && systemctl restart " + serviceName + " && " +
 		"for i in 1 2 3 4 5 6 7 8 9 10; do " +
 		"if systemctl is-active --quiet " + serviceName + " && " + owned + "; then " +
 		"sleep 2; restarts=$(systemctl show -p NRestarts --value " + serviceName + "); " +
