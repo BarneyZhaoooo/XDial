@@ -26,3 +26,12 @@ type redactedFailure struct {
 
 func (e redactedFailure) Error() string { return e.message }
 func (e redactedFailure) Unwrap() error { return e.cause }
+
+// GenerateNESessionResult preserves preparation failure classification for Apple hosts.
+func GenerateNESessionResult(profileJSON, server, basePath string) *StartupResult {
+	return startupResult(GenerateNESession(profileJSON, server, basePath))
+}
+
+func GenerateNEConfigResult(profileJSON, server, basePath string) *StartupResult {
+	return startupResult(GenerateNEConfig(profileJSON, server, basePath))
+}

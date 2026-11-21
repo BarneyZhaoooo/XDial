@@ -2707,10 +2707,30 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         scenarioName: String,
         cachedOnly: Bool = false
     ) -> Result<StartSession, NSError> {
+        guard profileJSON.utf8.count <= kMaxNEConfigBytes else {
+            return .failure(NSError(domain: "XDial", code: -5,
+                userInfo: [NSLocalizedDescriptionKey: "连接配置过大，无法安全启动"]))
+        }
         var genError: NSError?
         #if os(iOS)
-        let raw = cachedOnly ? LibboxGenerateCachedNESession(profileJSON, server, basePath, &genError)
-            : LibboxGenerateNESession(profileJSON, server, basePath, &genError)
+        let raw: String
+        if cachedOnly {
+            raw = LibboxGenerateCachedNESession(profileJSON, server, basePath, &genError)
+        } else {
+            let result = LibboxGenerateNESessionResult(profileJSON, server, basePath)!
+            if !result.message.isEmpty {
+                if result.retryable {
+                    return .success(StartSession(configJSON: "{}", parameters: [
+                        "preparation_profile": profileJSON,
+                        ScenarioStartParameter.scenarioID: scenarioID,
+                        ScenarioStartParameter.scenarioName: scenarioName,
+                    ]))
+                }
+                return .failure(NSError(domain: "XDial", code: -5,
+                    userInfo: [NSLocalizedDescriptionKey: result.message]))
+            }
+            raw = result.value
+        }
         if let genError { return .failure(genError) }
         guard let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2731,8 +2751,15 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         // Tailscale 仍放在各代 Box 里：iOS 配置会带上所有启用的 Tailscale 线路，而由进程持有的
         // Tailscale 只支持一条。两边都用到 Tailscale 的切换由扩展换引擎完成。
         #else
-        let configJSON = LibboxGenerateNEConfig(profileJSON, server, basePath, &genError)
-        if let genError { return .failure(genError) }
+        let result = LibboxGenerateNEConfigResult(profileJSON, server, basePath)!
+        if !result.message.isEmpty {
+            if result.retryable {
+                return .success(StartSession(configJSON: "{}", parameters: ["preparation_profile": profileJSON]))
+            }
+            return .failure(NSError(domain: "XDial", code: -5,
+                userInfo: [NSLocalizedDescriptionKey: result.message]))
+        }
+        let configJSON = result.value
         let parameters: [String: String] = [:]
         #endif
         guard configJSON.utf8.count <= kMaxNEConfigBytes else {

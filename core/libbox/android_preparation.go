@@ -93,7 +93,8 @@ func newResourceBox(ctx context.Context, data []byte, outboundTag, resolverTag s
 		return nil, fmt.Errorf("protected network unavailable")
 	}
 	if err = instance.Start(); err != nil {
-		return fail()
+		instance.Close()
+		return nil, redactedFailure{"protected network unavailable", err}
 	}
 	router := service.FromContext[adapter.DNSRouter](ctx)
 	transports := service.FromContext[adapter.DNSTransportManager](ctx)

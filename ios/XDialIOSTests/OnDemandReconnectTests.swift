@@ -131,6 +131,21 @@ final class OnDemandReconnectTests: XCTestCase {
         ))
     }
 
+    func testPreparationNetworkFailureKeepsSecureIntentButTerminalFailureRevokesIt() throws {
+        XCTAssertFalse(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true, startupStage: "preparation_network_unavailable"
+        ))
+        XCTAssertTrue(OnDemandStartEnvelopeFailurePolicy.shouldClear(
+            startedFromSecureEnvelope: true, startupStage: "preparation_failed"
+        ))
+        let envelope = OnDemandStartEnvelope(transport: "standalone",
+            parameters: ["preparation_profile": "{\"lines\":[]}"], configJSON: "{}")
+        let decoded = try JSONDecoder().decode(OnDemandStartEnvelope.self,
+            from: JSONEncoder().encode(envelope))
+        XCTAssertEqual(decoded.parameters["preparation_profile"], "{\"lines\":[]}")
+        XCTAssertTrue(decoded.isValid)
+    }
+
     func testNonemptySystemOptionsDoNotMasqueradeAsManualStart() {
         XCTAssertFalse(OnDemandManualStartContract.isComplete(
             configJSON: nil,

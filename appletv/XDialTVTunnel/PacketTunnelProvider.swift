@@ -224,6 +224,51 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 self.recordDiagnostic("start_bundle_scenario_preferred")
             }
             #endif
+            // Complete cold-cache acquisition before installing any capture settings.
+            // The same secure intent lets the OS retry while the host is suspended.
+            guard self.isAttemptStarting(generation) else { return }
+            if !startBundle.preparationProfile.isEmpty {
+                guard startBundle.preparationProfile.utf8.count <= OnDemandStartEnvelope.maxConfigBytes else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置过大"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                let basePath = FileManager.default.containerURL(
+                    forSecurityApplicationGroupIdentifier: Self.appGroupID)?.path ?? ""
+                #if os(iOS)
+                let result = LibboxGenerateNESessionResult(startBundle.preparationProfile, startBundle.server, basePath)!
+                #else
+                let result = LibboxGenerateNEConfigResult(startBundle.preparationProfile, startBundle.server, basePath)!
+                #endif
+                guard self.isAttemptStarting(generation) else { return }
+                if !result.message.isEmpty {
+                    self.failAttempt(generation, error: self.providerError(5, result.message),
+                        diagnosticStage: result.retryable ? "preparation_network_unavailable" : "preparation_failed")
+                    return
+                }
+                #if os(iOS)
+                guard let data = result.value.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let config = object["config_json"] as? String else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置无效"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                startBundle.configJSON = config
+                if let line = object["anyconnect"] as? [String: Any] {
+                    startBundle.anyConnectLineID = line["line_id"] as? String ?? ""
+                    startBundle.anyConnectRuntimeIdentity = line["runtime_identity"] as? String ?? ""
+                }
+                #else
+                startBundle.configJSON = result.value
+                #endif
+                guard startBundle.configJSON.utf8.count <= OnDemandStartEnvelope.maxConfigBytes else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置过大"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                self.setDiagnosticSensitiveValues(from: startBundle)
+            }
             self.prepareAttempt(startBundle, generation: generation, completion: completion)
         }
     }
@@ -1166,7 +1211,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let username: String
         let password: String
         let allowInsecure: Bool
-        let configJSON: String
+        var configJSON: String
+        var preparationProfile = ""
         /// 以下字段来自新版 App；旧 App 的启动包没有，这时不能与切换候选共享线路。
         var scenarioID = ""
         var scenarioName = ""
@@ -1199,6 +1245,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
 
         mutating func readSwitchParameters(_ value: (String) -> String?) {
+            preparationProfile = value("preparation_profile") ?? ""
             scenarioID = value("scenario_id") ?? ""
             scenarioName = value("scenario_name") ?? ""
             anyConnectLineID = value("anyconnect_line_id") ?? ""
