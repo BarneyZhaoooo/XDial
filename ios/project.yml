@@ -153,6 +153,7 @@ targets:
     sources:
       - path: ../apple/Home
       - path: ../apple/Notifications
+      - path: ../apple/CloudHost
       - path: XDialIOS
         excludes:
           - Info.plist
