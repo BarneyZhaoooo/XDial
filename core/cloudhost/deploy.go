@@ -365,6 +365,14 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 	// Commit the durable result before deleting the rollback backup. Keep existing
 	// firewall rules: only resources with recorded ownership may ever be removed.
 	committed := current
+	// Relinquish retired rules durably before best-effort cleanup. Once retired,
+	// an administrator can reuse that port without a later run deleting its rule.
+	committed.OwnedUFW = nil
+	for _, rule := range current.OwnedUFW {
+		if strings.HasPrefix(rule, strconv.Itoa(plan.Port)+"/") {
+			committed.OwnedUFW = append(committed.OwnedUFW, rule)
+		}
+	}
 	committed.InProgress = false
 	committed.Created = nil
 	committed.Baseline = nil

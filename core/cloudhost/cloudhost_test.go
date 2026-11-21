@@ -247,15 +247,16 @@ func TestShellQuoteKeepsValuesLiteral(t *testing.T) {
 
 // testServer is a minimal in-process SSH server that records commands and stdin.
 type testServer struct {
-	listener     net.Listener
-	key          ssh.Signer
-	user         string
-	password     string
-	mu           sync.Mutex
-	commands     []string
-	stdin        []string
-	respond      func(string, string) (string, int)
-	holdChannels bool
+	listener      net.Listener
+	key           ssh.Signer
+	user          string
+	password      string
+	mu            sync.Mutex
+	commands      []string
+	stdin         []string
+	respond       func(string, string) (string, int)
+	holdChannels  bool
+	handleChannel func(ssh.Channel, <-chan *ssh.Request)
 }
 
 func newTestServer(t *testing.T, user, password string) *testServer {
@@ -311,7 +312,11 @@ func (s *testServer) serve() {
 				if err != nil {
 					continue
 				}
-				go s.handle(channel, channelRequests)
+				if s.handleChannel != nil {
+					go s.handleChannel(channel, channelRequests)
+				} else {
+					go s.handle(channel, channelRequests)
+				}
 			}
 		}()
 	}

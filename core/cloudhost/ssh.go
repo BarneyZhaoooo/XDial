@@ -279,18 +279,24 @@ type commandResult struct {
 // run executes one shell script as the login user. The script is built only
 // from constants and validated values; user text never reaches the shell.
 func (s *Session) run(ctx context.Context, script string, stdin []byte) (commandResult, error) {
-	// Include channel opening and command startup in cancellation. Closing the
-	// transport unblocks SSH requests even when the peer silently disappears.
-	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
-	defer stop()
 	if err := ctx.Err(); err != nil {
 		return commandResult{}, err
 	}
+	opened := make(chan struct{})
+	stopOpening := s.interruptOnCancel(ctx, opened, nil)
 	sshSession, err := s.client.NewSession()
+	close(opened)
+	stopOpening()
 	if err != nil {
+		if ctx.Err() != nil {
+			return commandResult{}, ctx.Err()
+		}
 		return commandResult{}, newError("ssh_session_failed", "SSH 连接已断开", "The SSH connection was lost")
 	}
 	defer sshSession.Close()
+	if err := ctx.Err(); err != nil {
+		return commandResult{}, err
+	}
 	var stdout, stderr limitedBuffer
 	stdout.limit, stderr.limit = maxOutputBytes, maxOutputBytes
 	sshSession.Stdout = &stdout
@@ -298,7 +304,20 @@ func (s *Session) run(ctx context.Context, script string, stdin []byte) (command
 	if stdin != nil {
 		sshSession.Stdin = bytes.NewReader(stdin)
 	}
-	err = sshSession.Run("sh -c " + shellQuote(script))
+	// Do not signal before exec has been acknowledged: a peer could otherwise
+	// receive TERM before it starts the command and then run it uncancelled.
+	started := make(chan struct{})
+	stopStarting := s.interruptOnCancel(ctx, started, nil)
+	err = sshSession.Start("sh -c " + shellQuote(script))
+	close(started)
+	stopStarting()
+	if err == nil {
+		finished := make(chan struct{})
+		stopCommand := s.interruptOnCancel(ctx, finished, func() { _ = sshSession.Signal(ssh.SIGTERM) })
+		err = sshSession.Wait()
+		close(finished)
+		stopCommand()
+	}
 	if ctx.Err() != nil {
 		return commandResult{}, ctx.Err()
 	}
@@ -314,6 +333,35 @@ func (s *Session) run(ctx context.Context, script string, stdin []byte) (command
 	return result, nil
 }
 
+// interruptOnCancel owns cancellation for both channel opening and command
+// execution. Responsive commands receive TERM; only an unresponsive operation
+// loses the transport. Joining both callbacks prevents a late close during undo.
+const cancellationGrace = 2 * time.Second
+
+func (s *Session) interruptOnCancel(ctx context.Context, finished <-chan struct{}, interrupt func()) func() {
+	cancelFinished := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(cancelFinished)
+		forced := make(chan struct{})
+		force := time.AfterFunc(cancellationGrace, func() {
+			defer close(forced)
+			_ = s.Close()
+		})
+		if interrupt != nil {
+			interrupt()
+		}
+		<-finished
+		if !force.Stop() {
+			<-forced
+		}
+	})
+	return func() {
+		if !stop() {
+			<-cancelFinished
+		}
+	}
+}
+
 // runPrivileged runs the script as root, answering sudo with the login password
 // through stdin when that is the only way. Extra stdin follows the password line.
 func (s *Session) runPrivileged(ctx context.Context, script string, stdin []byte) (commandResult, error) {
@@ -323,8 +371,13 @@ func (s *Session) runPrivileged(ctx context.Context, script string, stdin []byte
 	case privilegeSudoNoPassword:
 		return s.run(ctx, "sudo -n sh -c "+shellQuote(script), stdin)
 	case privilegeSudoPassword:
+		// Validate on a separate input stream; do not use -k with -v because that
+		// would prevent updating the credential timestamp. Keep the same parent
+		// shell for validation and execution: sudo's default
+		// non-TTY timestamp belongs to the parent PID. A trailing command prevents
+		// the shell from exec-optimising the second sudo into a different parent.
 		input := append([]byte(s.target.Password+"\n"), stdin...)
-		return s.run(ctx, "IFS= read -r password; printf '%s\n' \"$password\" | sudo -k -S -p '' -v && sudo -n sh -c "+shellQuote(script), input)
+		return s.run(ctx, "IFS= read -r password; printf '%s\n' \"$password\" | sudo -S -p '' -v && sudo -n sh -c "+shellQuote(script)+"; status=$?; exit \"$status\"", input)
 	default:
 		return commandResult{}, newError("no_privilege", "这个账号没有 root 或 sudo 权限", "This account has no root or sudo access")
 	}

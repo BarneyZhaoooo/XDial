@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"golang.org/x/crypto/ssh"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -119,7 +122,7 @@ func TestCancellationUnblocksChannelOpening(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected cancellation")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(cancellationGrace + time.Second):
 		t.Fatal("channel open ignored cancellation")
 	}
 }
@@ -139,11 +142,11 @@ func TestSudoCachedAuthenticationCannotPrefixFileWithPassword(t *testing.T) {
 	server.mu.Unlock()
 	dir := t.TempDir()
 	// Simulate sudo accepting cached credentials without reading its stdin.
-	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte("#!/bin/sh\nif [ \"$1\" = -k ]; then exit 0; fi\nshift; exec \"$@\"\n"), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte("#!/bin/sh\nif [ \"$1\" = -S ]; then printf '%s' \"$PPID\" > \"$XDIAL_TEST_AUTH_FILE\"; exit 0; fi\n[ \"$(cat \"$XDIAL_TEST_AUTH_FILE\")\" = \"$PPID\" ] || exit 88\nshift; exec \"$@\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", "-c", command)
-	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "XDIAL_TEST_AUTH_FILE="+filepath.Join(dir, "auth"))
 	cmd.Stdin = strings.NewReader(input)
 	output, err := cmd.CombinedOutput()
 	if err != nil || string(output) != "file contents" {
@@ -261,5 +264,210 @@ func TestFailedCommitNeverReportsSuccess(t *testing.T) {
 	s.report = &r
 	if _, err := s.Deploy(context.Background(), 32000, nil); err == nil || !failed || !removed {
 		t.Fatalf("err=%v commit failed=%v rolled back=%v", err, failed, removed)
+	}
+}
+
+// The peer acknowledges cancellation without closing the transport, or ignores
+// it entirely. Exercise the same Deploy compensation with both peer behaviours.
+func TestCancellationRollbackWithResponsiveAndSilentPeer(t *testing.T) {
+	for _, responsive := range []bool{true, false} {
+		t.Run(map[bool]string{true: "responsive", false: "silent"}[responsive], func(t *testing.T) {
+			server := newTestServer(t, "root", "secret")
+			started := make(chan struct{})
+			var restored atomic.Bool
+			server.handleChannel = func(ch ssh.Channel, requests <-chan *ssh.Request) {
+				defer ch.Close()
+				waiting := false
+				for request := range requests {
+					switch request.Type {
+					case "exec":
+						var payload struct{ Command string }
+						ssh.Unmarshal(request.Payload, &payload)
+						request.Reply(true, nil)
+						io.ReadAll(ch)
+						if strings.Contains(payload.Command, " check -c ") {
+							waiting = true
+							close(started)
+							continue
+						}
+						if strings.Contains(payload.Command, "cp -p "+configPath+".previous ") {
+							restored.Store(true)
+						}
+						ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+						return
+					case "signal":
+						if waiting && responsive {
+							ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{143}))
+							return
+						}
+					}
+				}
+			}
+			s := deploymentSession(t, server)
+			f := ubuntuFacts()
+			f["singbox_path"] = "/usr/bin/sing-box"
+			config, _ := serverConfigJSON(31000, "AAAAAAAAAAAAAAAAAAAAAA==")
+			f["xdial_config"] = encodeTestConfig(config)
+			f["xdial_service"] = "active"
+			s.facts = f
+			r := evaluate(f, privilegeRoot)
+			s.report = &r
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := s.Deploy(ctx, 32000, nil); done <- err }()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("command never started")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if responsive {
+					if AsError(err).Code != "cancelled" || !restored.Load() {
+						t.Fatalf("err=%v restored=%v", err, restored.Load())
+					}
+					// No delayed cancellation callback may close the transport during later undo.
+					time.Sleep(cancellationGrace + 10*time.Millisecond)
+					if _, err := s.run(context.Background(), "true", nil); err != nil {
+						t.Fatalf("rollback connection lost: %v", err)
+					}
+				} else if AsError(err).Code != "undo_incomplete" {
+					t.Fatalf("silent peer must retain recovery: %v", err)
+				}
+			case <-time.After(cancellationGrace + time.Second):
+				t.Fatal("cancel was not bounded")
+			}
+		})
+	}
+}
+
+func TestRetiredFirewallOwnershipIsNotReusedAcrossDeployments(t *testing.T) {
+	for _, cleanupFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "removed", true: "cleanup failed"}[cleanupFails], func(t *testing.T) {
+			server := newTestServer(t, "root", "secret")
+			old := []string{"31000/tcp", "31000/udp"}
+			latest := state{Version: 1, CreatedAt: 10, OwnedUFW: old}
+			rules := map[string]bool{old[0]: true, old[1]: true}
+			retiredDeletes := 0
+			server.respond = func(cmd, input string) (string, int) {
+				if strings.Contains(cmd, statePath+".xdial-tmp") && input != "" {
+					latest = state{}
+					if err := json.Unmarshal([]byte(input), &latest); err != nil {
+						t.Error(err)
+					}
+				}
+				if strings.Contains(cmd, "ufw show added") {
+					var out strings.Builder
+					for rule := range rules {
+						out.WriteString("ufw allow " + rule + "\n")
+					}
+					return out.String(), 0
+				}
+				for _, port := range []string{"31000", "32000", "33000"} {
+					for _, proto := range []string{"tcp", "udp"} {
+						rule := port + "/" + proto
+						if strings.Contains(cmd, "ufw allow "+rule+" comment") {
+							rules[rule] = true
+						}
+						if strings.Contains(cmd, "ufw delete allow "+rule) {
+							if port == "31000" {
+								retiredDeletes++
+								if cleanupFails {
+									return "", 1
+								}
+							}
+							delete(rules, rule)
+						}
+					}
+				}
+				return "", 0
+			}
+			s := deploymentSession(t, server)
+			setBaseline := func(port int) {
+				f := ubuntuFacts()
+				f["singbox_path"] = "/usr/bin/sing-box"
+				f["ufw"] = "Status: active"
+				config, _ := serverConfigJSON(port, "AAAAAAAAAAAAAAAAAAAAAA==")
+				f["xdial_config"] = encodeTestConfig(config)
+				f["xdial_service"] = "active"
+				raw, _ := json.Marshal(latest)
+				f["xdial_state"] = encodeTestConfig(raw)
+				s.facts = f
+				r := evaluate(f, privilegeRoot)
+				s.report = &r
+			}
+			setBaseline(31000)
+			if _, err := s.Deploy(context.Background(), 32000, nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(latest.OwnedUFW) != 2 || contains(latest.OwnedUFW, "31000/tcp") {
+				t.Fatalf("retired ownership: %v", latest.OwnedUFW)
+			}
+			rules["31000/tcp"] = true
+			rules["31000/udp"] = true // administrator takes over the retired port
+			before := retiredDeletes
+			setBaseline(32000)
+			if _, err := s.Deploy(context.Background(), 32000, nil); err != nil {
+				t.Fatal(err)
+			}
+			setBaseline(32000)
+			if _, err := s.Deploy(context.Background(), 33000, nil); err != nil {
+				t.Fatal(err)
+			}
+			if before != retiredDeletes || !rules["31000/tcp"] || !rules["31000/udp"] {
+				t.Fatal("retired port deleted again")
+			}
+		})
+	}
+}
+
+func TestCancelDuringExecStartupSignalsOnlyAfterAcknowledgement(t *testing.T) {
+	server := newTestServer(t, "root", "secret")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var earlySignal atomic.Bool
+	server.handleChannel = func(ch ssh.Channel, requests <-chan *ssh.Request) {
+		defer ch.Close()
+		for request := range requests {
+			switch request.Type {
+			case "exec":
+				close(entered)
+				<-release
+				// Give a wrongly eager cancellation callback time to send its signal.
+				select {
+				case <-requests:
+					earlySignal.Store(true)
+				case <-time.After(50 * time.Millisecond):
+				}
+				request.Reply(true, nil)
+			case "signal":
+				ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{143}))
+				return
+			}
+		}
+	}
+	s := deploymentSession(t, server)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := s.run(ctx, "sleep", nil); done <- err }()
+	<-entered
+	cancel()
+	close(release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || earlySignal.Load() {
+			t.Fatalf("err=%v signal before exec=%v", err, earlySignal.Load())
+		}
+	case <-time.After(cancellationGrace + time.Second):
+		t.Fatal("startup cancellation stuck")
+	}
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		t.Fatal("responsive startup destroyed rollback connection")
 	}
 }
