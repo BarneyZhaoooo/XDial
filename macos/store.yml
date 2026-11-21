@@ -86,8 +86,8 @@ targets:
           "${SRCROOT}/scripts/embed-private-seed.sh" "${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}" "${SRCROOT}"
     dependencies:
       - target: XDialStoreProxy
-      - framework: ../build/frameworks/macos/Libbox.xcframework
-        embed: false
+      - framework: ../build/shared/macos/Libbox.xcframework
+        embed: true
       - sdk: libresolv.tbd
   XDialStoreProxy:
     type: app-extension
@@ -137,6 +137,6 @@ targets:
             rmdir "${destination%/*}" 2>/dev/null || true
           fi
     dependencies:
-      - framework: ../build/frameworks/macos/Libbox.xcframework
+      - framework: ../build/shared/macos/Libbox.xcframework
         embed: false
       - sdk: libresolv.tbd

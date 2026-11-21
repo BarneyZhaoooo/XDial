@@ -220,3 +220,10 @@ Next 的旧配置仍是首次只读迁移的来源，也仍在“删除数据”
 
 另外：Apple 开发者后台里 Next 的 App ID、App Group 和两份 Developer ID profile 可以作废；
 tailnet 里 `xdial-next-*` 的陈旧设备可以手动删除；本地 `build/` 下名字含 `next` 的目录可以删除。
+
+
+## 包体测量
+
+iOS、tvOS 和 Mac 商店版将同一架构的 Libbox 动态框架嵌入宿主一次，网络扩展通过宿主的 Frameworks 路径加载。每个进程仍有独立的 Go 运行时。框架 dSYM 随 xcarchive 归档。核对依赖许可时，对新包运行 `go version -m <app>/Frameworks/Libbox.framework/Libbox`（Mac 在 Contents/Frameworks），旧静态包仍从宿主及扩展可执行文件取清单。独立分发的 Mac System Extension 由系统另行安装，继续静态链接。
+
+CI 摘要比较同平台、同产物与 PR 基线的 MB 差值，并列出最大的三个文件。Apple 的压缩数是未加密 App 的 ZIP 估算值，商店设备下载和安装数以 App Store Connect 为准；Android 使用单架构 APK，Linux 使用服务 tar.gz。Windows 首个可分发 ZIP 可复用 `scripts/package-size.py`；目前没有安装包基线。
