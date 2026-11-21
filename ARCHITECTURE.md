@@ -384,6 +384,8 @@ NWPath 更新与 configd 对相应键的只读通知都触发重新采样；日�
 新样本不证明旧 generation 仍是当前事实，真实指纹变化才换代。Provider 仍 connected 时，
 Line 自己处理协议恢复，不能仅凭路径不可用 / 恢复边沿重复连接。
 
+各端从首次拨号起保留用户的连接意图。共享包 `core/recovery` 维护临时网络错误的类型判断与主动重试间隔；Android 和 Linux 服务复用其中的连接状态机。macOS 把同一失败分类与预算接到事务回滚；iOS 与 tvOS 通过同一启动包和 NetworkExtension 按需规则恢复，后台唤醒时机由系统决定。认证、证书和配置错误终止本次意图，手动断开取消等待和后续重试。
+
 同代 Line 局部恢复保持其他 Line、Ingress、Box 与 transaction ID 不变；局部预算耗尽、
 Provider 掉线或共享组件失败才提升为完整恢复。休眠或无可用 Underlay 期间局部恢复只等待，
 不消耗预算、不提升（见 [AnyConnect](#33-anyconnectd30)）。完整恢复在 Rollback 与系统接管移除后进行，
