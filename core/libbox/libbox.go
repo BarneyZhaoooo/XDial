@@ -1616,7 +1616,9 @@ func (l *Libbox) nextLineRuntimeGenerationLocked() uint64 {
 func (l *Libbox) createAnyConnectRuntimeCapability(
 	config engine.VPNConfig,
 ) (*anyConnectRuntimeCapability, error) {
+	connectStarted := time.Now()
 	vpnInfo, err := l.vpn.Connect(config)
+	connectTime := time.Since(connectStarted)
 	if err != nil {
 		return nil, fmt.Errorf("anyconnect dial: %w", err)
 	}
@@ -1652,6 +1654,9 @@ func (l *Libbox) createAnyConnectRuntimeCapability(
 		config:   config,
 		dnsJSON:  string(dnsData),
 		revision: 1,
+		// The epoch is recorded at the first network observation, as for
+		// sessionInterface: the session was established on that network.
+		sessionConnectTime: connectTime,
 	}
 	capability.attachOwner(l, false)
 	return capability, nil
