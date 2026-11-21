@@ -182,10 +182,12 @@ Direct 使用完整 Underlay 的解析语义，不寻找绕过既有 VPN 的“�
 
 | 输入 | 解析路径 |
 |---|---|
-| 已捕获的系统 / 应用 DNS flow | sing-box 裁决为 Direct 后，经 Direct dialer 转发原 UDP/TCP 查询字节到原 resolver endpoint；响应校验事务 ID、问题和目标 |
+| 已捕获的系统 / 应用 DNS flow | sing-box 裁决为 Direct 后，经 Direct dialer 转发原 UDP/TCP 查询字节到原 resolver endpoint；App socket 绑定了接口时（如 mDNSResponder 查询 utun 上的 MagicDNS）沿用该接口；响应校验事务 ID、问题和目标 |
 | 无原始 flow 的盒内主动解析 | 使用 Apple `DNSServiceGetAddrInfo`，保留系统 scoped resolver、搜索域与既有叠加 |
 
 已被接管、等待 Provider 应答的查询不能再次交给 mDNSResponder。
+SOCKS5 UDP ASSOCIATE 不携带关联级元数据，绑定接口由 Provider 在关联的首个标记数据报中
+送达（patches/sing-box/0020），sing-box 读取后丢弃该数据报。
 缺少原始上下文或校验失败不回落到重建查询、首选 resolver 裸 UDP 或公共 DNS。
 Provider 不读域名、不执行第二次 DNS 裁决。
 
