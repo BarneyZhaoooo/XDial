@@ -1871,7 +1871,8 @@ final class AppState: ObservableObject {
             normalizeLegacyProfile(&loaded)
             // 预置配置有新增时，给老配置补一次；每个 revision 只补一次，用户之后删掉的不会再回来。
             if let pendingSeed {
-                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory)
+                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory,
+                              scenarioHistory: pendingSeed.scenarioHistory)
             }
             let normalizationChanged = loaded != profileBeforeNormalization
             profile = loaded
@@ -1928,7 +1929,8 @@ final class AppState: ObservableObject {
             preexistingQuarantine.merge(migration.quarantine) { current, _ in current }
             normalizeLegacyProfile(&loaded)
             if let pendingSeed {
-                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory)
+                loaded.adding(seed: pendingSeed.profile, ruleSetHistory: pendingSeed.ruleSetHistory,
+                              scenarioHistory: pendingSeed.scenarioHistory)
             }
             profile = loaded
             lastPersistedProfile = loaded
