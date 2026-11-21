@@ -13,6 +13,7 @@ SSH、检查、部署和回滚都在 Go 核心 `core/cloudhost`（经 Libbox 的
    本工具以前留下的代理、ufw/firewalld 状态和已监听端口。阻断条件：非 Ubuntu 20.04+ / Debian 12+、非 amd64/arm64、
    没有 systemd、没有 root 或 sudo、无法读取的同名服务。
 3. **改动清单**：按所选端口列出每一项改动，用户确认后才执行。端口不能被占用，也不能低于 1024。
+   改端口会立即作废旧清单，按新端口重新生成之前、以及生成期间都不能部署；只有与输入端口一致的最新清单才能确认。
 4. **部署**：任何一步失败或用户取消，都按相反顺序撤销本次做过的改动；再次运行时复用已有代理，或按新端口改配置。
 5. **验证**：在 App 内建一个只含这条线路的临时 sing-box 会话，经它发出三项 HTTPS 请求，不改动当前连接：
    `www.gstatic.com/generate_204`（连通，几十字节）、`1.1.1.1/cdn-cgi/trace`（出口 IP，读取上限 64 KB，实际不到 1 KB）、
@@ -57,7 +58,7 @@ App 如实提示改动可能留在服务器上；下次连接这台服务器时�
 - `scripts/test-cloudhost-e2e.sh`：在隔离容器（真实 systemd、sshd、apt）里端到端验证 Ubuntu 24.04/22.04/20.04、
   Debian 12，`XDIAL_E2E_PLATFORM=linux/amd64` 验证另一种架构。覆盖指纹变化、注入、无权限账号、端口占用、
   失败回滚、取消回滚、部署、经代理的 HTTPS 与测速、重复运行复用、改端口、免密 sudo、root 私钥登录。不连接真实云主机。
-- iOS `CloudHostSetupTests`：解析 Go 返回、进度、只有验证通过才可保存、关闭时清空凭据。
+- iOS `CloudHostSetupTests`：解析 Go 返回、进度、改端口作废旧清单、只有验证通过才可保存、关闭时清空凭据。
 - Mac 的向导截图：`XDial Debug --render-settings-preview <目录>` 额外输出 `cloud-host-*.png`。
 
 ## 限制

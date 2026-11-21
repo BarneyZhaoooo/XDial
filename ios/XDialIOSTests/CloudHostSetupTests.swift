@@ -62,6 +62,32 @@ final class CloudHostSetupTests: XCTestCase {
         XCTAssertTrue(line.verified)
     }
 
+    func testEditingThePortInvalidatesThePlan() async {
+        let model = CloudHostSetupModel()
+        let report = CloudHostSetupModel.previewDecode(CloudHostReport.self, """
+        {"host_key":{"fingerprint":"SHA256:abc","algorithm":"ssh-ed25519","file":"/etc/ssh/ssh_host_ed25519_key.pub"},
+         "system":"Ubuntu 24.04","architecture":"aarch64","privilege":"root","ufw_active":false,
+         "listening_ports":[22],"suggested_port":43111,"blocking":[],"notes":[]}
+        """)
+        let plan = CloudHostSetupModel.previewDecode(CloudHostPlan.self,
+            #"{"port":43111,"method":"2022-blake3-aes-128-gcm","reuse":false,"steps":[]}"#)
+        model.proxyPort = "43111"
+        model.preview(stage: .review(report), plan: plan)
+        XCTAssertTrue(model.canDeploy)
+
+        model.proxyPort = "43112"
+        XCTAssertNil(model.plan, "a plan for the old port must not survive a port edit")
+        XCTAssertFalse(model.canDeploy)
+
+        model.proxyPort = "43111"
+        XCTAssertNil(model.plan, "returning to the old port still needs a fresh plan")
+        model.proxyPort = "80"
+        await model.refreshPlan()
+        XCTAssertEqual(model.planError?.code, "port_invalid")
+        XCTAssertFalse(model.planning)
+        XCTAssertFalse(model.canDeploy)
+    }
+
     func testScanNeedsAddressUserAndOneCredential() {
         let model = CloudHostSetupModel()
         XCTAssertFalse(model.canScan)

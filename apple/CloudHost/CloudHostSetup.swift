@@ -211,18 +211,39 @@ final class CloudHostSetupModel: ObservableObject {
     @Published var password = ""
     @Published var privateKey = ""
     @Published var passphrase = ""
-    @Published var proxyPort = ""
+    /// Editing the port invalidates the plan built for the old one, so the
+    /// deploy button can never apply a plan the user is no longer looking at.
+    @Published var proxyPort = "" {
+        didSet {
+            if proxyPort != oldValue { invalidatePlan() }
+        }
+    }
     @Published var lineName = ""
 
     @Published private(set) var stage: Stage = .server
     @Published private(set) var error: CloudHostMessage?
     @Published private(set) var plan: CloudHostPlan?
     @Published private(set) var planError: CloudHostMessage?
+    @Published private(set) var planning = false
     @Published private(set) var events: [CloudHostEvent] = []
     @Published private(set) var working = false
 
     private let backend = CloudHostBackend()
     private var confirmedKey: CloudHostKey?
+    private var planGeneration = 0
+
+    private func invalidatePlan() {
+        planGeneration += 1
+        planning = false
+        plan = nil
+        planError = nil
+    }
+
+    /// Only a current plan for exactly the port in the field can be deployed.
+    var canDeploy: Bool {
+        guard let plan, !working, !planning, case .review = stage else { return false }
+        return Int(proxyPort) == plan.port
+    }
 
     var canScan: Bool {
         !working && !host.trimmingCharacters(in: .whitespaces).isEmpty
@@ -278,6 +299,8 @@ final class CloudHostSetupModel: ObservableObject {
         working = false
         switch result {
         case .success(let report):
+            // A new inspection supersedes any plan built from the previous one.
+            invalidatePlan()
             proxyPort = String(report.suggestedPort)
             stage = .review(report)
             if report.blocking.isEmpty { await refreshPlan() }
@@ -288,12 +311,19 @@ final class CloudHostSetupModel: ObservableObject {
     }
 
     func refreshPlan() async {
-        guard let port = Int(proxyPort) else {
+        planGeneration += 1
+        let generation = planGeneration
+        guard let port = Int(proxyPort), (1024...65535).contains(port) else {
             plan = nil
+            planning = false
             planError = CloudHostMessage(code: "port_invalid", message: "请填写 1024–65535 之间的端口", messageEN: "Enter a port between 1024 and 65535")
             return
         }
+        planning = true
         let result = await backend.call(CloudHostPlan.self) { $0.plan(port) }
+        // A newer edit or refresh owns the plan now; drop this stale answer.
+        guard generation == planGeneration else { return }
+        planning = false
         switch result {
         case .success(let value):
             plan = value
@@ -305,7 +335,7 @@ final class CloudHostSetupModel: ObservableObject {
     }
 
     func deploy() async {
-        guard let plan, case .review = stage else { return }
+        guard canDeploy, let plan else { return }
         working = true
         error = nil
         events = []

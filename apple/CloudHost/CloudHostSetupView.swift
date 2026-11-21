@@ -182,8 +182,13 @@ struct CloudHostSetupView: View {
                 field(t("代理端口", "Proxy port"), prompt: "1024–65535", text: $model.proxyPort, id: "cloud-host-port", numeric: true)
                     .onSubmit { Task { await model.refreshPlan() } }
                 Button(t("按这个端口重新生成改动清单", "Update the Plan for This Port")) { Task { await model.refreshPlan() } }
-                if let planError = model.planError {
+                if model.planning {
+                    ProgressView(t("正在生成改动清单…", "Updating the plan…"))
+                } else if let planError = model.planError {
                     Text(planError.text(chinese)).foregroundStyle(.red)
+                } else if model.plan == nil, !model.proxyPort.isEmpty {
+                    Text(t("端口已更改，请按新端口重新生成改动清单。", "The port changed; update the plan for the new port."))
+                        .foregroundStyle(.secondary)
                 }
             } header: {
                 Text(t("代理端口（Shadowsocks 2022，TCP 和 UDP）", "Proxy port (Shadowsocks 2022, TCP and UDP)"))
@@ -218,7 +223,7 @@ struct CloudHostSetupView: View {
                     Button(plan.reuse ? t("使用已有代理", "Use the Existing Proxy") : t("确认并部署", "Confirm and Set Up")) {
                         Task { await model.deploy() }
                     }
-                    .disabled(model.working)
+                    .disabled(!model.canDeploy)
                     .accessibilityIdentifier("cloud-host-deploy")
                 }
             }
