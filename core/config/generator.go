@@ -1364,11 +1364,10 @@ func buildTransparentProxyDNS(
 	defaultLineID string,
 	addressFamily transparentProxyAddressFamilyPolicy,
 ) (map[string]interface{}, error) {
-	underlayDNSServers, err := validateTransparentProxySystemDNSServers(systemDNS)
+	primarySystemDNS, err := validateTransparentProxySystemDNS(systemDNS)
 	if err != nil {
 		return nil, err
 	}
-	primarySystemDNS := underlayDNSServers[0]
 	servers := []map[string]interface{}{
 		{
 			"type":        "udp",
@@ -1376,15 +1375,11 @@ func buildTransparentProxyDNS(
 			"server":      primarySystemDNS,
 			"server_port": 53,
 		},
-		// 直连分域不能把解析交回 App 自己的解析器地址。那条路径（patches
-		// 0008/0009：先原样转发原始查询，再退回 DNSServiceGetAddrInfo）依赖
-		// App 看到的 resolver 仍然可达，而那个地址可以属于一个本次事务并不承载
-		// 的虚拟网络——例如 Tailscale MagicDNS 的 100.100.100.100。那时归直连
-		// 裁决的域名会整片解析进黑洞，走其它线路解析的域名却一切正常。
-		// 直连解析只认启动前 Underlay 的 resolver，由 sing-box 自己按顺序询问
-		// 快照里的每一台，出站接口由 route.default_interface 锁定为启动前的
-		// 默认接口。
-		transparentProxyUnderlayDNSServer(TransparentNativeDNSTag, underlayDNSServers),
+		{
+			"type":                      "local",
+			"tag":                       TransparentNativeDNSTag,
+			"xdial_use_system_resolver": true,
+		},
 	}
 	if needsProxyEndpointBootstrap {
 		servers = append(servers, map[string]interface{}{
@@ -1415,9 +1410,10 @@ func buildTransparentProxyDNS(
 			return
 		}
 		seenResolver[resolverTag] = true
-		// 当前选中直连节点的策略组与直连线路同样归 Underlay 解析。
 		if selectedGroupUsesDirect(profile, outTag) {
-			servers = append(servers, transparentProxyUnderlayDNSServer(resolverTag, underlayDNSServers))
+			servers = append(servers, map[string]interface{}{
+				"type": "local", "tag": resolverTag, "xdial_use_system_resolver": true,
+			})
 			return
 		}
 		switch resolverTag {
@@ -1615,46 +1611,27 @@ func buildTransparentProxyDNS(
 }
 
 func validateTransparentProxySystemDNS(systemDNS []string) (string, error) {
-	servers, err := validateTransparentProxySystemDNSServers(systemDNS)
-	if err != nil {
-		return "", err
-	}
-	return servers[0], nil
-}
-
-// validateTransparentProxySystemDNSServers 返回去重后、保持原顺序的全部
-// Underlay resolver。直连解析需要整份列表：第一台暂时不可达时，后面的仍要能应答。
-func validateTransparentProxySystemDNSServers(systemDNS []string) ([]string, error) {
 	seen := make(map[netip.Addr]bool)
-	var servers []string
+	var primary string
 	for _, raw := range systemDNS {
 		raw = strings.TrimSpace(raw)
 		address, err := netip.ParseAddr(raw)
 		if err != nil || address.IsUnspecified() || address.IsMulticast() {
-			return nil, fmt.Errorf("system DNS snapshot contains an invalid resolver")
+			return "", fmt.Errorf("system DNS snapshot contains an invalid resolver")
 		}
 		address = address.Unmap()
 		if seen[address] {
 			continue
 		}
 		seen[address] = true
-		servers = append(servers, address.String())
+		if primary == "" {
+			primary = address.String()
+		}
 	}
-	if len(servers) == 0 {
-		return nil, fmt.Errorf("system DNS snapshot is unavailable")
+	if primary == "" {
+		return "", fmt.Errorf("system DNS snapshot is unavailable")
 	}
-	return servers, nil
-}
-
-// transparentProxyUnderlayDNSServer 是直连分域的 resolver：sing-box 自己按顺序
-// 询问启动前 Underlay 的全部 resolver（patches/sing-box/0019），不读
-// /etc/resolv.conf，也不把查询交回 App 自己看到的解析器地址。
-func transparentProxyUnderlayDNSServer(tag string, servers []string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":          "local",
-		"tag":           tag,
-		"xdial_servers": append([]string(nil), servers...),
-	}
+	return primary, nil
 }
 
 // TailscaleMagicDNSDNSServerTag exposes the exact DNS transport tag generated
