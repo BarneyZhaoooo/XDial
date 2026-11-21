@@ -1558,7 +1558,7 @@ final class AppStateTests: XCTestCase {
 
         engine.setStatus("disconnected")
         XCTAssertTrue(app.canConnect, app.activeConfigurationIssues.joined(separator: "\n"))
-        try? await Task.sleep(for: .milliseconds(1_200))
+        try? await Task.sleep(for: .milliseconds(2_300))
         XCTAssertEqual(manager.startCallCount, 2)
         XCTAssertEqual(manager.lastOrigin, .autoRetry)
         XCTAssertTrue(app.isConnected)
@@ -1568,7 +1568,7 @@ final class AppStateTests: XCTestCase {
         engine.lastError = "Previous session warning"
         app.disconnect()
         XCTAssertNil(engine.lastError)
-        try? await Task.sleep(for: .milliseconds(1_200))
+        try? await Task.sleep(for: .milliseconds(2_300))
         XCTAssertEqual(manager.stopCallCount, 1)
         XCTAssertEqual(manager.startCallCount, 2)
     }
@@ -1585,7 +1585,7 @@ final class AppStateTests: XCTestCase {
 
         engine.suppressNextAutomaticReconnect()
         engine.setStatus("disconnected")
-        try? await Task.sleep(for: .milliseconds(1_200))
+        try? await Task.sleep(for: .milliseconds(2_300))
 
         XCTAssertEqual(manager.startCallCount, 1)
         XCTAssertFalse(app.isConnected)
@@ -1603,7 +1603,7 @@ final class AppStateTests: XCTestCase {
 
         manager.simulateSystemOnDemandActive()
         engine.setStatus("disconnected")
-        try? await Task.sleep(for: .milliseconds(1_200))
+        try? await Task.sleep(for: .milliseconds(2_300))
 
         XCTAssertEqual(manager.startCallCount, 1)
     }

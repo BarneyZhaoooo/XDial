@@ -19,6 +19,7 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kafeifei/xdial/core/recovery"
 	"io"
 	"net"
 	"net/http"
@@ -83,6 +84,8 @@ const (
 	ErrCodeConfig = 3
 	// ErrCodeEngine sing-box 实例构建/启动失败。
 	ErrCodeEngine = 4
+	// ErrCodeTransientNetwork identifies a startup failure a new network path can repair.
+	ErrCodeTransientNetwork = 5
 )
 
 const maxAnyConnectReconnectAttempts = 3
@@ -1590,6 +1593,9 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Done()
 	l.mu.Unlock()
 	if notifyFailure && cb != nil {
+		if startErrorCode == ErrCodeNetwork && recovery.IsTransient(startErr) {
+			startErrorCode = ErrCodeTransientNetwork
+		}
 		cb.OnError(startErrorCode, startErr.Error())
 	}
 	return startErr
