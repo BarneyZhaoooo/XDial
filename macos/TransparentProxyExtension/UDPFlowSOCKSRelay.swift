@@ -400,6 +400,19 @@ enum UDPFlowSOCKSRelay {
             )
             association.install(datagram: datagramConnection)
             try await start(datagramConnection)
+            if let boundInterface {
+                // sing 的 SOCKS 服务端丢弃 UDP ASSOCIATE 的请求地址，只把首个
+                // 数据报的目标交给处理器。先发一个标记包携带绑定接口，sing-box
+                // 读取后丢弃它；之后的每个数据报才是 App 的真实流量。
+                guard let marker =
+                        TransparentProxyFlowMetadata.boundAssociationMarkerDatagram(
+                            boundInterface: boundInterface
+                        )
+                else {
+                    throw RelayError.invalidEndpoint
+                }
+                try await send(marker, to: datagramConnection)
+            }
             guard channel.adopt(association) else {
                 throw RelayError.flowClosed
             }

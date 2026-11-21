@@ -350,8 +350,12 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
                     $0.updateTask(id: "underlay:system", state: .ready)
                     $0.setState(.preparing)
                 }
+                // resolver 一并记录：Underlay 的 DNS 必须是默认接口作用域的那一份。
+                // 一旦这里出现只在别的虚拟接口上可达的地址，本次事务里归直连
+                // 裁决的域名就会整片解析失败，而其它线路看起来完全正常。
                 appLog(
                     "Transparent Proxy underlay default=\(snapshot.defaultInterface.name)"
+                        + " dns=\(snapshot.systemDNSJSON)"
                 )
                 self.checkReadinessAndConfigure(
                     profileJSON: profileJSON,
@@ -5074,7 +5078,9 @@ private final class HostUnderlayCapture {
                 )
             )
         }
-        guard let systemDNSJSON = Self.captureSystemDNSJSON() else {
+        guard let systemDNSJSON = Self.captureSystemDNSJSON(
+            interfaceName: defaultInterface.name
+        ) else {
             return HostUnderlaySnapshotEvaluation(
                 result: .failure(ManagerError.systemDNSUnavailable),
                 evidence: nil
@@ -5259,14 +5265,42 @@ private final class HostUnderlayCapture {
         }
     }
 
-    fileprivate static func captureSystemDNSJSON() -> String? {
+    /// Underlay 的 resolver 是**启动前默认接口作用域**的那一份，不是
+    /// `State:/Network/Global/DNS`。全局 DNS 可以被另一个虚拟网络接管——
+    /// 例如 Tailscale MagicDNS 会把它改写成只在自己的 utun 上可达的
+    /// 100.100.100.100。XDial 不识别网络产品，但一旦把这种地址当成 Underlay
+    /// 的系统 DNS，凡是本次事务没有承载那个虚拟接口的场景，归直连裁决的域名
+    /// 就会全部解析进黑洞，而走其它线路解析的域名看起来一切正常。
+    ///
+    /// `interfaceName` 是本次快照已经选定的默认接口。只有它确实是系统主接口时
+    /// 才取对应服务的作用域 resolver；其余情况退回全局 DNS，保持既有行为。
+    fileprivate static func captureSystemDNSJSON(
+        interfaceName: String? = nil
+    ) -> String? {
+        let globalIPv4 = SCDynamicStoreCopyValue(
+            nil,
+            "State:/Network/Global/IPv4" as CFString
+        ) as? [String: Any]
+        let primaryService =
+            globalIPv4?[kSCDynamicStorePropNetPrimaryService as String]
+                as? String
         guard
-            let state = SCDynamicStoreCopyValue(
-                nil,
-                "State:/Network/Global/DNS" as CFString
-            ) as? [String: Any],
-            let rawAddresses =
-                state[kSCPropNetDNSServerAddresses as String] as? [String]
+            let rawAddresses = UnderlayResolverSelection.serverAddresses(
+                interfaceName: interfaceName,
+                primaryInterface:
+                    globalIPv4?[
+                        kSCDynamicStorePropNetPrimaryInterface as String
+                    ] as? String,
+                primaryService: primaryService,
+                scopedAddresses: primaryService.flatMap {
+                    dnsServerAddresses(
+                        atKey: "State:/Network/Service/\($0)/DNS"
+                    )
+                },
+                globalAddresses: dnsServerAddresses(
+                    atKey: "State:/Network/Global/DNS"
+                )
+            )
         else {
             return nil
         }
@@ -5292,6 +5326,19 @@ private final class HostUnderlayCapture {
             return nil
         }
         return json
+    }
+
+    private static func dnsServerAddresses(atKey key: String) -> [String]? {
+        guard
+            let state = SCDynamicStoreCopyValue(nil, key as CFString)
+                as? [String: Any],
+            let addresses =
+                state[kSCPropNetDNSServerAddresses as String] as? [String],
+            !addresses.isEmpty
+        else {
+            return nil
+        }
+        return addresses
     }
 
     private static func isNumericIPAddress(_ address: String) -> Bool {
@@ -5408,7 +5455,12 @@ private final class HostUnderlayMonitor {
             "State:/Network/Global/IPv6",
             "State:/Network/Global/DNS",
         ] as CFArray
-        let patterns = ["State:/Network/Interface/[^/]+/IPv4"] as CFArray
+        // 快照的 resolver 取自默认接口所属服务的作用域 DNS。全局 DNS 被
+        // MagicDNS 这类虚拟网络接管时，DHCP 只改这一层而全局键不变，必须单独监听。
+        let patterns = [
+            "State:/Network/Interface/[^/]+/IPv4",
+            "State:/Network/Service/[^/]+/DNS",
+        ] as CFArray
         guard
             SCDynamicStoreSetNotificationKeys(store, keys, patterns),
             SCDynamicStoreSetDispatchQueue(store, .main)
