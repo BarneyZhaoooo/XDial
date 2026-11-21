@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Libbox
 import os.log
 import SwiftUI
 
@@ -258,7 +259,7 @@ protocol TunnelManaging: AnyObject {
                       allowSystemOnDemand: Bool,
                       origin: ConnectionTimeline.StartOrigin,
                       completion: @escaping @Sendable (Result<Void, Error>) -> Void)
-    /// 保存用户的系统级重连意图。启用请求只会在连接验收通过且安全启动包可用后生效。
+    /// 保存用户的系统级重连意图。手动启动提交成功且安全启动包可用后由系统接管。
     func setSystemOnDemandEnabled(_ enabled: Bool)
     /// Tailscale 独立设置期间临时暂停系统接管。与用户开关不同，这个租约必须保留
     /// 已验收的安全启动包，并在系统偏好确认停用后才回调。
@@ -1179,7 +1180,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    var waitingForNetwork: Bool { engine.status == "disconnected" && systemOnDemandState == .active }
+
     var statusText: String {
+        if waitingForNetwork { return tr("等待网络恢复…", "Waiting for Network…") }
         if tailscaleSetupLineID != nil {
             let name = profile.lines.first(where: { $0.id == tailscaleSetupLineID })?.name
                 ?? "Tailscale"
@@ -1241,7 +1245,7 @@ final class AppState: ObservableObject {
         self.openConnectPending = connectOnOpen
         self.systemOnDemandEnabled = persistence.defaults.object(
             forKey: persistence.systemOnDemandKey
-        ) as? Bool ?? false
+        ) as? Bool ?? true
         self.systemOnDemandState = tunnelManager?.systemOnDemandState
             ?? (systemOnDemandEnabled ? .failed("系统连接管理层不可用") : .disabled)
         onDemandStateSub = tunnelManager?.systemOnDemandStatePublisher
@@ -1367,16 +1371,16 @@ final class AppState: ObservableObject {
         // previous "connected" value while this callback handles "disconnected".
         // Validate configuration here and let the delayed task use canConnect
         // after the new runtime status has settled.
+        let delaySeconds = LibboxConnectionRetrySeconds(autoReconnectAttempt)
         guard autoReconnectEnabled,
               wasUnexpected,
               !engine.isBusy,
               isConnectionConfigured,
-              autoReconnectAttempt < 3 else { return }
+              delaySeconds > 0 else { return }
         autoReconnectAttempt += 1
-        let delaySeconds = [1, 2, 5][autoReconnectAttempt - 1]
         engine.lastError = tr(
-            "连接中断，\(delaySeconds) 秒后自动重试（\(autoReconnectAttempt)/3）",
-            "Connection interrupted; retrying in \(delaySeconds)s (\(autoReconnectAttempt)/3)"
+            "连接中断，\(delaySeconds) 秒后自动重试（\(autoReconnectAttempt)/\(LibboxConnectionRetryLimit)）",
+            "Connection interrupted; retrying in \(delaySeconds)s (\(autoReconnectAttempt)/\(LibboxConnectionRetryLimit))"
         )
         autoReconnectTask?.cancel()
         autoReconnectTask = Task { @MainActor [weak self] in

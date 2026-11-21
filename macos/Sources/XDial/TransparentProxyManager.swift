@@ -118,7 +118,9 @@ final class TransparentProxyManager: NSObject, OSSystemExtensionRequestDelegate 
     /// classification still follow the code in its report.
     private var budgetStoppedTransactionID: String?
     private let automaticReconnectRetryPolicy =
-        AutomaticReconnectRetryPolicy()
+        AutomaticReconnectRetryPolicy(delays: (0..<Int(LibboxConnectionRetryLimit)).map {
+            TimeInterval(LibboxConnectionRetrySeconds($0))
+        })
     /// Full-recovery budgets keyed by recovery epoch, parking, grants and
     /// the slow tail. The manager owns its timers and Underlay snapshots.
     private lazy var automaticRecoveryLedger = AutomaticRecoveryLedger(

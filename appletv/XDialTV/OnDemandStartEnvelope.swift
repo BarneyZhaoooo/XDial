@@ -46,19 +46,17 @@ struct OnDemandStartEnvelope: Codable, Equatable, Sendable {
 enum OnDemandStartEnvelopeFailurePolicy {
     static func shouldClear(
         startedFromSecureEnvelope: Bool,
-        startupStage: String,
-        message: String = ""
+        startupStage: String
     ) -> Bool {
-        guard startedFromSecureEnvelope else { return false }
-        switch startupStage {
-        case "underlay_interface_failed", "engine_network_unavailable":
-            return false
-        case "remote_address_resolution_failed":
-            // The resolver deliberately hides the hostname. Malformed and
-            // IPv6-only endpoints have distinct configuration errors.
-            return message != "server IPv4 lookup failed"
-        default:
+        startedFromSecureEnvelope && !isTransient(stage: startupStage)
+    }
+
+    static func isTransient(stage: String?) -> Bool {
+        switch stage {
+        case "underlay_interface_failed", "engine_network_unavailable", "remote_address_lookup_unavailable":
             return true
+        default:
+            return false
         }
     }
 }

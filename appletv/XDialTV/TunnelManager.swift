@@ -851,14 +851,16 @@ enum TunnelDiagnosticFormatter {
         defaults.synchronize()
     }
 
-    static func persistedSummary(matchingAttemptID expectedAttemptID: String? = nil) -> String? {
-        guard let text = UserDefaults(suiteName: kAppGroupIdentifier)?
-            .string(forKey: kTunnelDiagnosticKey),
+    static func persistedSnapshot(matchingAttemptID expected: String?) -> [String: Any]? {
+        guard let text = UserDefaults(suiteName: kAppGroupIdentifier)?.string(forKey: kTunnelDiagnosticKey),
               let data = text.data(using: .utf8),
-              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        return summary(snapshot, matchingAttemptID: expectedAttemptID)
+              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              expected == nil || snapshot["attempt_id"] as? String == expected else { return nil }
+        return snapshot
+    }
+
+    static func persistedSummary(matchingAttemptID expected: String? = nil) -> String? {
+        persistedSnapshot(matchingAttemptID: expected).flatMap { summary($0) }
     }
 
     static func providerSummary(
@@ -1432,13 +1434,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         } else {
             envelope = nil
         }
-        #if os(iOS)
-        // The provider completes start after its engine and DNS settings are ready.
-        // Foreground HTTPS checks can be suspended indefinitely on a locked phone.
         let tunnelReady = manager.connection.status == .connected
-        #else
-        let tunnelReady = dataPathVerified
-        #endif
         guard SystemOnDemandReconnectPolicy.shouldArm(
             userEnabled: systemOnDemandRequested,
             tunnelReady: tunnelReady,
@@ -1647,9 +1643,7 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         }
         switch connection.status {
         case .connected:
-            #if os(iOS)
             armSystemOnDemandIfReady()
-            #endif
             if dataPathVerified {
                 engine?.applySystemStatus("connected", connectedAt: connection.connectedDate)
             } else if previousStatus == .connected && recheckPolicy.isDegraded {
@@ -1697,7 +1691,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             dataPathProbeID = nil
             dataPathVerified = false
             resetDegradedRecheck()
-            #if os(iOS)
             // The provider revokes the secure start on terminal failures, even
             // while the app is suspended. Retire the matching system rule too.
             if (systemOnDemandActive || onDemandSaveID != nil),
@@ -1707,7 +1700,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
             } else if onDemandSaveID != nil {
                 engine?.suppressNextAutomaticReconnect()
             }
-            #endif
             reportEarlyStartFailureIfNeeded()
             engine?.applySystemStatus("disconnected")
             if previousStatus != connection.status, previousStatus != .invalid {
@@ -2550,7 +2542,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
         activeStartAttemptID = nil
         startWatchdogTask?.cancel()
         startWatchdogTask = nil
-        let diagnostics = TunnelDiagnosticFormatter.persistedSummary(matchingAttemptID: attemptID)
+        let snapshot = TunnelDiagnosticFormatter.persistedSnapshot(matchingAttemptID: attemptID)
+        if !OnDemandStartEnvelopeFailurePolicy.isTransient(stage: snapshot?["stage"] as? String) {
+            engine?.suppressNextAutomaticReconnect()
+        }
+        let diagnostics = snapshot.flatMap { TunnelDiagnosticFormatter.summary($0) }
         let message = "连接启动失败"
         engine?.lastError = diagnostics.map { "\(message)\n诊断：\($0)" } ?? message
         appLog("TunnelManager.start: asynchronous failure diagnostics=\(diagnostics ?? "unavailable")")
@@ -2889,7 +2885,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             } ?? message
                             self.engine?.suppressNextAutomaticReconnect()
                             self.engine?.applySystemStatus("disconnecting")
-                            #if os(iOS)
                             // Bound this start without cancelling the user's recovery
                             // request. A terminal provider error revokes the envelope.
                             if (self.systemOnDemandActive || self.onDemandSaveID != nil),
@@ -2898,13 +2893,11 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                                 self.startWatchdogTask = nil
                                 return
                             }
-                            #endif
                             self.stopAfterSuspendingOnDemand {
                                 session?.stopVPNTunnel()
                             }
                             self.startWatchdogTask = nil
                         }
-                        #if os(iOS)
                         // Persist before submitting the manual start so an immediate
                         // failure can revoke it. Arm only after submission so iOS
                         // cannot race the user's first start with a cold start.
@@ -2913,17 +2906,13 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                             savedForNetworkRecovery = OnDemandStartEnvelopeStore.save(envelope) == errSecSuccess
                             startOptions["onDemandEnvelopeSaved"] = NSNumber(value: savedForNetworkRecovery)
                         }
-                        #endif
                         try session.startTunnel(options: startOptions)
-                        #if os(iOS)
                         if savedForNetworkRecovery, let manager = self.manager {
                             self.enableSystemOnDemand(manager)
                         }
-                        #endif
                         self.finishStartOperation(operationID, result: .success(()))
                     } catch {
                         guard self.isCurrentStartOperation(operationID) else { return }
-                        #if os(iOS)
                         let cause = error as NSError
                         if savedForNetworkRecovery, let manager = self.manager,
                            cause.domain == NEVPNConnectionErrorDomain,
@@ -2933,7 +2922,6 @@ final class TunnelManager: ObservableObject, TunnelManaging {
                         } else {
                             _ = OnDemandStartEnvelopeStore.clear()
                         }
-                        #endif
                         self.activeStartAttemptID = nil
                         self.startWatchdogTask?.cancel()
                         self.startWatchdogTask = nil

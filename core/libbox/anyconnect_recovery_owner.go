@@ -2,14 +2,10 @@ package libbox
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	stdjson "encoding/json"
-	"errors"
 	"fmt"
+	"github.com/kafeifei/xdial/core/recovery"
 	"io"
-	"net"
-	"syscall"
 
 	"github.com/kafeifei/xdial/core/engine"
 	"sslcon/session"
@@ -193,7 +189,7 @@ func (c *anyConnectRuntimeCapability) runRecovery(work *anyConnectRecovery) {
 			if !budget.settle() {
 				continue
 			}
-			if strict && !transientLineReadinessError(err) {
+			if strict && !recovery.IsTransient(err) {
 				break
 			}
 			continue
@@ -334,33 +330,4 @@ func (l *Libbox) monitorRecoveredCapability(c *anyConnectRuntimeCapability, sess
 	if active {
 		go l.monitorSession(generation, sess)
 	}
-}
-
-// Classification is based solely on typed causes. sslcon's untyped auth and
-// configuration failures intentionally stay terminal until it exposes a typed
-// contract; an unknown string must never start an automatic retry loop.
-func transientLineReadinessError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var verification *tls.CertificateVerificationError
-	var unknownAuthority x509.UnknownAuthorityError
-	var invalid x509.CertificateInvalidError
-	var hostname x509.HostnameError
-	if errors.As(err, &verification) || errors.As(err, &unknownAuthority) || errors.As(err, &invalid) || errors.As(err, &hostname) {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var networkError net.Error
-	if errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()) {
-		return true
-	}
-	for _, cause := range []error{syscall.ECONNRESET, syscall.ECONNREFUSED, syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ETIMEDOUT, syscall.ENETDOWN, syscall.EPIPE} {
-		if errors.Is(err, cause) {
-			return true
-		}
-	}
-	return false
 }

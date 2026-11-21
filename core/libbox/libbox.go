@@ -19,6 +19,7 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kafeifei/xdial/core/recovery"
 	"io"
 	"net"
 	"net/http"
@@ -1592,7 +1593,7 @@ func (l *Libbox) coldStart(
 	l.startPreparationUsers.Done()
 	l.mu.Unlock()
 	if notifyFailure && cb != nil {
-		if startErrorCode == ErrCodeNetwork && transientLineReadinessError(startErr) {
+		if startErrorCode == ErrCodeNetwork && recovery.IsTransient(startErr) {
 			startErrorCode = ErrCodeTransientNetwork
 		}
 		cb.OnError(startErrorCode, startErr.Error())

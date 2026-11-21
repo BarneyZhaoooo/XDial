@@ -199,9 +199,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         os_log("startTunnel: begin", log: log, type: .info)
 
         // 1) 取凭据与 sing-box 配置。手动启动使用一次性 options；系统按需冷启动
-        //    没有 options，只允许读取双方共享 Keychain 中最近一次已验收的版本化启动包。
+        //    没有 options，只允许读取双方共享 Keychain 中本次连接意图的版本化启动包。
         guard let bundle = resolveStartBundle(options: options) else {
-            let err = providerError(2, "缺少完整且已验收的安全启动配置")
+            let err = providerError(2, "缺少完整的安全启动配置")
             failAttempt(generation, error: err, diagnosticStage: "start_bundle_missing")
             os_log("startTunnel: missing credentials/config", log: log, type: .error)
             return
@@ -289,12 +289,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         //    也会作为 /32 排除路由和 sslcon 的 socket 目标。原始域名仍由 sslcon
         //    用作 TLS SNI/证书校验与 HTTP Host。
         recordDiagnostic("remote_address_resolving")
-        var resolveError: NSError?
-        let remoteIPv4 = LibboxResolveServerIPv4(bundle.server, &resolveError)
-        guard resolveError == nil, IPv4Address(remoteIPv4) != nil else {
-            let error = providerError(5, resolveError?.localizedDescription
-                ?? "服务器地址未解析为有效 IPv4")
-            failAttempt(generation, error: error, diagnosticStage: "remote_address_resolution_failed")
+        let resolution = LibboxResolveVPNServer(bundle.server)
+        let remoteIPv4 = resolution?.value ?? ""
+        guard IPv4Address(remoteIPv4) != nil else {
+            let error = providerError(5, resolution?.message ?? "服务器地址未解析为有效 IPv4")
+            let stage = resolution?.retryable == true ? "remote_address_lookup_unavailable" : "remote_address_resolution_failed"
+            failAttempt(generation, error: error, diagnosticStage: stage)
             os_log("startTunnel: remote address resolution failed",
                    log: log, type: .error)
             return
@@ -709,15 +709,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         lifecycleLock.unlock()
         networkSettingsSubmissionLock.unlock()
 
-        #if os(iOS)
         if OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: clearSecureEnvelope,
-            startupStage: diagnosticStage,
-            message: error.localizedDescription
+            startupStage: diagnosticStage
         ) {
             _ = OnDemandStartEnvelopeStore.clear()
         }
-        #endif
         setLastError(error.localizedDescription)
         recordDiagnostic(diagnosticStage)
         // iOS may terminate this extension immediately after the failure callback.
@@ -1288,7 +1285,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // NetworkExtension 可能传入包含系统字段的非空 options。只要不满足主 App
         // 的完整手动契约，就必须按冷启动处理，不能误读为旧版手动启动。
         do {
-            #if os(iOS)
             recordTimeline("start_envelope_read")
             switch OnDemandStartEnvelopeStore.load() {
             case .available(let envelope):
@@ -1303,9 +1299,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 recordTimeline("start_envelope_invalid", result: .failed)
             }
             return nil
-            #else
-            return nil
-            #endif
         }
     }
 
