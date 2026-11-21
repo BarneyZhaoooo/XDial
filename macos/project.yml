@@ -359,6 +359,7 @@ targets:
       - ../ios/XDialShared/DialGlyph.swift
       - Sources/XDial/AppDefaults.swift
       - Sources/XDial/DataUseNotice.swift
+      - ../apple/CloudHost/CloudHostDisclosure.swift
       - Sources/XDial/ApplicationLaunchPolicy.swift
       - Sources/XDial/AppVersion.swift
       - Sources/XDial/AppUpdateStager.swift

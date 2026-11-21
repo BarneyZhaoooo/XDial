@@ -36,6 +36,7 @@ type Plan struct {
 	Port    int    `json:"port"`
 	Method  string `json:"method"`
 	Reuse   bool   `json:"reuse"`
+	Recover bool   `json:"recover"`
 	Steps   []Step `json:"steps"`
 	binary  string
 	install bool
@@ -81,6 +82,25 @@ func BuildPlan(report Report, facts facts, port int) (Plan, error) {
 			"Port "+strconv.Itoa(port)+" is in use or not allowed; choose a free port between 1024 and 65535.")
 	}
 	plan := Plan{Port: port, Method: shadowsocksKey, binary: facts["singbox_path"], ufw: report.UFWActive}
+	sources := strings.Fields(facts["sagernet_sources"])
+	if report.Interrupted {
+		// Undo the interrupted run first; whatever it created counts as absent.
+		interrupted := previousState(facts)
+		plan.Recover = true
+		plan.Steps = append(plan.Steps, Step{ID: "recover", Title: "先撤销上次中断的设置留在服务器上的改动", English: "First undo what the interrupted setup left on the server"})
+		if interrupted.created("package") {
+			plan.binary = ""
+		}
+		if interrupted.created("apt_source") {
+			kept := sources[:0]
+			for _, source := range sources {
+				if source != aptSourcePath {
+					kept = append(kept, source)
+				}
+			}
+			sources = kept
+		}
+	}
 	if existing := report.Existing; existing != nil && existing.Port == port {
 		plan.Reuse = true
 		plan.Method = existing.Method
@@ -95,7 +115,6 @@ func BuildPlan(report Report, facts facts, port int) (Plan, error) {
 	if plan.binary == "" {
 		plan.install = true
 		plan.binary = defaultBinary
-		sources := strings.Fields(facts["sagernet_sources"])
 		if len(sources) > 0 {
 			plan.source = sources[0]
 		} else {
@@ -134,6 +153,21 @@ type state struct {
 	AddedSource      bool  `json:"added_source"`
 	UFWRule          int   `json:"ufw_rule,omitempty"`
 	CreatedAt        int64 `json:"created_at"`
+	// InProgress is set while a run is changing the server and cleared when it
+	// finishes or is fully undone. If the connection drops or the app is closed
+	// mid-way, it stays set and Created lists what that run had already made,
+	// so the next run can undo exactly those resources first.
+	InProgress bool     `json:"in_progress,omitempty"`
+	Created    []string `json:"created,omitempty"`
+}
+
+func (st state) created(resource string) bool {
+	for _, item := range st.Created {
+		if item == resource {
+			return true
+		}
+	}
+	return false
 }
 
 type undo struct {
@@ -168,15 +202,36 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 	if current.CreatedAt == 0 {
 		current.CreatedAt = time.Now().Unix()
 	}
+	dirExisted := report.Existing != nil || facts["xdial_state"] != ""
+	if plan.Recover {
+		progress(Event{Step: "recover", Status: "running"})
+		recovered, err := s.recoverInterrupted(ctx, previous)
+		if err != nil {
+			progress(Event{Step: "recover", Status: "failed", Message: AsError(err).Message})
+			return Result{}, incompleteUndo()
+		}
+		if previous.created("config_dir") {
+			dirExisted = false
+		}
+		previous, current = recovered, recovered
+		current.Version = 1
+		progress(Event{Step: "recover", Status: "done"})
+	}
 	fail := func(stepID string, cause error) (Result, error) {
 		progress(Event{Step: stepID, Status: "failed", Message: AsError(cause).Message})
-		s.rollback(context.WithoutCancel(ctx), undos, progress)
+		if !s.rollback(context.WithoutCancel(ctx), undos, progress) {
+			return Result{}, incompleteUndo()
+		}
+		if dirExisted {
+			// The run is fully undone; the record goes back to what it was.
+			s.saveState(context.WithoutCancel(ctx), previous)
+		}
 		if errors.Is(cause, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return Result{}, newError("cancelled", "已取消，本次改动已撤销", "Cancelled; this run's changes were undone")
 		}
 		return Result{}, cause
 	}
-	step := func(id string, do func() error, undoFn func(context.Context) error) error {
+	step := func(id, resource string, do func() error, undoFn func(context.Context) error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -187,13 +242,25 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 		if undoFn != nil {
 			undos = append(undos, undo{step: id, run: undoFn})
 		}
+		if resource != "" {
+			current.Created = append(current.Created, resource)
+			s.saveState(ctx, current)
+		}
 		progress(Event{Step: id, Status: "done"})
 		return nil
 	}
 
-	dirExisted := report.Existing != nil || facts["xdial_state"] != ""
-	if err := step("prepare", func() error {
-		return s.mustPrivileged(ctx, "mkdir -p -m 700 "+configDir, "无法创建 "+configDir)
+	current.InProgress = true
+	current.Created = nil
+	if err := step("prepare", "", func() error {
+		if err := s.mustPrivileged(ctx, "mkdir -p -m 700 "+configDir, "无法创建 "+configDir); err != nil {
+			return err
+		}
+		if !dirExisted {
+			current.Created = append(current.Created, "config_dir")
+		}
+		s.saveState(ctx, current)
+		return nil
 	}, func(c context.Context) error {
 		if dirExisted {
 			return nil
@@ -208,14 +275,14 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 		var err error
 		switch planned.ID {
 		case "apt_key":
-			err = step(planned.ID, func() error {
+			err = step(planned.ID, "apt_key", func() error {
 				if err := s.mustPrivileged(ctx, "mkdir -p -m 755 /etc/apt/keyrings", "无法创建 /etc/apt/keyrings"); err != nil {
 					return err
 				}
 				return s.writeFile(ctx, aptKeyPath, "644", sagernetKey)
 			}, s.removeFiles(aptKeyPath))
 		case "apt_source":
-			err = step(planned.ID, func() error {
+			err = step(planned.ID, "apt_source", func() error {
 				return s.writeFile(ctx, aptSourcePath, "644", []byte(aptSourceFile))
 			}, s.removeFiles(aptSourcePath))
 			current.AddedSource = err == nil
@@ -224,10 +291,19 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			if source == "" {
 				source = aptSourcePath
 			}
-			err = step(planned.ID, func() error { return s.installSingBox(ctx, source) }, func(c context.Context) error {
-				_, err := s.runPrivileged(c, "DEBIAN_FRONTEND=noninteractive apt-get purge -y -o DPkg::Lock::Timeout=120 sing-box", nil)
+			// Recorded before installing: an interrupted install can leave a half-configured package.
+			current.Created = append(current.Created, "package")
+			s.saveState(ctx, current)
+			err = step(planned.ID, "", func() error { return s.installSingBox(ctx, source) }, func(c context.Context) error {
+				_, err := s.runPrivileged(c, purgePackage, nil)
 				return err
 			})
+			if err != nil {
+				undos = append(undos, undo{step: planned.ID, run: func(c context.Context) error {
+					_, err := s.runPrivileged(c, purgePackage, nil)
+					return err
+				}})
+			}
 			current.InstalledPackage = err == nil || previous.InstalledPackage
 		case "config":
 			config, buildErr := serverConfigJSON(plan.Port, password)
@@ -236,7 +312,11 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 				break
 			}
 			hadConfig := report.Existing != nil
-			err = step(planned.ID, func() error {
+			resource := "config"
+			if hadConfig {
+				resource = "config_moved"
+			}
+			err = step(planned.ID, resource, func() error {
 				if hadConfig {
 					if err := s.mustPrivileged(ctx, "cp -p "+configPath+" "+configPath+".previous", "无法备份原配置"); err != nil {
 						return err
@@ -260,7 +340,7 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 				return err
 			})
 		case "unit":
-			err = step(planned.ID, func() error {
+			err = step(planned.ID, "unit", func() error {
 				return s.writeFile(ctx, unitPath, "644", []byte(unitFile(plan.binary)))
 			}, func(c context.Context) error {
 				_, err := s.runPrivileged(c, "systemctl disable --now "+serviceName+" >/dev/null 2>&1; rm -f "+unitPath+"; systemctl daemon-reload", nil)
@@ -268,7 +348,7 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 			})
 		case "ufw":
 			p := strconv.Itoa(plan.Port)
-			err = step(planned.ID, func() error {
+			err = step(planned.ID, "ufw:"+p, func() error {
 				return s.mustPrivileged(ctx, "ufw allow "+p+"/tcp comment "+serviceName+" && ufw allow "+p+"/udp comment "+serviceName, "无法添加 ufw 放行规则")
 			}, func(c context.Context) error {
 				_, err := s.runPrivileged(c, "ufw delete allow "+p+"/tcp; ufw delete allow "+p+"/udp", nil)
@@ -285,7 +365,7 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 					return err
 				}
 			}
-			err = step(planned.ID, func() error { return s.startService(ctx, plan.Port) }, stop)
+			err = step(planned.ID, "service", func() error { return s.startService(ctx, plan.Port) }, stop)
 		}
 		if err != nil {
 			return fail(planned.ID, err)
@@ -296,9 +376,9 @@ func (s *Session) Deploy(ctx context.Context, port int, progress func(Event)) (R
 		_, _ = s.runPrivileged(ctx, "ufw delete allow "+p+"/tcp; ufw delete allow "+p+"/udp", nil)
 	}
 	_, _ = s.runPrivileged(ctx, "rm -f "+configPath+".previous", nil)
-	if raw, err := json.Marshal(current); err == nil {
-		_ = s.writeFile(ctx, statePath, "600", raw)
-	}
+	current.InProgress = false
+	current.Created = nil
+	s.saveState(ctx, current)
 	return Result{Server: strings.Trim(strings.TrimSpace(s.target.Host), "[]"), Port: plan.Port, Method: plan.Method, Password: password}, nil
 }
 
@@ -323,16 +403,91 @@ func (s *Session) reuse(ctx context.Context, report Report, plan Plan, progress 
 	return Result{Server: strings.Trim(strings.TrimSpace(s.target.Host), "[]"), Port: existing.Port, Method: existing.Method, Password: existing.Password, Reused: true}, nil
 }
 
-func (s *Session) rollback(ctx context.Context, undos []undo, progress func(Event)) {
+// rollback undoes this run in reverse order and reports whether every step
+// was undone. It cannot help if the connection is gone; the in-progress
+// record on the server then lets the next run finish the job.
+func (s *Session) rollback(ctx context.Context, undos []undo, progress func(Event)) bool {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
+	complete := true
 	for i := len(undos) - 1; i >= 0; i-- {
 		progress(Event{Step: undos[i].step, Status: "rolling_back"})
 		if err := undos[i].run(ctx); err != nil {
-			progress(Event{Step: undos[i].step, Status: "failed", Message: "撤销没有完成，请检查服务器上的 " + undos[i].step})
+			complete = false
+			progress(Event{Step: undos[i].step, Status: "failed", Message: "这一步没能撤销"})
 			continue
 		}
 		progress(Event{Step: undos[i].step, Status: "rolled_back"})
+	}
+	return complete
+}
+
+func incompleteUndo() error {
+	return newError("undo_incomplete",
+		"与服务器的连接中断，本次的改动没能全部撤销。服务器上记下了这些改动；下次连接这台服务器设置时，会先撤销它们再继续。",
+		"The connection to the server was lost, so this run's changes could not all be undone. The server keeps a record of them; the next setup on this server undoes them first.")
+}
+
+const purgePackage = "export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a >/dev/null 2>&1; apt-get purge -y -o DPkg::Lock::Timeout=120 sing-box >/dev/null 2>&1; ! dpkg -s sing-box >/dev/null 2>&1"
+
+// recoverInterrupted undoes, newest first, what an interrupted run recorded,
+// and returns the record as it stands afterwards.
+func (s *Session) recoverInterrupted(ctx context.Context, interrupted state) (state, error) {
+	recovered := interrupted
+	for i := len(interrupted.Created) - 1; i >= 0; i-- {
+		resource := interrupted.Created[i]
+		var script string
+		switch {
+		case resource == "service":
+			script = "systemctl disable --now " + serviceName + " >/dev/null 2>&1; true"
+		case strings.HasPrefix(resource, "ufw:"):
+			port, err := strconv.Atoi(strings.TrimPrefix(resource, "ufw:"))
+			if err != nil {
+				continue
+			}
+			p := strconv.Itoa(port)
+			script = "ufw delete allow " + p + "/tcp >/dev/null 2>&1; ufw delete allow " + p + "/udp >/dev/null 2>&1; true"
+			if recovered.UFWRule == port {
+				recovered.UFWRule = 0
+			}
+		case resource == "unit":
+			script = "systemctl disable --now " + serviceName + " >/dev/null 2>&1; rm -f " + unitPath + "; systemctl daemon-reload"
+		case resource == "config":
+			script = "rm -f " + configPath
+		case resource == "config_moved":
+			script = "if [ -f " + configPath + ".previous ]; then mv -f " + configPath + ".previous " + configPath + "; fi"
+		case resource == "package":
+			script = purgePackage
+			recovered.InstalledPackage = false
+		case resource == "apt_source":
+			script = "rm -f " + aptSourcePath
+			recovered.AddedSource = false
+		case resource == "apt_key":
+			script = "rm -f " + aptKeyPath
+		case resource == "config_dir":
+			script = "rm -rf " + configDir
+		default:
+			continue
+		}
+		result, err := s.runPrivileged(ctx, script, nil)
+		if err != nil {
+			return interrupted, err
+		}
+		if resource == "package" && result.code != 0 {
+			return interrupted, newError("recover_failed", "无法移除上次中断时安装了一半的 sing-box", "Could not remove the sing-box package an interrupted setup left half installed")
+		}
+	}
+	recovered.InProgress = false
+	recovered.Created = nil
+	if !interrupted.created("config_dir") {
+		s.saveState(ctx, recovered)
+	}
+	return recovered, nil
+}
+
+func (s *Session) saveState(ctx context.Context, st state) {
+	if raw, err := json.Marshal(st); err == nil {
+		_ = s.writeFile(ctx, statePath, "600", raw)
 	}
 }
 

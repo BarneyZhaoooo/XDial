@@ -58,6 +58,9 @@ type Report struct {
 	SingBoxPackaged bool      `json:"sing_box_packaged"`
 	Existing        *Existing `json:"existing,omitempty"`
 	UFWActive       bool      `json:"ufw_active"`
+	// Interrupted means an earlier setup stopped mid-way (connection lost or
+	// app closed); the next run undoes what it left before continuing.
+	Interrupted bool `json:"interrupted"`
 	ListeningPorts  []int     `json:"listening_ports"`
 	SuggestedPort   int       `json:"suggested_port"`
 	Blocking        []Issue   `json:"blocking"`
@@ -200,7 +203,11 @@ func evaluate(f facts, p privilege) Report {
 		"If your provider has a security group or firewall panel, allow the proxy port (TCP and UDP) there; XDial cannot change it for you.")
 
 	report.ListeningPorts = parseListeningPorts(f["listening"])
-	if existing := parseExisting(f["xdial_config"]); existing != nil {
+	if previousState(f).InProgress {
+		report.Interrupted = true
+		note("interrupted", "上次在这台服务器上的设置没有完成（例如网络断开或 App 被关闭），服务器上留有部分改动。继续时会先撤销它们。",
+			"An earlier setup on this server did not finish (for example the connection dropped or the app was closed) and left some changes. Continuing undoes them first.")
+	} else if existing := parseExisting(f["xdial_config"]); existing != nil {
 		existing.Active = f["xdial_service"] == "active"
 		report.Existing = existing
 	} else if f["xdial_unit"] == "yes" {

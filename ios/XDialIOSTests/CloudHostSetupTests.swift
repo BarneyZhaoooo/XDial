@@ -88,4 +88,16 @@ final class CloudHostSetupTests: XCTestCase {
         XCTAssertEqual(model.privateKey, "")
         XCTAssertEqual(model.passphrase, "")
     }
+
+    func testDisclosureNamesTheRealTestEndpointsAndVolume() {
+        for zh in [true, false] {
+            let test = CloudHostDisclosure.test(zh)
+            for endpoint in ["www.gstatic.com", "1.1.1.1", "speed.cloudflare.com", "10 MB", "12"] {
+                XCTAssertTrue(test.contains(endpoint), endpoint)
+            }
+            XCTAssertTrue(CloudHostDisclosure.sshAndInstall(zh).contains("deb.sagernet.org"))
+            let notice = DataUseNotice.sections(isChinese: zh, companyPreset: false).flatMap(\.points).joined()
+            XCTAssertTrue(notice.contains("speed.cloudflare.com"), "the data use notice covers My Server")
+        }
+    }
 }

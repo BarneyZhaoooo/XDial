@@ -179,6 +179,33 @@ func TestPlanReusesAnEarlierDeployment(t *testing.T) {
 	}
 }
 
+func TestInterruptedSetupIsUndoneBeforeContinuing(t *testing.T) {
+	interrupted, _ := json.Marshal(state{Version: 1, InProgress: true, InstalledPackage: true, AddedSource: true,
+		Created: []string{"config_dir", "apt_key", "apt_source", "package", "config", "unit"}})
+	f := ubuntuFacts()
+	f["xdial_state"] = base64.StdEncoding.EncodeToString(interrupted)
+	f["xdial_unit"] = "yes"
+	f["singbox_path"] = "/usr/bin/sing-box"
+	f["dpkg_singbox"] = "install ok installed|1.14.4"
+	f["sagernet_sources"] = aptSourcePath
+	report := evaluate(f, privilegeRoot)
+	if !report.Interrupted || len(report.Blocking) != 0 || !contains(codes(report.Notes), "interrupted") {
+		t.Fatalf("an interrupted XDial setup is recoverable, not foreign: %+v %v", report.Interrupted, codes(report.Blocking))
+	}
+	plan, err := BuildPlan(report, f, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, step := range plan.Steps {
+		ids = append(ids, step.ID)
+	}
+	// The package and repository it added are removed first, so they are set up again.
+	if got := strings.Join(ids, ","); got != "recover,apt_key,apt_source,install,config,unit,start" || !plan.Recover {
+		t.Fatalf("steps = %s", got)
+	}
+}
+
 func TestServerConfigAndKey(t *testing.T) {
 	key, err := newShadowsocksKey()
 	if err != nil {

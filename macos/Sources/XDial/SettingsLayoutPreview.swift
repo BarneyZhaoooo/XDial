@@ -228,10 +228,11 @@ extension SettingsLayoutPreview {
             let root = NavigationStack {
                 CloudHostSetupView(model: model, chinese: true, onSave: { _ in true }, onClose: {})
             }
-            .frame(width: 560, height: 640)
+            // Taller than the real sheet so a page renders without scrolling.
+            .frame(width: 560, height: 1180)
             .preferredColorScheme(.light)
             let hosting = NSHostingView(rootView: root)
-            let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 560, height: 640),
+            let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 560, height: 1180),
                                   styleMask: [.titled], backing: .buffered, defer: false)
             window.contentView = hosting
             window.orderFrontRegardless()

@@ -217,6 +217,44 @@ func TestCloudHostEndToEnd(t *testing.T) {
 		env.assertClean(t, "after cancel")
 	})
 
+	t.Run("recovers after the connection drops mid-way", func(t *testing.T) {
+		mustOK(t, setup.ConnectAndInspect(env.target("deploy", key.Fingerprint)), nil)
+		events := &recorder{}
+		events.onEvent = func(event map[string]string) {
+			if event["step"] == "unit" && event["status"] == "done" {
+				// Drop this SSH session the way a lost network or a killed app would.
+				exec.Command("docker", "exec", env.container, "pkill", "-KILL", "-u", "deploy").Run()
+			}
+		}
+		mustFail(t, setup.Deploy(env.ports[2], events), "undo_incomplete")
+		if out, code := env.exec(t, "grep -q '\"in_progress\":true' /etc/xdial-proxy/state.json && test -e /etc/systemd/system/xdial-proxy.service"); code != 0 {
+			t.Fatalf("the server must keep a record of the unfinished run: %s", out)
+		}
+
+		recovery := NewCloudHostSetup()
+		defer recovery.Close()
+		var report struct {
+			Interrupted bool
+			Blocking    []struct{ Code string }
+		}
+		mustOK(t, recovery.ConnectAndInspect(env.target("deploy", key.Fingerprint)), &report)
+		if !report.Interrupted || len(report.Blocking) != 0 {
+			t.Fatalf("report = %+v", report)
+		}
+		var plan struct {
+			Steps []struct{ ID string }
+		}
+		mustOK(t, recovery.Plan(env.ports[2]), &plan)
+		if len(plan.Steps) == 0 || plan.Steps[0].ID != "recover" {
+			t.Fatalf("plan = %+v", plan.Steps)
+		}
+		var recovered struct{ Port int }
+		mustOK(t, recovery.Deploy(env.ports[2], &recorder{}), &recovered)
+		if out, code := env.exec(t, "systemctl is-active xdial-proxy && ! grep -q in_progress /etc/xdial-proxy/state.json"); code != 0 {
+			t.Fatalf("after recovery: %s", out)
+		}
+	})
+
 	var result struct {
 		Server, Method, Password string
 		Port                     int

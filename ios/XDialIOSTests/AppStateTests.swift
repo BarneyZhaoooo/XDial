@@ -3721,7 +3721,7 @@ final class DataUseNoticeTests: XCTestCase {
             XCTAssertTrue(publicText.contains(service), service)
         }
         for zh in [true, false] {
-            XCTAssertEqual(DataUseNotice.sections(isChinese: zh, companyPreset: false).count, 5)
+            XCTAssertEqual(DataUseNotice.sections(isChinese: zh, companyPreset: false).count, 6)
         }
     }
 

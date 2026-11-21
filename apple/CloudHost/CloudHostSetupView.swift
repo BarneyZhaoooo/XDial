@@ -208,6 +208,13 @@ struct CloudHostSetupView: View {
                            "SSH, the default route and existing services are not changed, and the firewall is not turned off. If a step fails or you cancel, this run's changes are undone."))
                 }
                 Section {
+                    Text(CloudHostDisclosure.test(chinese)).fixedSize(horizontal: false, vertical: true)
+                    Text(CloudHostDisclosure.visibility(chinese)).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text(t("部署后会这样测试", "How the proxy is tested after setup"))
+                }
+                Section {
                     Button(plan.reuse ? t("使用已有代理", "Use the Existing Proxy") : t("确认并部署", "Confirm and Set Up")) {
                         Task { await model.deploy() }
                     }
@@ -242,6 +249,9 @@ struct CloudHostSetupView: View {
             ProgressView()
         } header: {
             Text(t("正在部署", "Setting up"))
+        } footer: {
+            Text(t("请保持 App 打开和网络连接。如果中途断开，服务器上可能留下这次的部分改动；下次连接这台服务器设置时，会先撤销它们再继续。",
+                   "Keep the app open and connected. If the connection drops, some of this run's changes may stay on the server; the next setup on this server undoes them first."))
         }
         Section {
             Button(t("取消并撤销", "Cancel and Undo"), role: .destructive) { model.cancel() }
@@ -276,7 +286,8 @@ struct CloudHostSetupView: View {
             }
             Button(t("重新测试", "Test Again")) { Task { await model.verify(deployed) } }
         } footer: {
-            Text(t("保存后它是一条普通线路，不会自动加入任何场景。", "Once saved it is an ordinary line; it is not added to any scenario automatically."))
+            Text(t("保存后它是一条普通线路，不会自动加入任何场景。「重新测试」会再次经服务器下载最多约 10 MB。",
+                   "Once saved it is an ordinary line; it is not added to any scenario automatically. Test Again downloads up to about 10 MB through the server again."))
         }
     }
 
@@ -290,8 +301,8 @@ struct CloudHostSetupView: View {
         } header: {
             Text(t("服务已在服务器上运行，但还没能经它访问 HTTPS", "The service runs on the server, but HTTPS through it has not worked yet"))
         } footer: {
-            Text(t("在服务商控制台放行端口后点「重新测试」。测试通过之前不会保存这条线路。",
-                   "Allow the port in your provider's console, then tap Test Again. The line is not saved until a test passes."))
+            Text(t("在服务商控制台放行端口后点「重新测试」（会再次经服务器下载最多约 10 MB）。测试通过之前不会保存这条线路。",
+                   "Allow the port in your provider's console, then tap Test Again (it downloads up to about 10 MB through the server again). The line is not saved until a test passes."))
         }
         Section {
             Button(t("重新测试", "Test Again")) { Task { await model.verify(deployed) } }
