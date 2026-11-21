@@ -5,6 +5,7 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kafeifei/xdial/core/recovery"
 	"sort"
 	"strings"
 	"sync"
@@ -133,7 +134,7 @@ func readinessErrorCode(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return lineReadinessCancelled
 	}
-	if transientLineReadinessError(err) {
+	if recovery.IsTransient(err) {
 		return lineReadinessTransient
 	}
 	return lineReadinessTerminal

@@ -244,7 +244,7 @@ struct AutomaticReconnectRetryPolicy {
     let stableResetInterval: TimeInterval
 
     init(
-        delays: [TimeInterval] = [2, 5, 10, 20, 30],
+        delays: [TimeInterval],
         stableResetInterval: TimeInterval = 5 * 60
     ) {
         self.delays = delays

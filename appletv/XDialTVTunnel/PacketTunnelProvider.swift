@@ -199,14 +199,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         os_log("startTunnel: begin", log: log, type: .info)
 
         // 1) 取凭据与 sing-box 配置。手动启动使用一次性 options；系统按需冷启动
-        //    没有 options，只允许读取双方共享 Keychain 中最近一次已验收的版本化启动包。
+        //    没有 options，只允许读取双方共享 Keychain 中本次连接意图的版本化启动包。
         guard let bundle = resolveStartBundle(options: options) else {
-            let err = providerError(2, "缺少完整且已验收的安全启动配置")
+            let err = providerError(2, "缺少完整的安全启动配置")
             failAttempt(generation, error: err, diagnosticStage: "start_bundle_missing")
             os_log("startTunnel: missing credentials/config", log: log, type: .error)
             return
         }
-        setSecureEnvelopeUsage(bundle.fromSecureEnvelope, generation: generation)
+        setSecureEnvelopeUsage(bundle.fromSecureEnvelope || (options?["onDemandEnvelopeSaved"] as? NSNumber)?.boolValue == true,
+                               generation: generation)
         setDiagnosticSensitiveValues(from: bundle)
         recordDiagnostic("start_bundle_loaded")
 
@@ -223,6 +224,51 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 self.recordDiagnostic("start_bundle_scenario_preferred")
             }
             #endif
+            // Complete cold-cache acquisition before installing any capture settings.
+            // The same secure intent lets the OS retry while the host is suspended.
+            guard self.isAttemptStarting(generation) else { return }
+            if !startBundle.preparationProfile.isEmpty {
+                guard startBundle.preparationProfile.utf8.count <= OnDemandStartEnvelope.maxConfigBytes else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置过大"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                let basePath = FileManager.default.containerURL(
+                    forSecurityApplicationGroupIdentifier: Self.appGroupID)?.path ?? ""
+                #if os(iOS)
+                let result = LibboxGenerateNESessionResult(startBundle.preparationProfile, startBundle.server, basePath)!
+                #else
+                let result = LibboxGenerateNEConfigResult(startBundle.preparationProfile, startBundle.server, basePath)!
+                #endif
+                guard self.isAttemptStarting(generation) else { return }
+                if !result.message.isEmpty {
+                    self.failAttempt(generation, error: self.providerError(5, result.message),
+                        diagnosticStage: result.retryable ? "preparation_network_unavailable" : "preparation_failed")
+                    return
+                }
+                #if os(iOS)
+                guard let data = result.value.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let config = object["config_json"] as? String else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置无效"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                startBundle.configJSON = config
+                if let line = object["anyconnect"] as? [String: Any] {
+                    startBundle.anyConnectLineID = line["line_id"] as? String ?? ""
+                    startBundle.anyConnectRuntimeIdentity = line["runtime_identity"] as? String ?? ""
+                }
+                #else
+                startBundle.configJSON = result.value
+                #endif
+                guard startBundle.configJSON.utf8.count <= OnDemandStartEnvelope.maxConfigBytes else {
+                    self.failAttempt(generation, error: self.providerError(5, "连接配置过大"),
+                        diagnosticStage: "preparation_failed")
+                    return
+                }
+                self.setDiagnosticSensitiveValues(from: startBundle)
+            }
             self.prepareAttempt(startBundle, generation: generation, completion: completion)
         }
     }
@@ -288,12 +334,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         //    也会作为 /32 排除路由和 sslcon 的 socket 目标。原始域名仍由 sslcon
         //    用作 TLS SNI/证书校验与 HTTP Host。
         recordDiagnostic("remote_address_resolving")
-        var resolveError: NSError?
-        let remoteIPv4 = LibboxResolveServerIPv4(bundle.server, &resolveError)
-        guard resolveError == nil, IPv4Address(remoteIPv4) != nil else {
-            let error = providerError(5, resolveError?.localizedDescription
-                ?? "服务器地址未解析为有效 IPv4")
-            failAttempt(generation, error: error, diagnosticStage: "remote_address_resolution_failed")
+        let resolution = LibboxResolveVPNServer(bundle.server)
+        let remoteIPv4 = resolution?.value ?? ""
+        guard IPv4Address(remoteIPv4) != nil else {
+            let error = providerError(5, resolution?.message ?? "服务器地址未解析为有效 IPv4")
+            let stage = resolution?.retryable == true ? "remote_address_lookup_unavailable" : "remote_address_resolution_failed"
+            failAttempt(generation, error: error, diagnosticStage: stage)
             os_log("startTunnel: remote address resolution failed",
                    log: log, type: .error)
             return
@@ -708,14 +754,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         lifecycleLock.unlock()
         networkSettingsSubmissionLock.unlock()
 
-        #if os(iOS)
         if OnDemandStartEnvelopeFailurePolicy.shouldClear(
             startedFromSecureEnvelope: clearSecureEnvelope,
             startupStage: diagnosticStage
         ) {
             _ = OnDemandStartEnvelopeStore.clear()
         }
-        #endif
         setLastError(error.localizedDescription)
         recordDiagnostic(diagnosticStage)
         // iOS may terminate this extension immediately after the failure callback.
@@ -820,7 +864,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let error = providerError(20 + code, detail)
         switch phase(for: generation) {
         case .starting:
-            failAttempt(generation, error: error, diagnosticStage: "engine_failed")
+            let stage = code == LibboxErrCodeTransientNetwork ? "engine_network_unavailable" : "engine_failed"
+            failAttempt(generation, error: error, diagnosticStage: stage)
         case .running:
             terminateRunningAttempt(generation, error: error)
         case .idle, nil:
@@ -1166,7 +1211,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let username: String
         let password: String
         let allowInsecure: Bool
-        let configJSON: String
+        var configJSON: String
+        var preparationProfile = ""
         /// 以下字段来自新版 App；旧 App 的启动包没有，这时不能与切换候选共享线路。
         var scenarioID = ""
         var scenarioName = ""
@@ -1199,6 +1245,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
 
         mutating func readSwitchParameters(_ value: (String) -> String?) {
+            preparationProfile = value("preparation_profile") ?? ""
             scenarioID = value("scenario_id") ?? ""
             scenarioName = value("scenario_name") ?? ""
             anyConnectLineID = value("anyconnect_line_id") ?? ""
@@ -1285,7 +1332,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // NetworkExtension 可能传入包含系统字段的非空 options。只要不满足主 App
         // 的完整手动契约，就必须按冷启动处理，不能误读为旧版手动启动。
         do {
-            #if os(iOS)
             recordTimeline("start_envelope_read")
             switch OnDemandStartEnvelopeStore.load() {
             case .available(let envelope):
@@ -1300,9 +1346,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 recordTimeline("start_envelope_invalid", result: .failed)
             }
             return nil
-            #else
-            return nil
-            #endif
         }
     }
 
