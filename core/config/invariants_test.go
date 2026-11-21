@@ -1509,7 +1509,9 @@ func TestINVScenarioWithoutDefaultOutboundCannotConnect(t *testing.T) {
 // MagicDNS 的 100.100.100.100）；那时归直连裁决的域名会整片解析进黑洞，而走
 // 其它线路解析的域名一切正常——正是最难定位的那种“连上了但部分网站全断”。
 func TestINVDNS_TransparentProxyDirectResolvesThroughTheUnderlayResolver(t *testing.T) {
-	const underlayDNS = "100.100.100.100"
+	// 两台 Underlay resolver 都必须进入直连 resolver：第一台暂时不可达时，
+	// 第二台仍要能应答，这是原先系统解析路径本来就有的能力。
+	underlayDNS := []string{"100.100.100.100", "100.100.100.101"}
 	data, err := GenerateSingBoxTransparentProxy(
 		invBaseProfile(),
 		29876,
@@ -1517,7 +1519,7 @@ func TestINVDNS_TransparentProxyDirectResolvesThroughTheUnderlayResolver(t *test
 		"session-password",
 		invBasePath,
 		invUnderlay,
-		[]string{underlayDNS},
+		underlayDNS,
 	)
 	if err != nil {
 		t.Fatalf("GenerateSingBoxTransparentProxy 失败: %v", err)
@@ -1548,9 +1550,15 @@ func TestINVDNS_TransparentProxyDirectResolvesThroughTheUnderlayResolver(t *test
 			continue
 		}
 		sawDirectResolver = true
-		if server["type"] != "udp" || server["server"] != underlayDNS {
-			t.Fatalf("直连 resolver 必须是启动前 Underlay 的 UDP transport：%s",
+		pinned, _ := server["xdial_servers"].([]interface{})
+		if server["type"] != "local" || len(pinned) != len(underlayDNS) {
+			t.Fatalf("直连 resolver 必须按顺序固定为启动前 Underlay 的全部 resolver：%s",
 				invPretty(server))
+		}
+		for index, want := range underlayDNS {
+			if pinned[index] != want {
+				t.Fatalf("直连 resolver 的 Underlay 顺序不对：%s", invPretty(server))
+			}
 		}
 	}
 	if !sawDirectResolver {

@@ -5455,7 +5455,12 @@ private final class HostUnderlayMonitor {
             "State:/Network/Global/IPv6",
             "State:/Network/Global/DNS",
         ] as CFArray
-        let patterns = ["State:/Network/Interface/[^/]+/IPv4"] as CFArray
+        // 快照的 resolver 取自默认接口所属服务的作用域 DNS。全局 DNS 被
+        // MagicDNS 这类虚拟网络接管时，DHCP 只改这一层而全局键不变，必须单独监听。
+        let patterns = [
+            "State:/Network/Interface/[^/]+/IPv4",
+            "State:/Network/Service/[^/]+/DNS",
+        ] as CFArray
         guard
             SCDynamicStoreSetNotificationKeys(store, keys, patterns),
             SCDynamicStoreSetDispatchQueue(store, .main)

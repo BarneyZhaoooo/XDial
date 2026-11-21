@@ -44,7 +44,7 @@ func TestTransparentProxyDNSRejectsMissingOrInvalidSystemSnapshot(t *testing.T) 
 	}
 }
 
-func TestTransparentProxyDirectDomainsUseUnderlayUDPResolver(t *testing.T) {
+func TestTransparentProxyDirectDomainsUseEveryUnderlayResolver(t *testing.T) {
 	profile := &Profile{
 		Lines: []Line{{ID: "direct", Type: LineTypeDirect, Enabled: true}},
 		RuleSets: []RuleSet{{
@@ -67,12 +67,11 @@ func TestTransparentProxyDirectDomainsUseUnderlayUDPResolver(t *testing.T) {
 	)
 	// 直连解析交回 App 自己的解析器地址时，那个地址可能属于本次事务并不承载的
 	// 虚拟网络（如 Tailscale MagicDNS），归直连裁决的域名会整片解析进黑洞。
-	if native["type"] != "udp" ||
-		native["server"] != "100.100.100.100" ||
-		fmt.Sprint(native["server_port"]) != "53" {
-		t.Fatalf("Direct resolver does not use the Underlay UDP transport: %v", native)
+	if native["type"] != "local" ||
+		fmt.Sprint(native["xdial_servers"]) != "[100.100.100.100 172.20.1.1]" {
+		t.Fatalf("Direct resolver is not pinned to the Underlay resolvers: %v", native)
 	}
-	for _, forbidden := range []string{"xdial_use_system_resolver", "detour"} {
+	for _, forbidden := range []string{"xdial_use_system_resolver", "server", "detour"} {
 		if _, exists := native[forbidden]; exists {
 			t.Fatalf("Direct resolver contains %s: %v", forbidden, native)
 		}
@@ -397,8 +396,8 @@ func TestTransparentProxyDNSCompilesManualDomainThenCIDRInCausalOrder(t *testing
 	enterprise := transparentProxyDNSServerByTag(t, cfg, transparentEnterpriseDNSTag)
 	if system["tag"] != transparentSystemDNSTag ||
 		system["server"] != "100.100.100.100" ||
-		native["type"] != "udp" ||
-		native["server"] != "100.100.100.100" ||
+		native["type"] != "local" ||
+		fmt.Sprint(native["xdial_servers"]) != "[100.100.100.100 172.20.1.1]" ||
 		enterprise["type"] != "xdial-anyconnect" ||
 		enterprise["tag"] != transparentEnterpriseDNSTag {
 		t.Fatalf("manual domain resolvers do not match their routes: %v", servers)

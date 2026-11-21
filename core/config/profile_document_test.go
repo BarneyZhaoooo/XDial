@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -165,7 +166,7 @@ func TestProfileDocumentSelectorDirectKeepsUnderlayDNS(t *testing.T) {
 		server := entry.(map[string]interface{})
 		if server["tag"] == tag {
 			found = true
-			if server["type"] != "udp" || server["server"] != "100.100.100.100" {
+			if server["type"] != "local" || fmt.Sprint(server["xdial_servers"]) != "[100.100.100.100 172.20.1.1]" {
 				t.Fatal("selector Direct did not retain the Underlay resolver")
 			}
 			if _, exists := server["xdial_use_system_resolver"]; exists {
