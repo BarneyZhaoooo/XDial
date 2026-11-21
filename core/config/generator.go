@@ -1375,10 +1375,18 @@ func buildTransparentProxyDNS(
 			"server":      primarySystemDNS,
 			"server_port": 53,
 		},
+		// 直连分域不能把解析交回 App 自己的解析器地址。那条路径（patches
+		// 0008/0009：先原样转发原始查询，再退回 DNSServiceGetAddrInfo）依赖
+		// App 看到的 resolver 仍然可达，而那个地址可以属于一个本次事务并不承载
+		// 的虚拟网络——例如 Tailscale MagicDNS 的 100.100.100.100。那时归直连
+		// 裁决的域名会整片解析进黑洞，走其它线路解析的域名却一切正常。
+		// 直连解析只认启动前 Underlay 的 resolver，由 sing-box 自己发 UDP，
+		// 出站接口由 route.default_interface 锁定为启动前的默认接口。
 		{
-			"type":                      "local",
-			"tag":                       TransparentNativeDNSTag,
-			"xdial_use_system_resolver": true,
+			"type":        "udp",
+			"tag":         TransparentNativeDNSTag,
+			"server":      primarySystemDNS,
+			"server_port": 53,
 		},
 	}
 	if needsProxyEndpointBootstrap {
@@ -1410,9 +1418,13 @@ func buildTransparentProxyDNS(
 			return
 		}
 		seenResolver[resolverTag] = true
+		// 当前选中直连节点的策略组与直连线路同样归 Underlay 解析。
 		if selectedGroupUsesDirect(profile, outTag) {
 			servers = append(servers, map[string]interface{}{
-				"type": "local", "tag": resolverTag, "xdial_use_system_resolver": true,
+				"type":        "udp",
+				"tag":         resolverTag,
+				"server":      primarySystemDNS,
+				"server_port": 53,
 			})
 			return
 		}

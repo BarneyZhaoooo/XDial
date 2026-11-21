@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -43,7 +44,7 @@ func TestTransparentProxyDNSRejectsMissingOrInvalidSystemSnapshot(t *testing.T) 
 	}
 }
 
-func TestTransparentProxyDirectDomainsUseMacOSNativeResolver(t *testing.T) {
+func TestTransparentProxyDirectDomainsUseUnderlayUDPResolver(t *testing.T) {
 	profile := &Profile{
 		Lines: []Line{{ID: "direct", Type: LineTypeDirect, Enabled: true}},
 		RuleSets: []RuleSet{{
@@ -64,13 +65,16 @@ func TestTransparentProxyDirectDomainsUseMacOSNativeResolver(t *testing.T) {
 	native := transparentProxyDNSServerByTag(
 		t, cfg, TransparentNativeDNSTag,
 	)
-	if native["type"] != "local" ||
-		native["xdial_use_system_resolver"] != true {
-		t.Fatalf("Direct resolver does not use macOS native resolution: %v", native)
+	// 直连解析交回 App 自己的解析器地址时，那个地址可能属于本次事务并不承载的
+	// 虚拟网络（如 Tailscale MagicDNS），归直连裁决的域名会整片解析进黑洞。
+	if native["type"] != "udp" ||
+		native["server"] != "100.100.100.100" ||
+		fmt.Sprint(native["server_port"]) != "53" {
+		t.Fatalf("Direct resolver does not use the Underlay UDP transport: %v", native)
 	}
-	for _, forbidden := range []string{"server", "server_port", "detour"} {
+	for _, forbidden := range []string{"xdial_use_system_resolver", "detour"} {
 		if _, exists := native[forbidden]; exists {
-			t.Fatalf("native Direct resolver contains %s: %v", forbidden, native)
+			t.Fatalf("Direct resolver contains %s: %v", forbidden, native)
 		}
 	}
 	if cfg.DNS["final"] != TransparentNativeDNSTag {
@@ -81,7 +85,7 @@ func TestTransparentProxyDirectDomainsUseMacOSNativeResolver(t *testing.T) {
 		`{"domain_suffix":["service.example"],"outbound":"direct"}`,
 		`{"action":"resolve","server":"xdial-native-dns"}`,
 	})
-	singboxCheckConfig(t, raw, "transparent-direct-native-dns")
+	singboxCheckConfig(t, raw, "transparent-direct-underlay-dns")
 }
 
 func TestTransparentProxyUnavailableDirectIPv6NarrowsOnlyDirectResolution(t *testing.T) {
@@ -393,8 +397,8 @@ func TestTransparentProxyDNSCompilesManualDomainThenCIDRInCausalOrder(t *testing
 	enterprise := transparentProxyDNSServerByTag(t, cfg, transparentEnterpriseDNSTag)
 	if system["tag"] != transparentSystemDNSTag ||
 		system["server"] != "100.100.100.100" ||
-		native["type"] != "local" ||
-		native["xdial_use_system_resolver"] != true ||
+		native["type"] != "udp" ||
+		native["server"] != "100.100.100.100" ||
 		enterprise["type"] != "xdial-anyconnect" ||
 		enterprise["tag"] != transparentEnterpriseDNSTag {
 		t.Fatalf("manual domain resolvers do not match their routes: %v", servers)

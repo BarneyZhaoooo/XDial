@@ -1503,3 +1503,58 @@ func TestINVScenarioWithoutDefaultOutboundCannotConnect(t *testing.T) {
 		t.Fatalf("空默认出口静默生成 Direct 配置：%s", cfg)
 	}
 }
+
+// 直连分域的解析只认启动前 Underlay 的 resolver。交回 App 自己看到的解析器
+// 地址时，那个地址可以属于一个本次事务并不承载的虚拟网络（例如 Tailscale
+// MagicDNS 的 100.100.100.100）；那时归直连裁决的域名会整片解析进黑洞，而走
+// 其它线路解析的域名一切正常——正是最难定位的那种“连上了但部分网站全断”。
+func TestINVDNS_TransparentProxyDirectResolvesThroughTheUnderlayResolver(t *testing.T) {
+	const underlayDNS = "100.100.100.100"
+	data, err := GenerateSingBoxTransparentProxy(
+		invBaseProfile(),
+		29876,
+		"session-user",
+		"session-password",
+		invBasePath,
+		invUnderlay,
+		[]string{underlayDNS},
+	)
+	if err != nil {
+		t.Fatalf("GenerateSingBoxTransparentProxy 失败: %v", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("生成的配置不是合法 JSON: %v", err)
+	}
+	dns, ok := cfg["dns"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("dns 结构无效：%s", invPretty(cfg["dns"]))
+	}
+	servers, ok := dns["servers"].([]interface{})
+	if !ok || len(servers) == 0 {
+		t.Fatalf("dns.servers 结构无效：%s", invPretty(dns["servers"]))
+	}
+	var sawDirectResolver bool
+	for _, raw := range servers {
+		server, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("dns.server 结构无效：%s", invPretty(raw))
+		}
+		if server["xdial_use_system_resolver"] == true {
+			t.Fatalf("Transparent Proxy 的 DNS transport 不得把解析交回 App "+
+				"自己的解析器地址：%s", invPretty(server))
+		}
+		if server["tag"] != TransparentNativeDNSTag {
+			continue
+		}
+		sawDirectResolver = true
+		if server["type"] != "udp" || server["server"] != underlayDNS {
+			t.Fatalf("直连 resolver 必须是启动前 Underlay 的 UDP transport：%s",
+				invPretty(server))
+		}
+	}
+	if !sawDirectResolver {
+		t.Fatalf("缺少直连 resolver %q：%s",
+			TransparentNativeDNSTag, invPretty(servers))
+	}
+}
