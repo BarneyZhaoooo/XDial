@@ -861,6 +861,7 @@ final class AppState: ObservableObject {
                 self.runLaunchAutoConnectIfNeeded()
             }
         }
+        MacIntentHost.register(self)
         #if DEBUG
         Self.current = self
         Self.debugServer.start()
