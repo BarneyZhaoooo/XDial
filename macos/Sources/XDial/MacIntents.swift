@@ -29,11 +29,11 @@ enum MacIntentHost {
     }
 
     /// Polls until `done` holds; false on timeout.
-    static func wait(seconds: Double, until done: () -> Bool) async -> Bool {
+    static func wait(seconds: Double, until done: () -> Bool) async throws -> Bool {
         let deadline = ContinuousClock.now + .milliseconds(Int(seconds * 1000))
         while ContinuousClock.now < deadline {
             if done() { return true }
-            try? await Task.sleep(for: .milliseconds(200))
+            try await Task.sleep(for: .milliseconds(200))
         }
         return done()
     }
@@ -109,17 +109,21 @@ struct MacConnectIntent: AppIntent {
         if let blocker = ConnectionConfigurationBlocker.evaluate(scenario, in: state.profile) {
             throw MacIntentError.message(blocker.title(tr) + " " + blocker.detail(tr))
         }
-        state.connect()
-        // The engine marks itself connecting synchronously; then wait for the transaction to end.
-        let finished = await MacIntentHost.wait(seconds: 120) { !state.engine.isBusy }
-        if state.isConnected {
+        var engineStarted: Bool?
+        state.connect { engineStarted = $0 }
+        let finished = try await MacIntentHost.wait(seconds: 120) {
+            engineStarted != nil && !state.engine.isBusy
+        }
+        if finished, engineStarted == true, state.isConnected {
             return .result(dialog: "\(tr("\(appName) 已连接：", "\(appName) is connected: "))\(scenario.name)")
         }
         guard finished else {
             throw MacIntentError.message(tr("\(appName) 仍在连接，请稍后在菜单栏查看结果。",
                                             "\(appName) is still connecting. Check the menu bar for the result."))
         }
-        let reason = state.presentedConnectionReport?.error?.message ?? state.engine.lastError
+        let reason = engineStarted == true
+            ? state.presentedConnectionReport?.error?.message ?? state.engine.lastError
+            : nil
         throw MacIntentError.message(reason.map { tr("连接没有成功：", "The connection failed: ") + $0 }
             ?? tr("连接没有成功，请打开 \(appName) 查看原因。", "The connection failed. Open \(appName) to see why."))
     }
@@ -133,11 +137,8 @@ struct MacDisconnectIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let state = try await MacIntentHost.require()
         let tr = state.tr
-        if !state.isConnected, !state.isBusy {
-            return .result(dialog: "\(tr("\(appName) 未连接", "\(appName) is not connected"))")
-        }
         state.disconnect()
-        guard await MacIntentHost.wait(seconds: 60, until: { state.engine.status == "disconnected" }) else {
+        guard try await MacIntentHost.wait(seconds: 60, until: { state.engine.status == "disconnected" }) else {
             throw MacIntentError.message(tr("\(appName) 仍在断开，请稍后在菜单栏查看结果。",
                                             "\(appName) is still disconnecting. Check the menu bar for the result."))
         }
@@ -176,7 +177,7 @@ struct MacSwitchScenarioIntent: AppIntent {
             }
             return .result(dialog: "\(tr("已选择", "Selected")) \(target.name)\(tr("，下次连接时生效", "; it applies on the next connection"))")
         }
-        let finished = await MacIntentHost.wait(seconds: 120) { !state.isBusy }
+        let finished = try await MacIntentHost.wait(seconds: 120) { !state.isBusy }
         guard finished else {
             throw MacIntentError.message(tr("\(appName) 仍在切换场景，请稍后在菜单栏查看结果。",
                                             "\(appName) is still switching. Check the menu bar for the result."))
