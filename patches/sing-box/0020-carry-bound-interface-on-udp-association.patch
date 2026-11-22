@@ -101,7 +101,7 @@
 +}
 --- /dev/null
 +++ b/protocol/socks/xdial_bound_association_test.go
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,172 @@
 +package socks
 +
 +import (
@@ -214,6 +214,10 @@
 +		_, err := client.WriteTo(datagram.Bytes(), server.LocalAddr())
 +		require.NoError(t, err)
 +	}
++	deadline := time.Now().Add(5 * time.Second)
++	require.NoError(t, server.SetDeadline(deadline))
++	require.NoError(t, client.SetDeadline(deadline))
++
 +	sendSOCKSDatagram(marker, []byte{0})
 +	sendSOCKSDatagram(router, []byte{0, 0})
 +
@@ -239,7 +243,6 @@
 +		require.NoError(t, conn.WritePacket(reply, router))
 +	})
 +
-+	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
 +	received := make([]byte, 64)
 +	n, _, err := client.ReadFrom(received)
 +	require.NoError(t, err)
