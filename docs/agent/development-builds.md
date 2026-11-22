@@ -34,7 +34,7 @@ Apple TV 正式包定位为公司内部使用，保留企业预置；从 `applet
 不指定时生成无预置包，且清除上次构建留下的预置。私有内容、签名配置与凭据不得提交公开仓库。
 
 启动时由 `MobileSeed` 读取包内预置并传给 AppState，首启采用它；升级按 `revision` 添加缺失对象，
-保留用户凭据、修改和当前场景，使用 `rule_set_history` 保护已修改规则，每个 revision 成功落盘后才记账。
+保留用户凭据、修改和当前场景，使用 `rule_set_history` 与 `scenario_history` 保护已修改的规则和场景路由，每个 revision 成功落盘后才记账。
 连接前随包规则进入同一引擎缓存。Release 使用真实引擎；模拟器 Debug 的演示数据不得覆盖公司预置。
 tvOS 当前不执行手机的按出口地区自动选场景；`region_scenarios` 随同来源保留并校验，电视上由用户选择场景。
 

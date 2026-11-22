@@ -861,6 +861,7 @@ final class AppState: ObservableObject {
                 self.runLaunchAutoConnectIfNeeded()
             }
         }
+        MacIntentHost.register(self)
         #if DEBUG
         Self.current = self
         Self.debugServer.start()
@@ -1565,11 +1566,14 @@ final class AppState: ObservableObject {
         connectionAwaitsDataUseNotice = false
     }
 
-    func connect() {
-        guard let activeScenario else { return }
+    func connect(onStartupFinished: ((Bool) -> Void)? = nil) {
+        guard let activeScenario else {
+            onStartupFinished?(false)
+            return
+        }
         connectionDesired.userRequestedConnection(scenarioID: activeScenario.id)
         cancelWakeReconnectTask()
-        beginConnection()
+        beginConnection(onStartupFinished: onStartupFinished)
     }
 
     @discardableResult
@@ -1595,8 +1599,14 @@ final class AppState: ObservableObject {
     }
 
     private func beginConnection(
-        automaticRetryTrigger: AutomaticReconnectTrigger? = nil
+        automaticRetryTrigger: AutomaticReconnectTrigger? = nil,
+        onStartupFinished: ((Bool) -> Void)? = nil
     ) {
+        var startupDeferred = false
+        var engineStarted = false
+        defer {
+            if !startupDeferred { onStartupFinished?(engineStarted) }
+        }
         guard dataUseNoticeAccepted else {
             // A connection the user asked for continues once the notice is confirmed.
             if automaticRetryTrigger == nil { connectionAwaitsDataUseNotice = true }
@@ -1617,10 +1627,17 @@ final class AppState: ObservableObject {
         // and route by Scenario. Connecting wins: stop it, wait until it has
         // exited, then begin with whatever the user still wants.
         if ProfileSourceLineFetcher.hasApplicationSession {
+            startupDeferred = true
             Task { [weak self] in
                 await ProfileSourceLineFetcher.cancelApplicationSessions()
-                guard let self, self.connectionDesired.wantsConnection else { return }
-                self.beginConnection(automaticRetryTrigger: automaticRetryTrigger)
+                guard let self, self.connectionDesired.wantsConnection else {
+                    onStartupFinished?(false)
+                    return
+                }
+                self.beginConnection(
+                    automaticRetryTrigger: automaticRetryTrigger,
+                    onStartupFinished: onStartupFinished
+                )
             }
             return
         }
@@ -1643,6 +1660,7 @@ final class AppState: ObservableObject {
         // GoEngine serializes account operations and releases the setup owner
         // once for the whole connection, including leases from an earlier UI.
         engine.start(profileJSON: profileJSON, automaticRetryTrigger: automaticRetryTrigger)
+        engineStarted = true
     }
 
     func retryAutomaticReconnectNow() {
