@@ -236,7 +236,7 @@ enum LocalSOCKSShareRelay {
                             )
                             shutdown.finish(with: nil)
 
-                        case .udpAssociate:
+                        case let .udpAssociate(clientPort):
                             resources.markUDPAssociation()
                             let localUDP: LoopbackUDPSocket
                             let upstreamUDP: NWConnection
@@ -293,6 +293,7 @@ enum LocalSOCKSShareRelay {
                                 upstreamControl: upstream,
                                 localUDP: localUDP,
                                 upstreamUDP: upstreamUDP,
+                                expectedClientPort: clientPort,
                                 shutdown: shutdown,
                                 transactionID: trialID,
                                 traffic: traffic,
@@ -349,6 +350,8 @@ enum LocalSOCKSShareRelay {
             return "client-address-type-not-supported"
         case LocalSOCKSHandshake.Failure.invalidDestination:
             return "client-invalid-destination"
+        case let posixError as POSIXError:
+            return "posix-\(posixError.code.rawValue)"
         default:
             return TCPFlowSOCKSRelay.diagnosticCode(error)
         }
@@ -405,30 +408,12 @@ enum LocalSOCKSShareRelay {
         _ connection: NWConnection,
         credentials: SOCKSCredentials
     ) async throws -> Network.NWEndpoint {
-        let username = Array(credentials.username.utf8)
-        let password = Array(credentials.password.utf8)
-        guard
-            !username.isEmpty,
-            username.count <= 255,
-            !password.isEmpty,
-            password.count <= 255
-        else {
-            throw TCPFlowSOCKSRelay.RelayError.socksProtocol("invalid credentials")
-        }
         try await TCPFlowSOCKSRelay.send(Data([0x05, 0x01, 0x02]), to: connection)
         let greeting = try await TCPFlowSOCKSRelay.receiveExactly(2, from: connection)
         guard greeting == Data([0x05, 0x02]) else {
             throw TCPFlowSOCKSRelay.RelayError.socksProtocol("authentication rejected")
         }
-        var auth = Data([0x01, UInt8(username.count)])
-        auth.append(contentsOf: username)
-        auth.append(UInt8(password.count))
-        auth.append(contentsOf: password)
-        try await TCPFlowSOCKSRelay.send(auth, to: connection)
-        let authReply = try await TCPFlowSOCKSRelay.receiveExactly(2, from: connection)
-        guard authReply == Data([0x01, 0x00]) else {
-            throw TCPFlowSOCKSRelay.RelayError.socksProtocol("authentication failed")
-        }
+        try await TCPFlowSOCKSRelay.authenticate(credentials, connection: connection)
 
         // 本机 SOCKS5 入口不携带系统接口绑定元数据，始终以 0.0.0.0:0 建立普通关联。
         try await TCPFlowSOCKSRelay.send(
@@ -493,12 +478,13 @@ enum LocalSOCKSShareRelay {
         upstreamControl: NWConnection,
         localUDP: LoopbackUDPSocket,
         upstreamUDP: NWConnection,
+        expectedClientPort: UInt16?,
         shutdown: RelayTaskShutdown,
         transactionID: String,
         traffic: ProviderTrafficLedger,
         logger: Logger
     ) async throws {
-        let peerTracker = ClientUDPPeerTracker()
+        let peerTracker = ClientUDPPeerTracker(expectedPort: expectedClientPort)
         try await RelayTaskGroup.run(
             operations: [
                 {
@@ -598,8 +584,7 @@ enum LocalSOCKSShareRelay {
         logger: Logger
     ) async throws {
         while !Task.isCancelled {
-            let packet = try await receiveUDPMessage(from: upstreamUDP)
-            if packet.isEmpty {
+            guard let packet = try await receiveUDPMessage(from: upstreamUDP) else {
                 return
             }
             guard let payloadCount = LocalSOCKSHandshake.serverUDPDatagramPayloadLength(packet) else {
@@ -619,19 +604,17 @@ enum LocalSOCKSShareRelay {
 
     private static func receiveUDPMessage(
         from connection: NWConnection
-    ) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            let gate = LocalSOCKSOneShotGate()
+    ) async throws -> Data? {
+        try await awaitRelayCallback { completion in
             connection.receiveMessage { data, _, isComplete, error in
-                guard gate.take() else { return }
                 if let error {
-                    continuation.resume(throwing: error)
+                    completion(.failure(error))
                 } else if let data {
-                    continuation.resume(returning: data)
+                    completion(.success(data))
                 } else if isComplete {
-                    continuation.resume(returning: Data())
+                    completion(.success(nil))
                 } else {
-                    continuation.resume(throwing: TCPFlowSOCKSRelay.RelayError.socksUnavailable)
+                    completion(.failure(TCPFlowSOCKSRelay.RelayError.socksUnavailable))
                 }
             }
         }
@@ -712,6 +695,17 @@ private final class ClientUDPPeerTracker: @unchecked Sendable {
     private let lock = NSLock()
     private var peer: sockaddr_in?
 
+    init(expectedPort: UInt16? = nil) {
+        if let expectedPort, expectedPort != 0 {
+            var expected = sockaddr_in()
+            expected.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            expected.sin_family = sa_family_t(AF_INET)
+            expected.sin_port = expectedPort.bigEndian
+            expected.sin_addr = in_addr(s_addr: INADDR_LOOPBACK.bigEndian)
+            self.peer = expected
+        }
+    }
+
     func acceptOrMatch(_ candidate: sockaddr_in) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -727,19 +721,6 @@ private final class ClientUDPPeerTracker: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return peer
-    }
-}
-
-private final class LocalSOCKSOneShotGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var available = true
-
-    func take() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard available else { return false }
-        available = false
-        return true
     }
 }
 
@@ -831,14 +812,17 @@ private final class LoopbackUDPSocket: @unchecked Sendable {
             return data.withUnsafeBytes { rawBuffer in
                 withUnsafePointer(to: &destination) { destPtr in
                     destPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { addrPtr in
-                        let sent = Darwin.sendto(
-                            fd,
-                            rawBuffer.baseAddress,
-                            rawBuffer.count,
-                            0,
-                            addrPtr,
-                            socklen_t(MemoryLayout<sockaddr_in>.size)
-                        )
+                        var sent: Int
+                        repeat {
+                            sent = Darwin.sendto(
+                                fd,
+                                rawBuffer.baseAddress,
+                                rawBuffer.count,
+                                0,
+                                addrPtr,
+                                socklen_t(MemoryLayout<sockaddr_in>.size)
+                            )
+                        } while sent < 0 && errno == EINTR
                         return sent == rawBuffer.count
                     }
                 }

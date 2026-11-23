@@ -321,14 +321,55 @@ final class LocalSOCKSShareRelayTests: XCTestCase {
         XCTAssertTrue(sourceDrain.wait(timeout: 3))
     }
 
-    private func negotiateClientUDPAssociate(_ client: NWConnection) async throws -> UInt16 {
+    func testUDPAssociateHonorsExplicitClientPortHintAgainstPreemption() async throws {
+        let upstream = try await FakeSessionEntry.start(credentials: credentials)
+        defer { upstream.stop() }
+        let (share, port) = try await startShare(upstreamPort: upstream.port)
+        defer { share.stop() }
+
+        let primaryUDP = try TestLoopbackUDPSocket()
+        defer { primaryUDP.close() }
+        let foreignUDP = try TestLoopbackUDPSocket()
+        defer { foreignUDP.close() }
+
+        let clientControl = try await connect(port)
+        defer { clientControl.forceCancel() }
+        let relayPort = try await negotiateClientUDPAssociate(
+            clientControl,
+            hintedClientPort: primaryUDP.port
+        )
+
+        // Foreign local socket sends first before primaryUDP ever transmits.
+        let preemptAttempt = Data([0x00, 0x00, 0x00, 0x01, 10, 0, 0, 9, 0x00, 0x35])
+            + Data("preempt".utf8)
+        try foreignUDP.send(preemptAttempt, toLoopbackPort: relayPort)
+
+        let legitimate = Data([0x00, 0x00, 0x00, 0x01, 10, 0, 0, 1, 0x00, 0x35])
+            + Data("legit".utf8)
+        try primaryUDP.send(legitimate, toLoopbackPort: relayPort)
+        let reply = try await primaryUDP.receive(timeout: 3)
+        XCTAssertEqual(reply, legitimate)
+        XCTAssertEqual(upstream.udpPacketCount, 1)
+    }
+
+    private func negotiateClientUDPAssociate(
+        _ client: NWConnection,
+        hintedClientPort: UInt16? = nil
+    ) async throws -> UInt16 {
         try await TCPFlowSOCKSRelay.send(Data([0x05, 0x01, 0x00]), to: client)
         let greeting = try await TCPFlowSOCKSRelay.receiveExactly(2, from: client)
         XCTAssertEqual(greeting, Data([0x05, 0x00]))
-        try await TCPFlowSOCKSRelay.send(
-            Data([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0]),
-            to: client
-        )
+        let request: Data
+        if let hintedClientPort {
+            request = Data([
+                0x05, 0x03, 0x00, 0x01,
+                127, 0, 0, 1,
+                UInt8(hintedClientPort >> 8), UInt8(hintedClientPort & 0xFF),
+            ])
+        } else {
+            request = Data([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        }
+        try await TCPFlowSOCKSRelay.send(request, to: client)
         let reply = try await TCPFlowSOCKSRelay.receiveExactly(10, from: client)
         XCTAssertEqual(reply.prefix(8), Data([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1]))
         return UInt16(reply[8]) << 8 | UInt16(reply[9])

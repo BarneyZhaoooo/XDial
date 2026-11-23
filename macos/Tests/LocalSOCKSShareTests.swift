@@ -57,23 +57,28 @@ final class LocalSOCKSShareTests: XCTestCase {
         let unspecifiedIPv4 = try await LocalSOCKSHandshake.readRequest(
             reader([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         )
-        XCTAssertEqual(unspecifiedIPv4, .udpAssociate)
+        XCTAssertEqual(unspecifiedIPv4, .udpAssociate(clientPort: nil))
 
         let hintedIPv4 = try await LocalSOCKSHandshake.readRequest(
             reader([0x05, 0x03, 0x00, 0x01, 127, 0, 0, 1, 0xCE, 0xCC])
         )
-        XCTAssertEqual(hintedIPv4, .udpAssociate)
+        XCTAssertEqual(hintedIPv4, .udpAssociate(clientPort: 52940))
+
+        let nonLoopbackHint = try await LocalSOCKSHandshake.readRequest(
+            reader([0x05, 0x03, 0x00, 0x01, 8, 8, 8, 8, 0x00, 0x35])
+        )
+        XCTAssertEqual(nonLoopbackHint, .udpAssociate(clientPort: nil))
 
         let unspecifiedIPv6 = try await LocalSOCKSHandshake.readRequest(
             reader([0x05, 0x03, 0x00, 0x04] + Array(repeating: 0, count: 18))
         )
-        XCTAssertEqual(unspecifiedIPv6, .udpAssociate)
+        XCTAssertEqual(unspecifiedIPv6, .udpAssociate(clientPort: nil))
 
         let host = Array("localhost".utf8)
         let domainHint = try await LocalSOCKSHandshake.readRequest(
-            reader([0x05, 0x03, 0x00, 0x03, UInt8(host.count)] + host + [0x00, 0x00])
+            reader([0x05, 0x03, 0x00, 0x03, UInt8(host.count)] + host + [0x14, 0x3D])
         )
-        XCTAssertEqual(domainHint, .udpAssociate)
+        XCTAssertEqual(domainHint, .udpAssociate(clientPort: nil))
 
         XCTAssertEqual(
             LocalSOCKSHandshake.udpAssociateReply(port: 51820),

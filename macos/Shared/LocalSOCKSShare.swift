@@ -165,7 +165,8 @@ enum LocalSOCKSHandshake {
 
     enum Request: Equatable {
         case connect(Destination)
-        case udpAssociate
+        /// `clientPort` 仅在客户端显式声明本机回环非零源端口时填入（RFC 1928 §6）。
+        case udpAssociate(clientPort: UInt16?)
     }
 
     typealias Read = (Int) async throws -> Data
@@ -197,17 +198,22 @@ enum LocalSOCKSHandshake {
             throw Failure.commandNotSupported
         }
         let host: String
+        let isLoopbackHint: Bool
         switch header[base + 3] {
         case 0x01:
             guard let address = IPv4Address(try await read(4)) else {
                 throw Failure.invalidDestination
             }
             host = "\(address)"
+            isLoopbackHint = address == .loopback
         case 0x04:
             guard let address = IPv6Address(try await read(16)) else {
                 throw Failure.invalidDestination
             }
             host = "\(address)"
+            // 中继套接字固定绑定 IPv4 127.0.0.1，客户端若原持 IPv6 套接字在收到
+            // IPv4 BND.ADDR 后可能另开 IPv4 临时端口发包，仅对 127.0.0.1 预锁端口。
+            isLoopbackHint = false
         case 0x03:
             let length = try await read(1)
             let count = Int(length[length.startIndex])
@@ -216,6 +222,7 @@ enum LocalSOCKSHandshake {
                 throw Failure.invalidDestination
             }
             host = name
+            isLoopbackHint = false
         default:
             throw Failure.addressTypeNotSupported
         }
@@ -226,7 +233,8 @@ enum LocalSOCKSHandshake {
             guard port != 0 else { throw Failure.invalidDestination }
             return .connect(Destination(host: host, port: port))
         }
-        return .udpAssociate
+        let hintedPort = (isLoopbackHint && port != 0) ? port : nil
+        return .udpAssociate(clientPort: hintedPort)
     }
 
     /// 只放行可打印的主机名字节；NUL、空白与控制字符一律拒绝。
