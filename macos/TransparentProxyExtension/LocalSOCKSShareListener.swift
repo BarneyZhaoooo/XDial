@@ -137,7 +137,8 @@ enum LocalSOCKSShareRelay {
         credentials: SOCKSCredentials,
         trialID: String,
         traffic: ProviderTrafficLedger,
-        logger: Logger
+        logger: Logger,
+        adoptUDPAssociation: @escaping @Sendable () -> Bool = { true }
     ) -> ProviderRelayHandle {
         let upstream = NWConnection(
             host: .ipv4(IPv4Address.loopback),
@@ -240,6 +241,10 @@ enum LocalSOCKSShareRelay {
                             let localUDP: LoopbackUDPSocket
                             let upstreamUDP: NWConnection
                             do {
+                                stage = "adopt-association"
+                                guard adoptUDPAssociation() else {
+                                    throw TCPFlowSOCKSRelay.RelayError.socksUnavailable
+                                }
                                 stage = "local-udp-bind"
                                 let socket = try LoopbackUDPSocket()
                                 guard resources.install(localUDP: socket) else {
@@ -764,8 +769,16 @@ private final class LoopbackUDPSocket: @unchecked Sendable {
             self.continuation = continuation
         }
 
+        private var isOpen: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return state == .open
+        }
+
         func drainReadable(into buffer: inout [UInt8]) {
-            while true {
+            // 该串行队列专属于当前套接字；一旦 beginClose() 置为 .cancelling，
+            // 立即退出循环让出队列以执行 cancelHandler，平时则读至 EAGAIN 满足 kqueue 边沿语义。
+            while isOpen {
                 var sender = sockaddr_in()
                 var msgFlags: Int32 = 0
                 let readResult = buffer.withUnsafeMutableBytes { rawBuffer -> Int in

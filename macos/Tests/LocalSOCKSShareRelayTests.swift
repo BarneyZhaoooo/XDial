@@ -252,6 +252,75 @@ final class LocalSOCKSShareRelayTests: XCTestCase {
         XCTAssertTrue(finished)
     }
 
+    func testUDPAssociateReclassifiesAsAssociationAndFailsClosedAfterHandoff() async throws {
+        let upstream = try await FakeSessionEntry.start(credentials: credentials)
+        defer { upstream.stop() }
+        let registry = ProviderRelayRegistry<UInt16>()
+        registry.activate(generation: "A", endpoint: upstream.port)
+
+        let share = LocalSOCKSShareListener(queueLabel: "local-socks-handoff-test", logger: logger) { [credentials, logger] connection in
+            guard let reservation = registry.reserve() else {
+                connection.forceCancel()
+                return
+            }
+            let handle = LocalSOCKSShareRelay.makeHandle(
+                client: connection,
+                socksPort: reservation.endpoint,
+                credentials: credentials,
+                trialID: reservation.generation,
+                traffic: ProviderTrafficLedger(),
+                logger: logger,
+                adoptUDPAssociation: {
+                    registry.reclassify(reservation, owning: .association)
+                }
+            )
+            guard registry.attach(handle, to: reservation) else {
+                handle.cancel(with: AppProxyFlowCloseError.aborted)
+                return
+            }
+            _ = handle.start(onFinish: {
+                registry.finish(reservation)
+            })
+        }
+        defer { share.stop() }
+
+        var chosenPort: UInt16 = 0
+        for _ in 0..<20 {
+            let candidate = UInt16.random(in: 40_000...59_000)
+            if await configure(share, port: candidate) == .listening(candidate) {
+                chosenPort = candidate
+                break
+            }
+            share.stop()
+        }
+        XCTAssertNotEqual(chosenPort, 0)
+
+        let activeClient = try await connect(chosenPort)
+        defer { activeClient.forceCancel() }
+        _ = try await negotiateClientUDPAssociate(activeClient)
+
+        // Start a second connection before handoff, then handoff before its 0x03 request.
+        let lateClient = try await connect(chosenPort)
+        defer { lateClient.forceCancel() }
+        try await TCPFlowSOCKSRelay.send(Data([0x05, 0x01, 0x00]), to: lateClient)
+        let greeting = try await TCPFlowSOCKSRelay.receiveExactly(2, from: lateClient)
+        XCTAssertEqual(greeting, Data([0x05, 0x00]))
+
+        let sourceDrain = registry.handoff(generation: "B", endpoint: upstream.port)
+        // Active UDP association is classified under .association, not .flow.
+        XCTAssertEqual(sourceDrain.subset(owning: .association).count, 1)
+
+        try await TCPFlowSOCKSRelay.send(
+            Data([0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0]),
+            to: lateClient
+        )
+        let rejectedReply = try await TCPFlowSOCKSRelay.receiveExactly(10, from: lateClient)
+        XCTAssertEqual(rejectedReply, LocalSOCKSHandshake.reply(0x01))
+
+        sourceDrain.cancel()
+        XCTAssertTrue(sourceDrain.wait(timeout: 3))
+    }
+
     private func negotiateClientUDPAssociate(_ client: NWConnection) async throws -> UInt16 {
         try await TCPFlowSOCKSRelay.send(Data([0x05, 0x01, 0x00]), to: client)
         let greeting = try await TCPFlowSOCKSRelay.receiveExactly(2, from: client)
